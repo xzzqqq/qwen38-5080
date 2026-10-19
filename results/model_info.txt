@@ -1,0 +1,9 @@
+# M1 模型信息
+
+- 仓库：`unsloth/Qwen3.8-27B-GGUF`
+- 文件：`Qwen3.8-27B-UD-IQ4_XS.gguf`
+- 本地路径：`models/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-IQ4_XS.gguf`
+- 大小：14,252,845,984 B（14.25 GB）
+- SHA-256：`40fac4050e940397dbf13087afd50f4734a11805bf9d65ef8ddd7483470e6199`
+- 与 HF LFS 记录的 hash 一致（下载完整）
+- llama.cpp 识别：`qwen35 27B IQ4_XS - 4.25 bpw`，27,320,697,856 参数

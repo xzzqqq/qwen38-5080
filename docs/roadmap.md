@@ -75,7 +75,7 @@
 
 | 里程碑 | Status | 内容 | 退出标准 | 粗估 |
 |---|---|---|---|---|
-| M1 实机参照 | 未开始 | 用 llama.cpp 跑 unsloth 的 `UD-IQ4_XS`（14.25 GB），用 `llama-bench` 测 depth 512 和 8192 两种情况 | 拿到 5080 实机的 decode tok/s；确认显存余量和显示器占用多少显存。详细清单见 `docs/plans/m1.md` | 半天 |
+| M1 实机参照 | ✅ 完成 2026-10-19 | 用 llama.cpp 跑 unsloth 的 `UD-IQ4_XS`（14.25 GB），用 `llama-bench` 测 depth 512 和 8192 两种情况 | 拿到 5080 实机的 decode tok/s；确认显存余量和显示器占用多少显存。详细清单见 `docs/plans/m1.md` | 半天 |
 | M2 拼装 runner 跑通 | 未开始 | 用 transformers 里 qwen3_5 的文本模型做骨架；实现 NVFP4Linear（调用 FlashInfer `mm_fp4`）；embedding 放 CPU；只加载 `model.language_model.*` 和 `lm_head.*`，并列出所有保留高精度的 tensor（`in_proj_a/b`、`conv1d`、各个 norm 等）；先用 eager 模式跑 | NVFP4Linear 和"dequant + matmul"对拍通过；能生成连贯的文本 | 1–2 天 |
 | M3 decode baseline | 未开始 | 改用 static cache，自己写 decode loop 并录成 CUDA Graph；按 §2 写 benchmark harness（多次运行，报告中位数和波动，记录峰值显存）；按真实的 tensor 布局重算每步要读的字节数，算上高精度例外和 KV/state 的访问；抓第一张 Nsight Systems 时间线 | 拿到 baseline tok/s 和时间分布。tok/s 要同时报两个数：不含 sampling 的模型执行速度，以及含 sampling 的有效输出速度 | 1–2 天 |
 

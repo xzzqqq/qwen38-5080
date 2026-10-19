@@ -1,0 +1,1 @@
+{"messages": [{"role": "user", "content": "In three sentences, explain why LLM decode at batch size 1 is memory-bandwidth bound."}], "temperature": 0, "max_tokens": 2048}

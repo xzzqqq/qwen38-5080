@@ -14,7 +14,17 @@
 
 ## 命令
 
-搭好脚手架后再填。需要列出环境检查、编译、测试、benchmark、profiling 的命令，以及各自大概的耗时。
+GPU 命令都必须在 full access 下运行：bwrap 沙箱看不到 `/dev/nvidia*`。
+运行 `llama-bench` / `llama-server` 时不需要设 `LD_LIBRARY_PATH`（rpath 已指向 cuda13 env）。
+
+| 命令 | 作用 | 耗时 |
+|---|---|---|
+| `scripts/setup_llama_cpp.sh` | 按固定 commit 拉取并编译 llama.cpp | 10–20 分钟 |
+| `scripts/run_ar_bench.sh` | M1 AR decode benchmark（depth 512 / 8192，各 5 次） | 约 2 分钟 |
+| `scripts/run_server_check.sh` | math / code / chat 三条真实 prompt | 约 30 秒 |
+
+环境检查：`nvidia-smi --query-gpu=...`、`nvidia-smi -q`、`cuda13/bin/nvcc --version`，
+结果存 `results/`。
 
 ## 约定
 
