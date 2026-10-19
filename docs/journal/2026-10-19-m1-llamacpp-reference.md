@@ -54,11 +54,11 @@ scripts/run_server_check.sh  # math / code / chat 三条真实 prompt
 
 8K 比 512 慢 **3.1%**。两次都跑通，没有 OOM，没有降 KV 精度。
 
-### GPU 状态（1 Hz 采样，`results/gpu_monitor.csv`）
+### GPU 状态（1 Hz 采样，`results/gpu_monitor.csv`，覆盖 bench 与 server 两段）
 
 | 项 | 值 |
 |---|---|
-| `memory.used` 峰值 | **14275 MiB**（约 2.0 GB 余量） |
+| `memory.used` 峰值 | **14275 MiB**（bench）/ **14313 MiB**（server prefill），约 2.0 GB 余量 |
 | 功耗 | 中位 298 W，峰值 302 W（limit 360 W） |
 | SM 时钟 | 中位 2812 MHz，峰值 2880 MHz |
 | 显存时钟 | 15001 MHz（满速） |
