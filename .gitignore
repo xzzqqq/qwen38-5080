@@ -1,0 +1,31 @@
+# 模型权重：体积大，不入库
+models/
+*.gguf
+
+# 第三方工具 checkout：用 scripts/setup_llama_cpp.sh 按固定 commit 拉取
+llama.cpp/
+
+# 临时文件
+.tmp/
+
+# 运行时日志
+logs/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# 编译产物
+build/
+*.o
+*.a
+*.so
+*.cubin
+*.fatbin
+
+# 编辑器 / 工具缓存
+.vscode/
+.idea/
+.cache/

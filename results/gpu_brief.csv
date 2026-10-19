@@ -1,0 +1,2 @@
+name, driver_version, memory.total [MiB], memory.used [MiB], display_active, compute_cap
+NVIDIA GeForce RTX 5080, 580.105.08, 16303 MiB, 0 MiB, Disabled, 12.0

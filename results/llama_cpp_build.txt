@@ -1,0 +1,15 @@
+# llama.cpp 参照版本与编译配置
+
+commit: f174553e1621c6a22a64e7bfcbb58d3a5c49e6fb
+date:   Mon Oct 19 15:58:14 2026 +0200
+subject: server : fix swa checkpoint invalidation logic (#30666)
+
+## cmake cache
+CMAKE_BUILD_TYPE:STRING=Release
+CMAKE_CUDA_ARCHITECTURES:UNINITIALIZED=120a-real
+CMAKE_CUDA_COMPILER:STRING=/home/xzq/micromamba/envs/cuda13/bin/nvcc
+CUDA_cublas_LIBRARY:FILEPATH=/home/xzq/micromamba/envs/cuda13/lib/libcublas.so
+GGML_CUDA:BOOL=ON
+
+## toolkit
+nvcc: Cuda compilation tools, release 13.0, V13.0.88
