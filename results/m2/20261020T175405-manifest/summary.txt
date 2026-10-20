@@ -1,0 +1,44 @@
+run_id: 20261020T175405
+model_dir: models/Qwen3.8-27B-NVFP4-RTX5090
+revision: 5b7a687fc8211a5d631c8ca6a593dd37eb26ce33
+shards: {'model-00001-of-00002.safetensors': {'header_bytes': 162080, 'file_bytes': 9972777720, 'tensors': 1312}, 'model-00002-of-00002.safetensors': {'header_bytes': 134960, 'file_bytes': 7943334864, 'tensors': 1075}}
+tensors: 2387
+total: 17.916 GB
+GPU text: 14.452 GB
+host embedding: 2.543 GB
+vision skipped: 0.921 GB
+NVFP4 weights: 401 tensors, 25.598 B params, 12.799 GB storage, 4.00 bits/param
+
+by placement:
+  gpu    2053    14.452 GB
+  host      1     2.543 GB
+  skip    333     0.921 GB
+
+by role:
+  nvfp4_weight                   400    12.163 GB
+  host_embedding                   1     2.543 GB
+  nvfp4_weight_scale             400     1.520 GB
+  vision                         333     0.921 GB
+  lm_head_nvfp4_weight             1     0.636 GB
+  lm_head_weight_scale             1     0.079 GB
+  high_precision_weight          144     0.051 GB
+  norm                           209     0.001 GB
+  state_param                     96     0.000 GB
+  nvfp4_input_scale              400     0.000 GB
+  nvfp4_global_scale             400     0.000 GB
+  lm_head_input_scale              1     0.000 GB
+  lm_head_global_scale             1     0.000 GB
+
+VRAM account (GB, decimal):
+  usable: 16.610
+  text weights: 14.452
+  KV BF16 8K: 0.537
+  KV FP8 8K: 0.268
+  GDN state: 0.151
+  conv state: 0.008
+  workspace: 0.500 (placeholder)
+  CUDA context: 0.282
+  total BF16 KV: 15.929 -> margin +0.681
+  total FP8 KV:  15.661 -> margin +0.949
+
+output: results/m2/20261020T175405-manifest

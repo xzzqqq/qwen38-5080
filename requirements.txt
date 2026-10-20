@@ -1,1 +1,16 @@
-# 锁定版本的依赖，待填。
+# M2 验证环境（2026-10-20）
+# 注意：PyPI 的 Linux torch wheel 已经依赖 cuda-toolkit==13.0.3 / nvidia-*-cu13；
+# 安装后必须确认 torch.version.cuda == "13.0"，避免误装 CPU/旧 CUDA 版本。
+# 运行 GPU 测试前先 source scripts/m2_env.sh（fish 用 scripts/m2_env.fish），
+# 让 FlashInfer JIT 找到 cuda13 和 pip nvidia/cu13 的头文件。
+torch==2.14.1
+transformers==5.20.2
+safetensors==0.8.0
+huggingface-hub==2.2.0
+flashinfer-python==0.7.2
+numpy==2.5.4
+pytest==9.1.1
+
+# flashinfer-cubin / flashinfer-jit-cache 未安装：
+# M2 §2 的 JIT 编译已在 5080 上通过；首次调用需要几分钟。
+# 如果后续想减少首次初始化时间，再按 flashinfer.ai/whl 的 cu130 索引补装。

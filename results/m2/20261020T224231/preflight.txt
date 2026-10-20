@@ -1,0 +1,23 @@
+run_id: 20261020T224231
+python: /home/xzq/workspace/qwen/.venv/bin/python
+torch: 2.14.1+cu130 cuda=13.0
+gpu: NVIDIA GeForce RTX 5080 capability=[12, 0] free=15571.9 MiB total=15840.1 MiB
+nvcc: 13.0 (/home/xzq/micromamba/envs/cuda13/bin/nvcc)
+cuda headers: {'cublasLt.h': '/home/xzq/workspace/qwen/.venv/lib/python3.12/site-packages/nvidia/cu13/include/cublasLt.h', 'curand_kernel.h': '/home/xzq/workspace/qwen/.venv/lib/python3.12/site-packages/nvidia/cu13/include/curand_kernel.h', 'cuda_fp16.h': '/home/xzq/workspace/qwen/.venv/lib/python3.12/site-packages/nvidia/cu13/include/cuda_fp16.h', 'cuda_runtime_api.h': '/home/xzq/workspace/qwen/.venv/lib/python3.12/site-packages/nvidia/cu13/include/cuda_runtime_api.h'}
+flashinfer archs: ["(12, '0f')"]
+transformers: 5.20.2 qwen3_5=True
+flashinfer: 0.7.2 packages={'flashinfer-python': '0.7.2', 'flashinfer-cubin': None, 'flashinfer-jit-cache': None}
+checks:
+  PASS torch_import
+  PASS cuda_available
+  PASS capability_12_0
+  PASS eager_alloc
+  PASS nvcc_ge_12_8
+  PASS cuda_headers_present
+  PASS qwen3_5_present
+  PASS flashinfer_import
+  PASS mm_fp4_present
+  PASS flashinfer_arch_12
+mm_fp4 signature: (a: torch.Tensor, b: torch.Tensor, a_descale: torch.Tensor, b_descale: torch.Tensor, alpha: Optional[torch.Tensor] = None, out_dtype: torch.dtype = torch.bfloat16, out: Optional[torch.Tensor] = None, block_size: int = 16, use_8x4_sf_layout: bool = False, backend: Literal['cudnn', 'trtllm', 'cutlass', 'cute-dsl', 'cutedsl_low_latency', 'b12x', 'cake', 'auto'] = 'auto', use_nvfp4: bool = True, enable_pdl: bool = True) -> torch.Tensor
+result: PASS
+output: results/m2/20261020T224231

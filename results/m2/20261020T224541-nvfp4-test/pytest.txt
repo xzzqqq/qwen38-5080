@@ -1,0 +1,5 @@
+command: .venv/bin/python -m pytest tests/ops/test_nvfp4.py -q --disable-warnings
+time: 2026-10-20T22:45:41+08:00
+
+.............                                                            [100%]
+13 passed, 49 warnings in 1.63s

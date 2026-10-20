@@ -1,0 +1,47 @@
+[
+  {
+    "preset": "in_proj_qkv",
+    "m": 1,
+    "n": 10240,
+    "k": 5120,
+    "backend": "cutlass",
+    "full_ms": 0.11739199981093407,
+    "quant_ms": 0.025839999318122864,
+    "gemm_ms": 0.0636960007250309,
+    "other_ms": 0.027855999767780304,
+    "logical_gbs": 251.41893866306697,
+    "weight_gb": 0.029491208,
+    "total_bytes": 29514572,
+    "peak_allocated_mib": 72.36474609375
+  },
+  {
+    "preset": "in_proj_qkv",
+    "m": 8,
+    "n": 10240,
+    "k": 5120,
+    "backend": "cutlass",
+    "full_ms": 0.10699199885129929,
+    "quant_ms": 0.025456000119447708,
+    "gemm_ms": 0.06670400127768517,
+    "other_ms": 0.014831997454166412,
+    "logical_gbs": 277.3860879190369,
+    "weight_gb": 0.029491208,
+    "total_bytes": 29678092,
+    "peak_allocated_mib": 72.60400390625
+  },
+  {
+    "preset": "in_proj_qkv",
+    "m": 128,
+    "n": 10240,
+    "k": 5120,
+    "backend": "cutlass",
+    "full_ms": 0.1106560006737709,
+    "quant_ms": 0.02584000024944544,
+    "gemm_ms": 0.06115199998021126,
+    "other_ms": 0.023664000444114208,
+    "logical_gbs": 293.53394124336114,
+    "weight_gb": 0.029491208,
+    "total_bytes": 32481292,
+    "peak_allocated_mib": 76.70556640625
+  }
+]

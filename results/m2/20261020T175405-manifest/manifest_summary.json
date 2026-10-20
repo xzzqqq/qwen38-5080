@@ -1,0 +1,140 @@
+{
+  "run_id": "20261020T175405",
+  "timestamp": "2026-10-20T17:54:05+08:00",
+  "model_dir": "/home/xzq/workspace/qwen/models/Qwen3.8-27B-NVFP4-RTX5090",
+  "repo": "gittensor-model-hub/Qwen3.8-27B-NVFP4-RTX5090",
+  "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+  "quantization": {
+    "quant_algo": "NVFP4",
+    "kv_cache_quant_algo": "FP8",
+    "group_size": 16,
+    "exclude_modules_count": 146
+  },
+  "text_config": {
+    "num_hidden_layers": 64,
+    "full_attention_layers": 16,
+    "linear_attention_layers": 48,
+    "hidden_size": 5120,
+    "vocab_size": 248320
+  },
+  "shards": {
+    "model-00001-of-00002.safetensors": {
+      "header_bytes": 162080,
+      "file_bytes": 9972777720,
+      "tensors": 1312
+    },
+    "model-00002-of-00002.safetensors": {
+      "header_bytes": 134960,
+      "file_bytes": 7943334864,
+      "tensors": 1075
+    }
+  },
+  "index_metadata": {
+    "total_parameters": 15193246960,
+    "total_size": 17915815528
+  },
+  "tensor_count": 2387,
+  "weight_param_sum": 27356377984,
+  "total_bytes": 17915815528,
+  "total_gb": 17.915815528,
+  "by_placement": {
+    "gpu": {
+      "tensors": 2053,
+      "bytes": 14451558536
+    },
+    "host": {
+      "tensors": 1,
+      "bytes": 2542796800
+    },
+    "skip": {
+      "tensors": 333,
+      "bytes": 921460192
+    }
+  },
+  "by_role": {
+    "lm_head_input_scale": {
+      "tensors": 1,
+      "bytes": 4
+    },
+    "lm_head_nvfp4_weight": {
+      "tensors": 1,
+      "bytes": 635699200
+    },
+    "lm_head_weight_scale": {
+      "tensors": 1,
+      "bytes": 79462400
+    },
+    "lm_head_global_scale": {
+      "tensors": 1,
+      "bytes": 4
+    },
+    "host_embedding": {
+      "tensors": 1,
+      "bytes": 2542796800
+    },
+    "norm": {
+      "tensors": 209,
+      "bytes": 1349632
+    },
+    "state_param": {
+      "tensors": 96,
+      "bytes": 9216
+    },
+    "high_precision_weight": {
+      "tensors": 144,
+      "bytes": 51118080
+    },
+    "nvfp4_input_scale": {
+      "tensors": 400,
+      "bytes": 1600
+    },
+    "nvfp4_weight": {
+      "tensors": 400,
+      "bytes": 12163481600
+    },
+    "nvfp4_weight_scale": {
+      "tensors": 400,
+      "bytes": 1520435200
+    },
+    "nvfp4_global_scale": {
+      "tensors": 400,
+      "bytes": 1600
+    },
+    "vision": {
+      "tensors": 333,
+      "bytes": 921460192
+    }
+  },
+  "gpu_text_gb": 14.451558536,
+  "host_embedding_gb": 2.5427968,
+  "vision_skip_gb": 0.921460192,
+  "nvfp4": {
+    "weight_tensors": 401,
+    "logical_params": 25598361600,
+    "storage_bytes": 12799180800,
+    "storage_gb": 12.7991808,
+    "effective_bits_per_param": 4.0
+  },
+  "vram_account": {
+    "usable_gb": 16.610492415999996,
+    "gpu_text_weights_gb": 14.451558536,
+    "kv_bf16_8k_gb": 0.536870912,
+    "kv_fp8_8k_gb": 0.268435456,
+    "gdn_state_gb": 0.150994944,
+    "conv_state_gb": 0.00786432,
+    "workspace_gb": 0.5,
+    "workspace_note": "占位值；M2 §4 实测",
+    "cuda_context_gb": 0.2821718016,
+    "cuda_context_note": "preflight 中 torch 初始化后 free 减少 269.1 MiB",
+    "estimated_total_bf16_kv_gb": 15.9294605136,
+    "estimated_margin_bf16_kv_gb": 0.6810319023999956,
+    "estimated_total_fp8_kv_gb": 15.661025057600002,
+    "estimated_margin_fp8_kv_gb": 0.9494673583999944,
+    "assumptions": [
+      "context=8192",
+      "KV BF16/FP8 按全量 16 个 full-attention 层计算",
+      "GDN recurrent state + conv state 按 FP32 计算",
+      "workspace 和 CUDA context 为占位/预检值，需 M2 §4 实测"
+    ]
+  }
+}

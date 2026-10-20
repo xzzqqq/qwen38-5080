@@ -1,0 +1,22 @@
+{
+  "usable_gb": 16.610492415999996,
+  "gpu_text_weights_gb": 14.451558536,
+  "kv_bf16_8k_gb": 0.536870912,
+  "kv_fp8_8k_gb": 0.268435456,
+  "gdn_state_gb": 0.150994944,
+  "conv_state_gb": 0.00786432,
+  "workspace_gb": 0.5,
+  "workspace_note": "占位值；M2 §4 实测",
+  "cuda_context_gb": 0.2821718016,
+  "cuda_context_note": "preflight 中 torch 初始化后 free 减少 269.1 MiB",
+  "estimated_total_bf16_kv_gb": 15.9294605136,
+  "estimated_margin_bf16_kv_gb": 0.6810319023999956,
+  "estimated_total_fp8_kv_gb": 15.661025057600002,
+  "estimated_margin_fp8_kv_gb": 0.9494673583999944,
+  "assumptions": [
+    "context=8192",
+    "KV BF16/FP8 按全量 16 个 full-attention 层计算",
+    "GDN recurrent state + conv state 按 FP32 计算",
+    "workspace 和 CUDA context 为占位/预检值，需 M2 §4 实测"
+  ]
+}

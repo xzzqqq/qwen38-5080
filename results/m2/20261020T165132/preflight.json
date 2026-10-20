@@ -1,0 +1,112 @@
+{
+  "run_id": "20261020T165132",
+  "timestamp": "2026-10-20T16:51:32+08:00",
+  "cwd": "/home/xzq/workspace/qwen",
+  "python": {
+    "version": "3.12.15 (main, Oct 13 2026, 16:52:04) [GCC 15.3.0]",
+    "executable": "/home/xzq/workspace/qwen/.venv/bin/python",
+    "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35"
+  },
+  "git": {
+    "commit": "9d70e2f7bfc82b89ec06f9329da24d0325296a12",
+    "dirty": true,
+    "status": "M README.md\n M docs/decisions.md\n M docs/journal/2026-10-19-m1-llamacpp-reference.md\n M docs/project.md\n M docs/roadmap.md\n?? docs/plans/m2.md\n?? scripts/m2_preflight.py"
+  },
+  "nvidia_smi": {
+    "cmd": [
+      "nvidia-smi",
+      "--query-gpu=name,driver_version,memory.total,memory.used,memory.free,compute_cap,display_active",
+      "--format=csv,noheader"
+    ],
+    "returncode": 0,
+    "stdout": "NVIDIA GeForce RTX 5080, 580.105.08, 16303 MiB, 0 MiB, 15841 MiB, 12.0, Disabled",
+    "stderr": ""
+  },
+  "torch": {
+    "version": "2.14.1+cu130",
+    "cuda_runtime": "13.0",
+    "cudnn": 92400,
+    "cuda_available": true,
+    "alloc_test": {
+      "ok": true,
+      "dtype": "torch.bfloat16",
+      "shape": [
+        8,
+        8
+      ],
+      "sample": 2.681945323944092
+    },
+    "gpu": {
+      "name": "NVIDIA GeForce RTX 5080",
+      "capability": [
+        12,
+        0
+      ],
+      "total_memory_mib": 15840.1,
+      "free_memory_mib": 15571.9,
+      "total_memory_mib_mem_get_info": 15840.1,
+      "multi_processor_count": 84
+    }
+  },
+  "transformers": {
+    "version": "5.20.2",
+    "qwen3_5_module": "ModuleSpec(name='transformers.models.qwen3_5', loader=<_frozen_importlib_external.SourceFileLoader object at 0x7fe63e2574d0>, origin='/home/xzq/workspace/qwen/.venv/lib/python3.12/site-packages/transformers/models/qwen3_5/__init__.py', submodule_search_locations=['/home/xzq/workspace/qwen/.venv/lib/python3.12/site-packages/transformers/models/qwen3_5'])",
+    "qwen3_5_classes": [
+      "Qwen3_5Config",
+      "Qwen3_5ForCausalLM",
+      "Qwen3_5ForConditionalGeneration",
+      "Qwen3_5ForSequenceClassification",
+      "Qwen3_5ForTokenClassification",
+      "Qwen3_5Model",
+      "Qwen3_5MoeConfig",
+      "Qwen3_5MoeForCausalLM",
+      "Qwen3_5MoeForConditionalGeneration",
+      "Qwen3_5MoeModel",
+      "Qwen3_5MoePreTrainedModel",
+      "Qwen3_5MoeTextConfig",
+      "Qwen3_5MoeTextModel",
+      "Qwen3_5MoeVisionConfig",
+      "Qwen3_5MoeVisionModel",
+      "Qwen3_5PreTrainedModel",
+      "Qwen3_5TextConfig",
+      "Qwen3_5TextForSequenceClassification",
+      "Qwen3_5TextModel",
+      "Qwen3_5Tokenizer",
+      "Qwen3_5VisionConfig",
+      "Qwen3_5VisionModel"
+    ],
+    "qwen3_5_config_keys": [
+      "qwen3_5",
+      "qwen3_5_moe",
+      "qwen3_5_moe_text",
+      "qwen3_5_moe_vision",
+      "qwen3_5_text",
+      "qwen3_5_vision"
+    ],
+    "qwen3_5_present": true
+  },
+  "flashinfer": {
+    "packages": {
+      "flashinfer-python": "0.7.2",
+      "flashinfer-cubin": null,
+      "flashinfer-jit-cache": null
+    },
+    "mm_fp4": {
+      "exists": true,
+      "signature": "(a: torch.Tensor, b: torch.Tensor, a_descale: torch.Tensor, b_descale: torch.Tensor, alpha: Optional[torch.Tensor] = None, out_dtype: torch.dtype = torch.bfloat16, out: Optional[torch.Tensor] = None, block_size: int = 16, use_8x4_sf_layout: bool = False, backend: Literal['cudnn', 'trtllm', 'cutlass', 'cute-dsl', 'cutedsl_low_latency', 'b12x', 'cake', 'auto'] = 'auto', use_nvfp4: bool = True, enable_pdl: bool = True) -> torch.Tensor",
+      "doc_head": "MM FP4\n\nParameters\n----------\na: torch.Tensor\n    Input tensor, shape (m, k), fp4 e2m1fn_x2 or uint8.\n\nb: torch.Tensor\n    Mat2 tensor, shape (k, n), should be column major, fp4 e2m1fn_x2 or uint8.\n\na_descale: torch.Tensor\n    Block scale tensor for A, shape (m, k // block_size), float8_e4m3fn or uint8.\n\nb_descale: torch.Tensor\n    Block scale tensor for B, shape (k, n // block_size), float8_e4m3fn or uint8.\n\nalpha: Optional[torch.Tensor]\n    Global scale tensor, float scalar, or a float32 tensor of ``m``\n    elements holding one dequant scale per row of ``a`` (activations\n    quantized with a dynamic per-token NVFP4 global scale). The per-token\n    form is implemented by the ``\"cute-dsl\"`` backend on SM100/SM103\n    (``backend=\"auto\"`` selects it) and by the experimental ``\"cake\"``\n    backend (explicit opt-in).\n\nout_dtype: torch.dtype\n    Output dtype, bf16 or fp16. When ``backend=\"trtllm\"``, only ``bf16`` is supported.\n\nout: Optional[torch.Tensor]\n    Out tensor, shape (m, n), bf16 or fp16, defaults to ``None``.\n\nblock_size: int\n    Block size for FP4 quantization, only 16 and 32 are supported. 16 in case of nvfp4 quantization. 32 in case of mxfp4 quantization.\n\nuse_8x4_sf_layou"
+    },
+    "show_config": null,
+    "version": "0.7.2"
+  },
+  "checks": {
+    "torch_import": true,
+    "cuda_available": true,
+    "capability_12_0": true,
+    "eager_alloc": true,
+    "qwen3_5_present": true,
+    "flashinfer_import": true,
+    "mm_fp4_present": true
+  },
+  "ok": true
+}

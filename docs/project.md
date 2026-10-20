@@ -20,11 +20,12 @@
 | 项 | 内容 |
 |---|---|
 | 模型 | 共 64 层：48 层 Gated DeltaNet（线性 attention，带递归 state），16 层 gated attention（GQA 24/4，head_dim 256）。hidden 5120，FFN 17408，vocab 248320 |
-| GPU | 带宽 960 GB/s；显存 16 GiB（= 17.18 GB）；有原生 FP4 tensor core（`mxf4nvf4`）；BF16 / FP8 在 FP32 累加时只有半速 |
+| GPU | 带宽 960 GB/s；显存 16 GiB（= 17.18 GB），**空闲可用 16.61 GB**（15841 MiB，驱动保留 463 MiB）；有原生 FP4 tensor core（`mxf4nvf4`）；BF16 / FP8 在 FP32 累加时只有半速 |
 | 瓶颈 | bs=1 decode 每个 token 读约 15 GB、算 51 GFLOP，算术强度比机器平衡点低约 264 倍。因此 速度 ≈ 带宽 ÷ 每步要读的字节数 |
-| SOL | AR：64 tok/s；DFlash2 spec decode：236–314 tok/s |
+| SOL | AR：64 tok/s（FP8 KV）/ 63（BF16 KV）；DFlash2 spec decode：236–314 tok/s |
 | 现有推理栈（外推） | AR：46–50 tok/s；DFlash2：125–170 tok/s |
-| 显存 | 带上 DFlash2 共需 16.4–16.7 GB，余量只有 0.35–0.7 GB。spec decode 回滚时不能保存整份 state 快照，否则要多占 1.21 GB |
+| AR 实机参照（M1，外部） | IQ4_XS：55.90 / 54.19 tok/s（depth 512 / 8192），逻辑带宽约 80%；GPU 权重 13.35 GB，比 NVFP4 少约 1.06 GB，不能直接外推 |
+| 显存 | 带上 DFlash2 共需 16.39–16.74 GB；对 16.61 GB 可用余量 +0.22 ~ −0.13 GB，是否够用待 Phase 3 验证。spec decode 回滚时不能保存整份 state 快照，否则要多占 1.21 GB |
 
 数字的推导见 `docs/roadmap.md` §4。
 

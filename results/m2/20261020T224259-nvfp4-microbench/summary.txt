@@ -1,0 +1,8 @@
+run_id: 20261020T224259
+backend: cutlass
+note: M2 diagnostic only; not a tok/s gate
+
+preset, m, n, k, full_ms, quant_ms, gemm_ms, other_ms, logical_gbs, peak_mib
+in_proj_qkv,1,10240,5120,0.1174,0.0258,0.0637,0.0279,251.42,72
+in_proj_qkv,8,10240,5120,0.1070,0.0255,0.0667,0.0148,277.39,73
+in_proj_qkv,128,10240,5120,0.1107,0.0258,0.0612,0.0237,293.53,77
