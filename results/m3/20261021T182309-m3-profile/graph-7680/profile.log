@@ -1,13 +1,0 @@
-[transformers] `causal_conv1d_fn` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
-[transformers] `chunk_gated_delta_rule` is falling back to its reference PyTorch implementation because `flash-linear-attention` is not installed. This is correct but much slower; install `flash-linear-attention` for the optimized kernel.
-[transformers] `causal_conv1d_update` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
-[transformers] `fused_recurrent_gated_delta_rule` is falling back to its reference PyTorch implementation because `flash-linear-attention` is not installed. This is correct but much slower; install `flash-linear-attention` for the optimized kernel.
-Capture range started in the application.
-Capture range ended in the application.
-Generating '/tmp/nsys-xzq/nsys-report-0506.qdstrm'
-[1/1] [0%                          ] trace.nsys-repProcessing events...
-[1/1] [0%                          ] trace.nsys-rep[1/1] [5%                          ] trace.nsys-rep[1/1] [12%                         ] trace.nsys-rep[1/1] [===22%                      ] trace.nsys-rep[1/1] [=====32%                    ] trace.nsys-rep[1/1] [========42%                 ] trace.nsys-rep[1/1] [===========51%              ] trace.nsys-rep[1/1] [========================100%] trace.nsys-rep[1/1] [========================100%] trace.nsys-rep
-{"execution": "graph", "depth": 7680, "capacity": 8192, "steps": 8}
-wall per step ms: [45.92, 45.48, 44.87, 44.7, 44.68, 44.66, 44.68, 44.66]
-Generated:
-	/home/xzq/workspace/qwen/results/m3/20261021T182309-m3-profile/graph-7680/trace.nsys-rep
