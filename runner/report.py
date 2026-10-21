@@ -188,7 +188,9 @@ def provenance(
     if extra:
         data.update(extra)
     if out_dir is not None:
-        write_source_artifacts(Path(out_dir), patch, manifest)
+        out = Path(out_dir)
+        save_json(out / "provenance.json", data)
+        write_source_artifacts(out, patch, manifest)
     return data
 
 
