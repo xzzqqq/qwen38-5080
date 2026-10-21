@@ -111,7 +111,7 @@ M1 只提供低成本外部参照；M2 建立正确实现；M3 建立自写 runn
 | 里程碑 | Status | 内容 | 退出标准 | 粗估 |
 |---|---|---|---|---|
 | M1 实机参照 | ✅ 完成 2026-10-19 | 用 llama.cpp 跑 unsloth 的 `UD-IQ4_XS`（14.25 GB），用 `llama-bench` 测 depth 512 和 8192；固定 commit，脚本复现。详细清单见 `docs/plans/m1.md` | 已拿到：55.90 / 54.19 tok/s；逻辑带宽约 80%；可用显存 16.61 GB；真实生成正常。详见 [M1 journal](journal/2026-10-19-m1-llamacpp-reference.md) | 半天 |
-| M2 拼装 runner 跑通 | 进行中（1a/1b/§2/§3 完成；chunked 一致性待查） | 执行清单见 [docs/plans/m2.md](plans/m2.md)。提前固定依赖版本和 checkpoint revision；用 transformers 里 qwen3_5 的文本模型做骨架；实现 NVFP4Linear（调用 FlashInfer `mm_fp4`）；embedding 放 CPU；只加载 `model.language_model.*` 和 `lm_head.*`，并列出所有保留高精度的 tensor（`in_proj_a/b`、`conv1d`、各个 norm 等）；核实 FP4 nibble / scale 的 tensor 布局、`alpha = input_scale × weight_scale_2`、FlashInfer backend、`M=1 / 8` 可用性和显存账；先用 eager 模式跑 | W4A4 对拍（相同 activation quantization）通过；量化与布局转换分别验证；runner 与参考 runner 数值对拍（同一 token 输入，逐层 hidden / cache/state / 最终 logits，容差先固定）；8K 容量验证通过；**不设 tok/s 门槛** | 2–3 天 |
+| M2 拼装 runner 跑通 | ✅ 完成 2026-10-21 | 执行清单见 [docs/plans/m2.md](plans/m2.md)。数值、生成、容量验收见 [M2 关闭记录](journal/2026-10-21-m2-close.md)；ShapeStableLinear 和 eager reference 冻结给 M3 | W4A4 对拍通过；runner 数值（3 prompt ×16 步）通过；三条真实 prompt 2048 上限正常 EOS；512/7680 容量通过；8K peak 15.62 GB，free 0.413 GB；**不设 tok/s 门槛** | 2–3 天 |
 | M3 decode baseline | 未开始 | 改用 static cache，自己写 decode loop 并录成 CUDA Graph；按 §2 写固定 harness（多次运行，报告中位数和波动，记录峰值显存）；按实际 tensor 布局和 KV 格式重算每步字节并算 SOL；抓第一张 Nsight Systems 时间线；分别报告模型执行速度和含 sampling 的有效输出速度 | 拿到 baseline tok/s 和时间分布；top 热点明确；加载 / repack / prefill / decode 的峰值显存有记录；BF16 / FP8 KV 分开报 | 1–2 天 |
 
 ### 6.2 优化阶段

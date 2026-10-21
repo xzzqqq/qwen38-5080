@@ -1,0 +1,37 @@
+run_id: 20261021T120440
+ok: True
+load: {'load_s': 1.3707420825958252, 'manifest': '/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json', 'quantized_linears': 401, 'high_precision_tensors': 449, 'shape_stable_linears': 96, 'skipped_unused': 0, 'gpu_allocated_gb': 14.45758976, 'gpu_reserved_gb': 14.556332032, 'gpu_free_gb': 1.727922176, 'gpu_total_gb': 16.609509376}
+
+=== results/payload_math.json
+prompt_tokens=90 fixed=16
+nvfp4={'count': 400, 'failures': 0, 'worst': {'name': '5120x17408', 'max_abs': 1.6495361328125, 'mean_abs': 0.0007490930729545653, 'nrmse': 0.0021810694597661495, 'cosine': 0.9999980926513672, 'max_rel': 0.003420155495405197, 'finite': True}}
+activation_quant={'count': 400, 'failures': 0, 'worst': {'name': '17408x5120:act', 'max_abs': 1.640625, 'mean_abs': 0.00013281141582410783, 'nrmse': 0.015981264412403107, 'cosine': 0.999872624874115, 'max_rel': 0.0714285746216774, 'finite': True}}
+gdn={'count': 48, 'failures': 0, 'worst': {'name': 'chunk:seq90', 'max_abs': 0.00048828125, 'mean_abs': 1.7752288528072313e-10, 'nrmse': 0.00015145621728152037, 'cosine': 0.9999998807907104, 'max_rel': 0.0034722222480922937, 'finite': True}}
+gdn_state={'count': 48, 'failures': 0, 'worst': {'name': 'chunk:seq90:state', 'max_abs': 1.811981201171875e-05, 'mean_abs': 1.0693139707029786e-09, 'nrmse': 7.895486646702921e-07, 'cosine': 0.9999998807907104, 'max_rel': 1.5023812238723622e-06, 'finite': True}}
+lm_head={'max_abs': 0.058071136474609375, 'mean_abs': 0.00420657591894269, 'nrmse': 0.0016676371451467276, 'cosine': 0.9999985098838806, 'max_rel': 0.0021294925827533007, 'finite': True}
+prefill_cache={'cache_len': 90, 'finite': True, 'kv_layers': 16, 'recurrent_layers': 48, 'conv_layers': 48, 'kv_dtypes': ['torch.bfloat16'], 'recurrent_dtypes': ['torch.float32'], 'conv_dtypes': ['torch.bfloat16']}
+final_cache={'cache_len': 106, 'finite': True, 'kv_layers': 16, 'recurrent_layers': 48, 'conv_layers': 48, 'kv_dtypes': ['torch.bfloat16'], 'recurrent_dtypes': ['torch.float32'], 'conv_dtypes': ['torch.bfloat16']}
+elapsed_s=4.573 lm_head_s=0.141
+
+=== results/payload_code.json
+prompt_tokens=84 fixed=16
+nvfp4={'count': 400, 'failures': 0, 'worst': {'name': '5120x17408', 'max_abs': 1.6495361328125, 'mean_abs': 0.0007816149736754596, 'nrmse': 0.0021794296335428953, 'cosine': 0.9999980926513672, 'max_rel': 0.003478769911453128, 'finite': True}}
+activation_quant={'count': 400, 'failures': 0, 'worst': {'name': '17408x5120:act', 'max_abs': 2.4375, 'mean_abs': 0.0004418929456733167, 'nrmse': 0.015854377299547195, 'cosine': 0.9998742938041687, 'max_rel': 0.05000000447034836, 'finite': True}}
+gdn={'count': 48, 'failures': 0, 'worst': {'name': 'chunk:seq84', 'max_abs': 6.103515625e-05, 'mean_abs': 1.0743259754031342e-10, 'nrmse': 5.5390759371221066e-05, 'cosine': 0.9999998807907104, 'max_rel': 0.0005319148767739534, 'finite': True}}
+gdn_state={'count': 48, 'failures': 0, 'worst': {'name': 'chunk:seq84:state', 'max_abs': 1.811981201171875e-05, 'mean_abs': 9.659260058469954e-10, 'nrmse': 7.135377018130384e-07, 'cosine': 0.9999998807907104, 'max_rel': 1.3060860055702506e-06, 'finite': True}}
+lm_head={'max_abs': 0.0449066162109375, 'mean_abs': 0.004692987538874149, 'nrmse': 0.0016622513066977262, 'cosine': 0.9999985694885254, 'max_rel': 0.0013495363527908921, 'finite': True}
+prefill_cache={'cache_len': 84, 'finite': True, 'kv_layers': 16, 'recurrent_layers': 48, 'conv_layers': 48, 'kv_dtypes': ['torch.bfloat16'], 'recurrent_dtypes': ['torch.float32'], 'conv_dtypes': ['torch.bfloat16']}
+final_cache={'cache_len': 100, 'finite': True, 'kv_layers': 16, 'recurrent_layers': 48, 'conv_layers': 48, 'kv_dtypes': ['torch.bfloat16'], 'recurrent_dtypes': ['torch.float32'], 'conv_dtypes': ['torch.bfloat16']}
+elapsed_s=4.459 lm_head_s=0.139
+
+=== results/payload_chat.json
+prompt_tokens=72 fixed=16
+nvfp4={'count': 400, 'failures': 0, 'worst': {'name': '5120x17408', 'max_abs': 1.6495361328125, 'mean_abs': 0.0007953403983265162, 'nrmse': 0.00219128280878067, 'cosine': 0.9999980926513672, 'max_rel': 0.003420155495405197, 'finite': True}}
+activation_quant={'count': 400, 'failures': 0, 'worst': {'name': '17408x5120:act', 'max_abs': 1.4285712242126465, 'mean_abs': 0.00013404573837760836, 'nrmse': 0.016216762363910675, 'cosine': 0.9998688697814941, 'max_rel': 0.0714285746216774, 'finite': True}}
+gdn={'count': 48, 'failures': 0, 'worst': {'name': 'chunk:seq72', 'max_abs': 0.0078125, 'mean_abs': 1.7871251145606948e-08, 'nrmse': 0.00010196078073931858, 'cosine': 0.9999998807907104, 'max_rel': 0.0020242915488779545, 'finite': True}}
+gdn_state={'count': 48, 'failures': 0, 'worst': {'name': 'chunk:seq72:state', 'max_abs': 3.814697265625e-06, 'mean_abs': 8.246749949591958e-10, 'nrmse': 6.001501446917246e-07, 'cosine': 0.9999999403953552, 'max_rel': 1.1183069545950275e-06, 'finite': True}}
+lm_head={'max_abs': 0.05672454833984375, 'mean_abs': 0.006496284622699022, 'nrmse': 0.0016446089139208198, 'cosine': 0.9999986886978149, 'max_rel': 0.001841304125264287, 'finite': True}
+prefill_cache={'cache_len': 72, 'finite': True, 'kv_layers': 16, 'recurrent_layers': 48, 'conv_layers': 48, 'kv_dtypes': ['torch.bfloat16'], 'recurrent_dtypes': ['torch.float32'], 'conv_dtypes': ['torch.bfloat16']}
+final_cache={'cache_len': 88, 'finite': True, 'kv_layers': 16, 'recurrent_layers': 48, 'conv_layers': 48, 'kv_dtypes': ['torch.bfloat16'], 'recurrent_dtypes': ['torch.float32'], 'conv_dtypes': ['torch.bfloat16']}
+elapsed_s=4.397 lm_head_s=0.137
+

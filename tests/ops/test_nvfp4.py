@@ -23,6 +23,7 @@ from runner.ops.nvfp4.reference import (
     pack_e2m1,
     quantize_activation_reference,
     swizzle_scale_128x4,
+    unswizzle_scale_128x4,
     unpack_e2m1,
 )
 
@@ -183,6 +184,13 @@ def test_activation_quant_matches_flashinfer(real_tensors):
         a_sf.view(torch.uint8),
     )
     assert (deq - ref_deq).abs().max().item() <= 1.0e-6
+
+
+def test_scale_swizzle_roundtrip():
+    scale = torch.randn(129, 20, dtype=torch.float32)
+    swizzled = swizzle_scale_128x4(scale)
+    restored = unswizzle_scale_128x4(swizzled, 129, 20)
+    assert torch.equal(restored, scale)
 
 
 @GPU

@@ -89,3 +89,22 @@
   - 用任意 full 长度做 chunked 的 bitwise reference：会把 attention KV 长度差异
     误判成实现 bug。
   - 用“短 prompt 单段、长上下文只 chunked”绕过：长上下文路径仍未验证。
+
+## 2026-10-21 M2 关闭与验收口径
+
+- 决定：
+  - M2 以 `docs/journal/2026-10-21-m2-close.md` 的记录关闭；ShapeStableLinear
+    保留，当前实现冻结给 M3 做 correctness reference。
+  - runner 数值容差固定为：NVFP4Linear `nrmse ≤ 5e-3`、`cosine ≥ 0.99999`、
+    `max_rel ≤ 1e-2`；GDN `nrmse ≤ 1e-3`、`cosine ≥ 0.99999`、`max_rel ≤ 5e-3`。
+  - activation quant 的 PyTorch reference 与 FlashInfer 有约 0.4% code 不同，
+    单独记录，容差 `nrmse ≤ 2e-2`、`cosine ≥ 0.9995`、`max_rel ≤ 1e-1`；
+    不混入 NVFP4Linear 的严格容差。
+  - 8K 容量以 15.620 GB allocated / 15.859 GB reserved、free 0.413 GB 作为
+    baseline；M3 的 static cache/graph 必须和 eager 输出对拍后再报性能。
+- 理由：3 prompt ×16 步、真实生成 2048 上限、512/7680 容量都通过；NVFP4
+  的同一 A/W dequant reference 0/400 failure，GDN recurrence 0/48 failure。
+- 被否决：
+  - 把 activation quant rounding 差异直接算成 NVFP4Linear 失败。
+  - 用任意 full 长度做 chunked prefill 的 bitwise reference。
+  - 在 M3 性能 baseline 之前继续改 padding/GDN/conv kernel。

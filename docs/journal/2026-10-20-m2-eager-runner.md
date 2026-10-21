@@ -5,6 +5,8 @@
 把 NVFP4 权重装进 transformers 的 Qwen3_5 文本骨架，跑通 chunked prefill +
 greedy decode，验证三条真实 prompt 和 8K 容量。
 
+最终 M2 关闭记录见 [2026-10-21 M2 关闭](2026-10-21-m2-close.md)。
+
 ## Loader
 
 - `Qwen3_5ForCausalLM` 先在 **meta** 设备构造，不分配整份 BF16 权重；

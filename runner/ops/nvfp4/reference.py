@@ -162,6 +162,20 @@ def swizzle_scale_128x4(scale: torch.Tensor) -> torch.Tensor:
     return swizzled.reshape(rows_p, cols_p)
 
 
+def unswizzle_scale_128x4(
+    swizzled: torch.Tensor, rows: int, cols: int
+) -> torch.Tensor:
+    """``swizzle_scale_128x4`` 的逆变换，裁回原始 [rows, cols]。"""
+    rows_p, cols_p = swizzled.shape
+    if rows_p % 128 != 0 or cols_p % 4 != 0:
+        raise ValueError(f"bad swizzled shape: {tuple(swizzled.shape)}")
+    if rows > rows_p or cols > cols_p:
+        raise ValueError("requested shape exceeds padded swizzled shape")
+    view = swizzled.reshape(1, rows_p // 128, cols_p // 4, 32, 4, 4)
+    restored = view.permute(0, 1, 4, 3, 2, 5).reshape(rows_p, cols_p)
+    return restored[:rows, :cols].contiguous()
+
+
 def error_metrics(out: torch.Tensor, ref: torch.Tensor) -> dict[str, float]:
     """BF16 输出与 float32 reference 的误差指标。"""
     o = out.float()

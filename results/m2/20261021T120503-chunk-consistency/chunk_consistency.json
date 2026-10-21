@@ -1,0 +1,21 @@
+{
+  "length": 256,
+  "chunk": 128,
+  "max_abs": 0.0,
+  "cosine": 1.0,
+  "argmax_full": 271,
+  "argmax_chunk": 271,
+  "exact": true,
+  "load": {
+    "load_s": 1.3746769428253174,
+    "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+    "quantized_linears": 401,
+    "high_precision_tensors": 449,
+    "shape_stable_linears": 96,
+    "skipped_unused": 0,
+    "gpu_allocated_gb": 14.45758976,
+    "gpu_reserved_gb": 14.556332032,
+    "gpu_free_gb": 1.727922176,
+    "gpu_total_gb": 16.609509376
+  }
+}
