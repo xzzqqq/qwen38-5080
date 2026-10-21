@@ -1,0 +1,199 @@
+{
+  "execution": "static-exact",
+  "depth": 512,
+  "capacity": 1024,
+  "steps": 8,
+  "load": {
+    "load_s": 1.4153399467468262,
+    "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+    "quantized_linears": 401,
+    "high_precision_tensors": 449,
+    "shape_stable_linears": 96,
+    "skipped_unused": 0,
+    "gpu_allocated_gb": 14.45758976,
+    "gpu_reserved_gb": 14.556332032,
+    "gpu_free_gb": 1.714290688,
+    "gpu_total_gb": 16.609509376
+  },
+  "harness": {
+    "execution": "static-exact",
+    "capacity": 1024,
+    "prefill_chunk": 128,
+    "max_context": 8192,
+    "input_buffer_shape": [
+      1,
+      1,
+      5120
+    ],
+    "input_buffer_ptr": 31705255936,
+    "input_buffer_dtype": "torch.bfloat16",
+    "pinned_staging_shape": [
+      1,
+      1,
+      5120
+    ],
+    "host_embedding_bytes": 2542796800,
+    "cache": {
+      "kv_bytes": 67108864,
+      "gdn_state_bytes": 150994944,
+      "conv_state_bytes": 3932160,
+      "kv_layers": 16,
+      "linear_layers": 48,
+      "kv_dtypes": [
+        "torch.bfloat16"
+      ],
+      "gdn_dtypes": [
+        "torch.float32"
+      ],
+      "conv_dtypes": [
+        "torch.bfloat16"
+      ],
+      "finite": true
+    }
+  },
+  "graph": null,
+  "rows": [
+    {
+      "step": 0,
+      "wall_ms": 112.97364695928991,
+      "token": 3841
+    },
+    {
+      "step": 1,
+      "wall_ms": 110.15619011595845,
+      "token": 5388
+    },
+    {
+      "step": 2,
+      "wall_ms": 109.48528000153601,
+      "token": 2064
+    },
+    {
+      "step": 3,
+      "wall_ms": 111.86652281321585,
+      "token": 1414
+    },
+    {
+      "step": 4,
+      "wall_ms": 110.7624089345336,
+      "token": 13477
+    },
+    {
+      "step": 5,
+      "wall_ms": 110.07458111271262,
+      "token": 37550
+    },
+    {
+      "step": 6,
+      "wall_ms": 111.66044394485652,
+      "token": 33075
+    },
+    {
+      "step": 7,
+      "wall_ms": 111.09398514963686,
+      "token": 888
+    }
+  ],
+  "provenance": {
+    "created_at": "2026-10-22T02:00:10.786272+08:00",
+    "git": {
+      "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+      "dirty": false,
+      "status": [
+        "?? results/m3/"
+      ],
+      "untracked_source": [],
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0,
+      "untracked_files": [
+        "results/m3/20261022T001856-m3-check/check.json",
+        "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+        "results/m3/20261022T001856-m3-check/graph-8192/report.json",
+        "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+        "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+        "results/m3/20261022T001856-m3-check/provenance.json",
+        "results/m3/20261022T001856-m3-check/smoke-graph/report.json",
+        "results/m3/20261022T001856-m3-check/source_manifest.json",
+        "results/m3/20261022T001856-m3-check/summary.txt",
+        "results/m3/20261022T002310-m3-memory/cap-512-1024/result.json",
+        "results/m3/20261022T002310-m3-memory/cap-8192/result.json",
+        "results/m3/20261022T002310-m3-memory/eager-8192/result.json",
+        "results/m3/20261022T002310-m3-memory/exact-8192/result.json",
+        "results/m3/20261022T002310-m3-memory/graph-512-1024/result.json",
+        "results/m3/20261022T002310-m3-memory/graph-8192/result.json",
+        "results/m3/20261022T002310-m3-memory/memory.json",
+        "results/m3/20261022T002310-m3-memory/provenance.json",
+        "results/m3/20261022T002310-m3-memory/source_manifest.json",
+        "results/m3/20261022T002310-m3-memory/summary.md",
+        "results/m3/20261022T003024-m3-bench/bench.json",
+        "results/m3/20261022T003024-m3-bench/cap-512-1024/result.json",
+        "results/m3/20261022T003024-m3-bench/cap-512-8192/result.json",
+        "results/m3/20261022T003024-m3-bench/cap-8192/result.json",
+        "results/m3/20261022T003024-m3-bench/eager-512/result.json",
+        "results/m3/20261022T003024-m3-bench/eager-8192/result.json",
+        "results/m3/20261022T003024-m3-bench/exact-512-1024/result.json",
+        "results/m3/20261022T003024-m3-bench/exact-512-8192/result.json",
+        "results/m3/20261022T003024-m3-bench/exact-8192/result.json",
+        "results/m3/20261022T003024-m3-bench/graph-512-1024/result.json",
+        "results/m3/20261022T003024-m3-bench/graph-512-8192/result.json",
+        "results/m3/20261022T003024-m3-bench/graph-8192/result.json",
+        "results/m3/20261022T003024-m3-bench/provenance.json",
+        "results/m3/20261022T003024-m3-bench/source_manifest.json",
+        "results/m3/20261022T003024-m3-bench/summary.md",
+        "results/m3/20261022T015940-m3-profile/eager-512/gpu_trace.csv",
+        "results/m3/20261022T015940-m3-profile/eager-512/kern_sum.csv",
+        "results/m3/20261022T015940-m3-profile/eager-512/mem_nvtx_sum.csv",
+        "results/m3/20261022T015940-m3-profile/eager-512/meta.json",
+        "results/m3/20261022T015940-m3-profile/eager-512/profile.log",
+        "results/m3/20261022T015940-m3-profile/eager-512/stats.err",
+        "results/m3/20261022T015940-m3-profile/eager-512/trace.nsys-rep",
+        "results/m3/20261022T015940-m3-profile/eager-512/trace.sqlite",
+        "results/m3/20261022T015940-m3-profile/nsys_version.txt",
+        "results/m3/20261022T015940-m3-profile/provenance.json",
+        "results/m3/20261022T015940-m3-profile/source_manifest.json",
+        "results/m3/20261022T015940-m3-profile/static-exact-512/profile.log",
+        "results/m3/20261022T015940-m3-profile/static-exact-512/trace.nsys-rep"
+      ]
+    },
+    "source_manifest": {
+      "dirty": false,
+      "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "patch_bytes": 0,
+      "files": [],
+      "files_total_bytes": 0
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+      "torch": "2.14.1+cu130",
+      "transformers": "5.20.2",
+      "flashinfer": "0.7.2",
+      "cuda": "13.0",
+      "gpu_name": "NVIDIA GeForce RTX 5080",
+      "gpu_total_mib": 16303.0,
+      "driver": "580.105.08",
+      "clock_sm_mhz": 2610.0,
+      "clock_max_mhz": 3090.0,
+      "temperature_c": 49.0,
+      "power_w": 72.89
+    },
+    "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+    "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+    "argv": [
+      "scripts/m3_profile.py",
+      "--execution",
+      "static-exact",
+      "--depth",
+      "512",
+      "--capacity",
+      "1024",
+      "--steps",
+      "8",
+      "--out",
+      "/home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/static-exact-512/meta.json"
+    ],
+    "cwd": "/home/xzq/workspace/qwen",
+    "sol_bandwidth_bytes": 960000000000.0
+  }
+}

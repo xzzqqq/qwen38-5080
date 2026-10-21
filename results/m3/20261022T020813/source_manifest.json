@@ -1,0 +1,14 @@
+{
+  "dirty": true,
+  "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+  "patch_sha256": "4b982b6c09de4b52e4bc6494c82a953a59619d67cc2f9aa36165f8a46209ec78",
+  "patch_bytes": 5497,
+  "files": [
+    {
+      "path": "docs/sol.md",
+      "sha256": "e656d199ce5ac5be34562bd5092b547db7bf0f3e6159d979ad02cde5a0e2916c",
+      "bytes": 7053
+    }
+  ],
+  "files_total_bytes": 7053
+}

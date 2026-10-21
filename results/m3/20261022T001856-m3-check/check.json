@@ -1,0 +1,5296 @@
+{
+  "summary": {
+    "run_dir": "/home/xzq/workspace/qwen/results/m3/20261022T001856-m3-check",
+    "scenarios": [
+      {
+        "scenario": "numeric-512",
+        "ok": true,
+        "gate_count": 115,
+        "gate_failures": [],
+        "fixtures": {
+          "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+        },
+        "returncode": 0
+      },
+      {
+        "scenario": "numeric-8192",
+        "ok": true,
+        "gate_count": 54,
+        "gate_failures": [],
+        "fixtures": {
+          "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+        },
+        "returncode": 0
+      },
+      {
+        "scenario": "graph-1024",
+        "ok": true,
+        "gate_count": 24,
+        "gate_failures": [],
+        "fixtures": {
+          "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+        },
+        "returncode": 0
+      },
+      {
+        "scenario": "graph-8192",
+        "ok": true,
+        "gate_count": 24,
+        "gate_failures": [],
+        "fixtures": {
+          "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+        },
+        "returncode": 0
+      },
+      {
+        "scenario": "smoke-graph",
+        "ok": true,
+        "gate_count": 10,
+        "gate_failures": [],
+        "fixtures": {
+          "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+        },
+        "returncode": 0
+      }
+    ],
+    "ok": true
+  },
+  "results": [
+    {
+      "scenario": "numeric-512",
+      "ok": true,
+      "gate_count": 115,
+      "gate_failures": [],
+      "items": [
+        {
+          "level": "diagnostic",
+          "name": "load",
+          "ok": true,
+          "detail": {
+            "load_s": 1.380317211151123,
+            "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+            "quantized_linears": 401,
+            "high_precision_tensors": 449,
+            "shape_stable_linears": 96,
+            "skipped_unused": 0,
+            "gpu_allocated_gb": 14.45758976,
+            "gpu_reserved_gb": 14.556332032,
+            "gpu_free_gb": 1.727922176,
+            "gpu_total_gb": 16.609509376
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager: finite",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "eager: cache length",
+          "ok": true,
+          "detail": {
+            "got": 528,
+            "expected": 528,
+            "forwards": 17
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager: layer counts",
+          "ok": true,
+          "detail": {
+            "kv": 16,
+            "recurrent": 48,
+            "conv": 48
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager: forward 数",
+          "ok": true,
+          "detail": {
+            "forwards": 17,
+            "decode_steps": 16
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-exact: cache 布局",
+          "ok": true,
+          "detail": {
+            "kv_layers": 16,
+            "linear_layers": 48,
+            "kv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "gdn_dtypes": [
+              "torch.float32"
+            ],
+            "conv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "kv_bytes": 67108864,
+            "capacity": 1024
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 1280,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: cache 布局",
+          "ok": true,
+          "detail": {
+            "kv_layers": 16,
+            "linear_layers": 48,
+            "kv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "gdn_dtypes": [
+              "torch.float32"
+            ],
+            "conv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "kv_bytes": 67108864,
+            "capacity": 1024
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: logits",
+          "ok": false,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 14,
+            "max_abs": 2.875,
+            "first_bad": [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: hidden",
+          "ok": false,
+          "detail": {
+            "name": "hidden",
+            "count": 1280,
+            "bad_count": 580,
+            "max_abs": 52.5,
+            "first_bad": [
+              156,
+              176,
+              177,
+              178,
+              179,
+              196,
+              197,
+              198
+            ],
+            "first_bad_forward": 6,
+            "first_bad_forward_layers": [
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38
+            ],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_pairs": [
+              {
+                "layer": 7,
+                "forward": 16
+              },
+              {
+                "layer": 8,
+                "forward": 16
+              },
+              {
+                "layer": 8,
+                "forward": 17
+              },
+              {
+                "layer": 8,
+                "forward": 18
+              }
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: kv.keys",
+          "ok": false,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 14,
+            "max_abs": 2.01171875,
+            "first_bad": [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              11,
+              15,
+              19,
+              23
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: kv.values",
+          "ok": false,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 14,
+            "max_abs": 4.0,
+            "first_bad": [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              11,
+              15,
+              19,
+              23
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: conv",
+          "ok": false,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 42,
+            "max_abs": 4.25,
+            "first_bad": [
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              8,
+              9,
+              10,
+              12
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: recurrent",
+          "ok": false,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 42,
+            "max_abs": 0.19624873995780945,
+            "first_bad": [
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              8,
+              9,
+              10,
+              12
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: logits",
+          "ok": false,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 14,
+            "max_abs": 2.875,
+            "first_bad": [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: hidden",
+          "ok": false,
+          "detail": {
+            "name": "hidden",
+            "count": 1280,
+            "bad_count": 580,
+            "max_abs": 52.5,
+            "first_bad": [
+              156,
+              176,
+              177,
+              178,
+              179,
+              196,
+              197,
+              198
+            ],
+            "first_bad_forward": 6,
+            "first_bad_forward_layers": [
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38
+            ],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_pairs": [
+              {
+                "layer": 7,
+                "forward": 16
+              },
+              {
+                "layer": 8,
+                "forward": 16
+              },
+              {
+                "layer": 8,
+                "forward": 17
+              },
+              {
+                "layer": 8,
+                "forward": 18
+              }
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: kv.keys",
+          "ok": false,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 14,
+            "max_abs": 2.01171875,
+            "first_bad": [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              11,
+              15,
+              19,
+              23
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: kv.values",
+          "ok": false,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 14,
+            "max_abs": 4.0,
+            "first_bad": [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              11,
+              15,
+              19,
+              23
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: conv",
+          "ok": false,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 42,
+            "max_abs": 4.25,
+            "first_bad": [
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              8,
+              9,
+              10,
+              12
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: recurrent",
+          "ok": false,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 42,
+            "max_abs": 0.19624873995780945,
+            "first_bad": [
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              8,
+              9,
+              10,
+              12
+            ]
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 1280,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: logits",
+          "ok": false,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 14,
+            "max_abs": 2.875,
+            "first_bad": [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: hidden",
+          "ok": false,
+          "detail": {
+            "name": "hidden",
+            "count": 1280,
+            "bad_count": 580,
+            "max_abs": 52.5,
+            "first_bad": [
+              156,
+              176,
+              177,
+              178,
+              179,
+              196,
+              197,
+              198
+            ],
+            "first_bad_forward": 6,
+            "first_bad_forward_layers": [
+              31,
+              32,
+              33,
+              34,
+              35,
+              36,
+              37,
+              38
+            ],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_pairs": [
+              {
+                "layer": 7,
+                "forward": 16
+              },
+              {
+                "layer": 8,
+                "forward": 16
+              },
+              {
+                "layer": 8,
+                "forward": 17
+              },
+              {
+                "layer": 8,
+                "forward": 18
+              }
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: kv.keys",
+          "ok": false,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 14,
+            "max_abs": 2.01171875,
+            "first_bad": [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              11,
+              15,
+              19,
+              23
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: kv.values",
+          "ok": false,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 14,
+            "max_abs": 4.0,
+            "first_bad": [
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              11,
+              15,
+              19,
+              23
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: conv",
+          "ok": false,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 42,
+            "max_abs": 4.25,
+            "first_bad": [
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              8,
+              9,
+              10,
+              12
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: recurrent",
+          "ok": false,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 42,
+            "max_abs": 0.19624873995780945,
+            "first_bad": [
+              6,
+              7,
+              8,
+              9,
+              10,
+              11,
+              12,
+              13
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              8,
+              9,
+              10,
+              12
+            ]
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 1280,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 1280,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 1280,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 3,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 192,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 1280,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 eager->static-exact: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 eager->static-exact: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 320,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 eager->static-exact: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 eager->static-exact: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 eager->static-exact: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 eager->static-exact: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 padded-ref->static-cap: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 padded-ref->static-cap: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 320,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 padded-ref->static-cap: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 padded-ref->static-cap: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 padded-ref->static-cap: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 1 padded-ref->static-cap: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "boundary 1 eager->static-cap（attention 长度效应）",
+          "ok": false,
+          "detail": {
+            "bitwise": true,
+            "first_bad": [],
+            "max_abs": 0.0,
+            "forwards": 5
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 eager->static-exact: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 eager->static-exact: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 320,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 eager->static-exact: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 eager->static-exact: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 eager->static-exact: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 eager->static-exact: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 padded-ref->static-cap: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 padded-ref->static-cap: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 320,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 padded-ref->static-cap: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 padded-ref->static-cap: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 padded-ref->static-cap: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 127 padded-ref->static-cap: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "boundary 127 eager->static-cap（attention 长度效应）",
+          "ok": false,
+          "detail": {
+            "bitwise": false,
+            "first_bad": [
+              3,
+              4
+            ],
+            "max_abs": 3.5,
+            "forwards": 5
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 eager->static-exact: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 eager->static-exact: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 320,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 eager->static-exact: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 eager->static-exact: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 eager->static-exact: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 eager->static-exact: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 padded-ref->static-cap: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 padded-ref->static-cap: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 320,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 padded-ref->static-cap: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 padded-ref->static-cap: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 padded-ref->static-cap: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 128 padded-ref->static-cap: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "boundary 128 eager->static-cap（attention 长度效应）",
+          "ok": false,
+          "detail": {
+            "bitwise": false,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "max_abs": 3.09375,
+            "forwards": 5
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 eager->static-exact: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 eager->static-exact: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 384,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 eager->static-exact: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 eager->static-exact: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 eager->static-exact: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 eager->static-exact: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 padded-ref->static-cap: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 padded-ref->static-cap: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 384,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 padded-ref->static-cap: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 padded-ref->static-cap: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 padded-ref->static-cap: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 129 padded-ref->static-cap: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "boundary 129 eager->static-cap（attention 长度效应）",
+          "ok": false,
+          "detail": {
+            "bitwise": false,
+            "first_bad": [
+              2,
+              3,
+              4
+            ],
+            "max_abs": 2.46875,
+            "forwards": 5
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 eager->static-exact: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 eager->static-exact: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 448,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 eager->static-exact: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 eager->static-exact: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 eager->static-exact: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 eager->static-exact: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 padded-ref->static-cap: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 5,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 padded-ref->static-cap: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 448,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 padded-ref->static-cap: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 padded-ref->static-cap: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 padded-ref->static-cap: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "boundary 300 padded-ref->static-cap: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "boundary 300 eager->static-cap（attention 长度效应）",
+          "ok": false,
+          "detail": {
+            "bitwise": false,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4
+            ],
+            "max_abs": 2.712890625,
+            "forwards": 5
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "capacity: prefill 拒绝信息",
+          "ok": true,
+          "detail": {
+            "error": "static-cap capacity overflow at prefill: prompt=1025 reserve=0 capacity=1024"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "capacity: prefill 拒绝超长 prompt",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "capacity: 填满 capacity 后长度正确",
+          "ok": true,
+          "detail": {
+            "cache_len": 1024,
+            "capacity": 1024
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "capacity: system_decode 拒绝信息",
+          "ok": true,
+          "detail": {
+            "error": "static-cap capacity overflow: used=1024 limit=1024 needed=1 headroom=0"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "capacity: system_decode 拒绝越界",
+          "ok": true
+        },
+        {
+          "level": "diagnostic",
+          "name": "capacity: model_timed_decode 拒绝信息",
+          "ok": true,
+          "detail": {
+            "error": "static-cap capacity overflow: used=1024 limit=1024 needed=1 headroom=0"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "capacity: model_timed_decode 拒绝越界",
+          "ok": true
+        },
+        {
+          "level": "diagnostic",
+          "name": "capacity: graph warmup 拒绝信息",
+          "ok": true,
+          "detail": {
+            "error": "graph capacity overflow: used=1023 limit=1024 needed=3 headroom=1"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "capacity: graph warmup 拒绝越界",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "capacity: reset 后可继续写",
+          "ok": true,
+          "detail": {
+            "cache_len": 8
+          }
+        },
+        {
+          "level": "gate",
+          "name": "coverage: 必测项齐全",
+          "ok": true,
+          "detail": {
+            "missing": [],
+            "required": 34
+          }
+        }
+      ],
+      "provenance": {
+        "created_at": "2026-10-22T00:19:37.070454+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2827.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 52.0,
+          "power_w": 152.77
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_check.py",
+          "--worker",
+          "numeric-512",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T001856-m3-check/numeric-512",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "16",
+          "--smoke-max-new-tokens",
+          "2048"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "numeric-512",
+        "steps": 16
+      },
+      "fixtures": {
+        "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+        "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+      },
+      "returncode": 0
+    },
+    {
+      "scenario": "numeric-8192",
+      "ok": true,
+      "gate_count": 54,
+      "gate_failures": [],
+      "items": [
+        {
+          "level": "diagnostic",
+          "name": "load",
+          "ok": true,
+          "detail": {
+            "load_s": 1.365039348602295,
+            "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+            "quantized_linears": 401,
+            "high_precision_tensors": 449,
+            "shape_stable_linears": 96,
+            "skipped_unused": 0,
+            "gpu_allocated_gb": 14.45758976,
+            "gpu_reserved_gb": 14.556332032,
+            "gpu_free_gb": 1.727922176,
+            "gpu_total_gb": 16.609509376
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager: finite",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "eager: cache length",
+          "ok": true,
+          "detail": {
+            "got": 7696,
+            "expected": 7696,
+            "forwards": 17
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager: layer counts",
+          "ok": true,
+          "detail": {
+            "kv": 16,
+            "recurrent": 48,
+            "conv": 48
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager: forward 数",
+          "ok": true,
+          "detail": {
+            "forwards": 17,
+            "decode_steps": 16
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-exact: cache 布局",
+          "ok": true,
+          "detail": {
+            "kv_layers": 16,
+            "linear_layers": 48,
+            "kv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "gdn_dtypes": [
+              "torch.float32"
+            ],
+            "conv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "kv_bytes": 536870912,
+            "capacity": 8192
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 4864,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "eager->static-exact: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: cache 布局",
+          "ok": true,
+          "detail": {
+            "kv_layers": 16,
+            "linear_layers": 48,
+            "kv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "gdn_dtypes": [
+              "torch.float32"
+            ],
+            "conv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "kv_bytes": 536870912,
+            "capacity": 8192
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: logits",
+          "ok": false,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 16,
+            "max_abs": 5.875,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: hidden",
+          "ok": false,
+          "detail": {
+            "name": "hidden",
+            "count": 4864,
+            "bad_count": 951,
+            "max_abs": 80.25,
+            "first_bad": [
+              289,
+              293,
+              365,
+              366,
+              367,
+              368,
+              369,
+              370
+            ],
+            "first_bad_forward": 60,
+            "first_bad_forward_layers": [
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22
+            ],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_pairs": [
+              {
+                "layer": 3,
+                "forward": 61
+              },
+              {
+                "layer": 3,
+                "forward": 65
+              },
+              {
+                "layer": 4,
+                "forward": 61
+              },
+              {
+                "layer": 4,
+                "forward": 62
+              }
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: kv.keys",
+          "ok": false,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 15,
+            "max_abs": 6.4541015625,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              7,
+              11,
+              15,
+              19
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: kv.values",
+          "ok": false,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 15,
+            "max_abs": 19.15625,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              7,
+              11,
+              15,
+              19
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: conv",
+          "ok": false,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 44,
+            "max_abs": 9.0546875,
+            "first_bad": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              5,
+              6,
+              8,
+              9
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->static-cap: recurrent",
+          "ok": false,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 45,
+            "max_abs": 0.35854315757751465,
+            "first_bad": [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              4,
+              5,
+              6,
+              8
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: logits",
+          "ok": false,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 16,
+            "max_abs": 5.875,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: hidden",
+          "ok": false,
+          "detail": {
+            "name": "hidden",
+            "count": 4864,
+            "bad_count": 951,
+            "max_abs": 80.25,
+            "first_bad": [
+              289,
+              293,
+              365,
+              366,
+              367,
+              368,
+              369,
+              370
+            ],
+            "first_bad_forward": 60,
+            "first_bad_forward_layers": [
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22
+            ],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_pairs": [
+              {
+                "layer": 3,
+                "forward": 61
+              },
+              {
+                "layer": 3,
+                "forward": 65
+              },
+              {
+                "layer": 4,
+                "forward": 61
+              },
+              {
+                "layer": 4,
+                "forward": 62
+              }
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: kv.keys",
+          "ok": false,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 15,
+            "max_abs": 6.4541015625,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              7,
+              11,
+              15,
+              19
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: kv.values",
+          "ok": false,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 15,
+            "max_abs": 19.15625,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              7,
+              11,
+              15,
+              19
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: conv",
+          "ok": false,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 44,
+            "max_abs": 9.0546875,
+            "first_bad": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              5,
+              6,
+              8,
+              9
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-exact->static-cap: recurrent",
+          "ok": false,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 45,
+            "max_abs": 0.35854315757751465,
+            "first_bad": [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              4,
+              5,
+              6,
+              8
+            ]
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 4864,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-ref->static-cap: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: logits",
+          "ok": false,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 16,
+            "max_abs": 5.875,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: hidden",
+          "ok": false,
+          "detail": {
+            "name": "hidden",
+            "count": 4864,
+            "bad_count": 951,
+            "max_abs": 80.25,
+            "first_bad": [
+              289,
+              293,
+              365,
+              366,
+              367,
+              368,
+              369,
+              370
+            ],
+            "first_bad_forward": 60,
+            "first_bad_forward_layers": [
+              15,
+              16,
+              17,
+              18,
+              19,
+              20,
+              21,
+              22
+            ],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_pairs": [
+              {
+                "layer": 3,
+                "forward": 61
+              },
+              {
+                "layer": 3,
+                "forward": 65
+              },
+              {
+                "layer": 4,
+                "forward": 61
+              },
+              {
+                "layer": 4,
+                "forward": 62
+              }
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: kv.keys",
+          "ok": false,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 15,
+            "max_abs": 6.4541015625,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              7,
+              11,
+              15,
+              19
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: kv.values",
+          "ok": false,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 15,
+            "max_abs": 19.15625,
+            "first_bad": [
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              7,
+              11,
+              15,
+              19
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: conv",
+          "ok": false,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 44,
+            "max_abs": 9.0546875,
+            "first_bad": [
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10,
+              11
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              5,
+              6,
+              8,
+              9
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "eager->padded-ref: recurrent",
+          "ok": false,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 45,
+            "max_abs": 0.35854315757751465,
+            "first_bad": [
+              3,
+              4,
+              5,
+              6,
+              7,
+              8,
+              9,
+              10
+            ],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": false,
+            "first_bad_layers": [
+              4,
+              5,
+              6,
+              8
+            ]
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 4864,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "padded-fill3 vs fill0: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 4864,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 原地 reset 重跑 A: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 4864,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: A->B->A: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 3,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 192,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 短->长->短: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: hidden",
+          "ok": true,
+          "detail": {
+            "name": "hidden",
+            "count": 4864,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_pairs": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "reset: 与独立新建 cache 一致: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "capacity: prefill 拒绝信息",
+          "ok": true,
+          "detail": {
+            "error": "static-cap capacity overflow at prefill: prompt=8193 reserve=0 capacity=8192"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "capacity: prefill 拒绝超长 prompt",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "capacity: 填满 capacity 后长度正确",
+          "ok": true,
+          "detail": {
+            "cache_len": 8192,
+            "capacity": 8192
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "capacity: system_decode 拒绝信息",
+          "ok": true,
+          "detail": {
+            "error": "static-cap capacity overflow: used=8192 limit=8192 needed=1 headroom=0"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "capacity: system_decode 拒绝越界",
+          "ok": true
+        },
+        {
+          "level": "diagnostic",
+          "name": "capacity: model_timed_decode 拒绝信息",
+          "ok": true,
+          "detail": {
+            "error": "static-cap capacity overflow: used=8192 limit=8192 needed=1 headroom=0"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "capacity: model_timed_decode 拒绝越界",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "capacity: reset 后可继续写",
+          "ok": true,
+          "detail": {
+            "cache_len": 8
+          }
+        },
+        {
+          "level": "gate",
+          "name": "coverage: 必测项齐全",
+          "ok": true,
+          "detail": {
+            "missing": [],
+            "required": 23
+          }
+        }
+      ],
+      "provenance": {
+        "created_at": "2026-10-22T00:21:35.610026+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2835.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 50.0,
+          "power_w": 198.74
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_check.py",
+          "--worker",
+          "numeric-8192",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T001856-m3-check/numeric-8192",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "16",
+          "--smoke-max-new-tokens",
+          "2048"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "numeric-8192",
+        "steps": 16
+      },
+      "fixtures": {
+        "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+        "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+      },
+      "returncode": 0
+    },
+    {
+      "scenario": "graph-1024",
+      "ok": true,
+      "gate_count": 24,
+      "gate_failures": [],
+      "items": [
+        {
+          "level": "diagnostic",
+          "name": "load",
+          "ok": true,
+          "detail": {
+            "load_s": 1.3609271049499512,
+            "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+            "quantized_linears": 401,
+            "high_precision_tensors": 449,
+            "shape_stable_linears": 96,
+            "skipped_unused": 0,
+            "gpu_allocated_gb": 14.45758976,
+            "gpu_reserved_gb": 14.556332032,
+            "gpu_free_gb": 1.727922176,
+            "gpu_total_gb": 16.609509376
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: cache 布局",
+          "ok": true,
+          "detail": {
+            "kv_layers": 16,
+            "linear_layers": 48,
+            "kv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "gdn_dtypes": [
+              "torch.float32"
+            ],
+            "conv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "kv_bytes": 67108864,
+            "capacity": 1024
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: finite",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: cache length",
+          "ok": true,
+          "detail": {
+            "got": 528,
+            "expected": 528,
+            "forwards": 17
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: layer counts",
+          "ok": true,
+          "detail": {
+            "kv": 16,
+            "recurrent": 48,
+            "conv": 48
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: forward 数",
+          "ok": true,
+          "detail": {
+            "forwards": 17,
+            "decode_steps": 16
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: capture 不推进位置",
+          "ok": true,
+          "detail": {
+            "length_before_capture": 515,
+            "length_after_capture": 515
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: entry→capture 的增量等于 warmup 步数",
+          "ok": true,
+          "detail": {
+            "length_at_entry": 512,
+            "length_before_capture": 515,
+            "warmup": 3
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: warmup 推进了 static cache",
+          "ok": true,
+          "detail": {
+            "warmup_length_delta": 3,
+            "expected": 3
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: logits 形状",
+          "ok": true,
+          "detail": {
+            "logits_shape": [
+              1,
+              1,
+              248320
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "graph: capture pool 增量",
+          "ok": true,
+          "detail": {
+            "allocated_gb": 0.034051072,
+            "reserved_gb": -0.002097152,
+            "capture_s": 0.09912494313903153
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: 正式初态长度",
+          "ok": true,
+          "detail": {
+            "cache_len": 512,
+            "depth": 512
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: prefill logits == static-cap",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "graph: decode 后长度",
+          "ok": true,
+          "detail": {
+            "cache_len": 528,
+            "expected": 528
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: replay 写入 static KV 槽",
+          "ok": true,
+          "detail": {
+            "layers": 16,
+            "written": 16
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: 逐步 logits bitwise",
+          "ok": true,
+          "detail": {
+            "first_bad_steps": [],
+            "steps": 16
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "graph: 逐步 argmax 与冻结 trace 一致",
+          "ok": false,
+          "detail": {
+            "bad_steps": [
+              2
+            ],
+            "checked": 15,
+            "bad_step_top2_margin": [
+              0.5625
+            ],
+            "min_margin": 0.5625
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-cap->graph: 未记录项",
+          "ok": true,
+          "detail": {
+            "skipped": [
+              "hidden"
+            ],
+            "reason": "graph replay 内没有 Python hook"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: logits 地址稳定",
+          "ok": true,
+          "detail": {
+            "ptr": 50331725312,
+            "capture_ptr": 50331725312
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: reset 后 prefill logits 一致",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "graph: reset 后 replay 结果一致",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "graph: 输入 buffer 影响输出",
+          "ok": true,
+          "detail": {
+            "max_abs": 14.6201171875
+          }
+        },
+        {
+          "level": "gate",
+          "name": "coverage: 必测项齐全",
+          "ok": true,
+          "detail": {
+            "missing": [],
+            "required": 12
+          }
+        }
+      ],
+      "provenance": {
+        "created_at": "2026-10-22T00:21:46.057134+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2835.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 50.0,
+          "power_w": 177.27
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_check.py",
+          "--worker",
+          "graph-1024",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T001856-m3-check/graph-1024",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "16",
+          "--smoke-max-new-tokens",
+          "2048"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "graph-1024",
+        "steps": 16
+      },
+      "fixtures": {
+        "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+        "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+      },
+      "returncode": 0
+    },
+    {
+      "scenario": "graph-8192",
+      "ok": true,
+      "gate_count": 24,
+      "gate_failures": [],
+      "items": [
+        {
+          "level": "diagnostic",
+          "name": "load",
+          "ok": true,
+          "detail": {
+            "load_s": 1.3539059162139893,
+            "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+            "quantized_linears": 401,
+            "high_precision_tensors": 449,
+            "shape_stable_linears": 96,
+            "skipped_unused": 0,
+            "gpu_allocated_gb": 14.45758976,
+            "gpu_reserved_gb": 14.556332032,
+            "gpu_free_gb": 1.727922176,
+            "gpu_total_gb": 16.609509376
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: cache 布局",
+          "ok": true,
+          "detail": {
+            "kv_layers": 16,
+            "linear_layers": 48,
+            "kv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "gdn_dtypes": [
+              "torch.float32"
+            ],
+            "conv_dtypes": [
+              "torch.bfloat16"
+            ],
+            "kv_bytes": 536870912,
+            "capacity": 8192
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: finite",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: cache length",
+          "ok": true,
+          "detail": {
+            "got": 7696,
+            "expected": 7696,
+            "forwards": 17
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: layer counts",
+          "ok": true,
+          "detail": {
+            "kv": 16,
+            "recurrent": 48,
+            "conv": 48
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap: forward 数",
+          "ok": true,
+          "detail": {
+            "forwards": 17,
+            "decode_steps": 16
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: capture 不推进位置",
+          "ok": true,
+          "detail": {
+            "length_before_capture": 7683,
+            "length_after_capture": 7683
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: entry→capture 的增量等于 warmup 步数",
+          "ok": true,
+          "detail": {
+            "length_at_entry": 7680,
+            "length_before_capture": 7683,
+            "warmup": 3
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: warmup 推进了 static cache",
+          "ok": true,
+          "detail": {
+            "warmup_length_delta": 3,
+            "expected": 3
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: logits 形状",
+          "ok": true,
+          "detail": {
+            "logits_shape": [
+              1,
+              1,
+              248320
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "graph: capture pool 增量",
+          "ok": true,
+          "detail": {
+            "allocated_gb": 0.034051072,
+            "reserved_gb": -0.402653184,
+            "capture_s": 0.10090559301897883
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: 正式初态长度",
+          "ok": true,
+          "detail": {
+            "cache_len": 7680,
+            "depth": 7680
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: prefill logits == static-cap",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "graph: decode 后长度",
+          "ok": true,
+          "detail": {
+            "cache_len": 7696,
+            "expected": 7696
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: replay 写入 static KV 槽",
+          "ok": true,
+          "detail": {
+            "layers": 16,
+            "written": 16
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: 逐步 logits bitwise",
+          "ok": true,
+          "detail": {
+            "first_bad_steps": [],
+            "steps": 16
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "graph: 逐步 argmax 与冻结 trace 一致",
+          "ok": true,
+          "detail": {
+            "bad_steps": [],
+            "checked": 15,
+            "bad_step_top2_margin": [],
+            "min_margin": 1.8125
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: logits",
+          "ok": true,
+          "detail": {
+            "name": "logits",
+            "count": 17,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: kv.keys",
+          "ok": true,
+          "detail": {
+            "name": "kv.keys",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: kv.values",
+          "ok": true,
+          "detail": {
+            "name": "kv.values",
+            "count": 16,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: conv",
+          "ok": true,
+          "detail": {
+            "name": "conv",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "gate",
+          "name": "static-cap->graph: recurrent",
+          "ok": true,
+          "detail": {
+            "name": "recurrent",
+            "count": 48,
+            "bad_count": 0,
+            "max_abs": 0.0,
+            "first_bad": [],
+            "first_bad_forward": null,
+            "first_bad_forward_layers": [],
+            "shapes_equal": true,
+            "bitwise": true,
+            "first_bad_layers": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "static-cap->graph: 未记录项",
+          "ok": true,
+          "detail": {
+            "skipped": [
+              "hidden"
+            ],
+            "reason": "graph replay 内没有 Python hook"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: logits 地址稳定",
+          "ok": true,
+          "detail": {
+            "ptr": 50331705856,
+            "capture_ptr": 50331705856
+          }
+        },
+        {
+          "level": "gate",
+          "name": "graph: reset 后 prefill logits 一致",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "graph: reset 后 replay 结果一致",
+          "ok": true
+        },
+        {
+          "level": "gate",
+          "name": "graph: 输入 buffer 影响输出",
+          "ok": true,
+          "detail": {
+            "max_abs": 20.421875
+          }
+        },
+        {
+          "level": "gate",
+          "name": "coverage: 必测项齐全",
+          "ok": true,
+          "detail": {
+            "missing": [],
+            "required": 12
+          }
+        }
+      ],
+      "provenance": {
+        "created_at": "2026-10-22T00:22:35.460150+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2835.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 52.0,
+          "power_w": 198.89
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_check.py",
+          "--worker",
+          "graph-8192",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T001856-m3-check/graph-8192",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "16",
+          "--smoke-max-new-tokens",
+          "2048"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "graph-8192",
+        "steps": 16
+      },
+      "fixtures": {
+        "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+        "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+      },
+      "returncode": 0
+    },
+    {
+      "scenario": "smoke-graph",
+      "ok": true,
+      "gate_count": 10,
+      "gate_failures": [],
+      "items": [
+        {
+          "level": "diagnostic",
+          "name": "load",
+          "ok": true,
+          "detail": {
+            "load_s": 1.3609931468963623,
+            "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+            "quantized_linears": 401,
+            "high_precision_tensors": 449,
+            "shape_stable_linears": 96,
+            "skipped_unused": 0,
+            "gpu_allocated_gb": 14.45758976,
+            "gpu_reserved_gb": 14.556332032,
+            "gpu_free_gb": 1.727922176,
+            "gpu_total_gb": 16.609509376
+          }
+        },
+        {
+          "level": "gate",
+          "name": "smoke math: EOS 停止",
+          "ok": true,
+          "detail": {
+            "finish_reason": "eos",
+            "expected_finish": "eos",
+            "generated": 89,
+            "budget": 2048
+          }
+        },
+        {
+          "level": "gate",
+          "name": "smoke math: 输出长度合理",
+          "ok": true,
+          "detail": {
+            "generated": 89,
+            "budget": 2048
+          }
+        },
+        {
+          "level": "gate",
+          "name": "smoke math: 内容合理（答案 72 clips）",
+          "ok": true,
+          "detail": {
+            "missing": [],
+            "any_hits": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "smoke math: 与冻结 eager trace 的差异",
+          "ok": false,
+          "detail": {
+            "generated": 89,
+            "expected": 91,
+            "first_bad_step": 30,
+            "margin_at_first_bad": 7.0,
+            "prefix_match_tokens": 30,
+            "steps_with_margin_below_1e-2": 1
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "smoke math: prefill/显存/速度",
+          "ok": true,
+          "detail": {
+            "prompt_tokens": 90,
+            "prefill_s": 0.112,
+            "system_tok_s": 22.522,
+            "peak_allocated_gb": 15.289,
+            "peak_reserved_gb": 15.659,
+            "free_gb": 0.516,
+            "graph_capture": true
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "smoke math: 文本",
+          "ok": true,
+          "detail": {
+            "text": "We need answer simple arithmetic. Need final. Problem: April 48. May half as many = 24. Total 72. Provide concise.\n</think>\n\nNatalia sold 48 clips in April.\n\nIn May, she sold half as many:  \n48 ÷ 2 = 24 clips.\n\nAltogether:  \n48 + 24 = **72 clips**."
+          }
+        },
+        {
+          "level": "gate",
+          "name": "smoke code: EOS 停止",
+          "ok": true,
+          "detail": {
+            "finish_reason": "eos",
+            "expected_finish": "eos",
+            "generated": 237,
+            "budget": 2048
+          }
+        },
+        {
+          "level": "gate",
+          "name": "smoke code: 输出长度合理",
+          "ok": true,
+          "detail": {
+            "generated": 237,
+            "budget": 2048
+          }
+        },
+        {
+          "level": "gate",
+          "name": "smoke code: 内容合理（函数 + 测试）",
+          "ok": true,
+          "detail": {
+            "missing": [],
+            "any_hits": [
+              "assert",
+              "case",
+              "test"
+            ]
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "smoke code: 与冻结 eager trace 的差异",
+          "ok": false,
+          "detail": {
+            "generated": 237,
+            "expected": 192,
+            "first_bad_step": 37,
+            "margin_at_first_bad": 0.25,
+            "prefix_match_tokens": 37,
+            "steps_with_margin_below_1e-2": 2
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "smoke code: prefill/显存/速度",
+          "ok": true,
+          "detail": {
+            "prompt_tokens": 84,
+            "prefill_s": 0.113,
+            "system_tok_s": 22.59,
+            "peak_allocated_gb": 15.289,
+            "peak_reserved_gb": 15.664,
+            "free_gb": 0.512,
+            "graph_capture": true
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "smoke code: 文本",
+          "ok": true,
+          "detail": {
+            "text": "We need answer user's request: Write Python function is_palindrome(s) returns True if s palindrome ignoring case and non-alphanumeric. Include 3 test cases. Need produce final code likely with function and tests. Need be concise. Need ensure tests maybe using assert or unittest? User says include 3 test cases. Could provide simple asserts. Need maybe handle empty string? Palindrome true. Non-alphanumeric ignored. Use ''.join(ch.lower() for ch in s if ch.isalnum()) then compare to reverse. Note Unicode? isalnum okay. Could mention. Provide code.\n</think>\n\n```python\ndef is_palindrome(s: str) -> bool:\n    \"\"\"Return True if s is a palindrome, ignoring case and non-alphanumeric characters.\"\"\"\n    cleaned = ''.join(ch.lower() for ch in s if ch.isalnum())\n    return cleaned == cleaned[::-1]\n\n\n# Test cases\nassert is_palindrome(\"A man, a plan, a canal: Panama\") is True\nassert is_palindrome(\"race a car\") is False\nassert is_palindrome(\"Was it a car or a cat I saw?\") is True\n```"
+          }
+        },
+        {
+          "level": "gate",
+          "name": "smoke chat: EOS 停止",
+          "ok": true,
+          "detail": {
+            "finish_reason": "eos",
+            "expected_finish": "eos",
+            "generated": 269,
+            "budget": 2048
+          }
+        },
+        {
+          "level": "gate",
+          "name": "smoke chat: 输出长度合理",
+          "ok": true,
+          "detail": {
+            "generated": 269,
+            "budget": 2048
+          }
+        },
+        {
+          "level": "gate",
+          "name": "smoke chat: 内容合理（解释 memory-bandwidth）",
+          "ok": true,
+          "detail": {
+            "missing": [],
+            "any_hits": []
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "smoke chat: 与冻结 eager trace 的差异",
+          "ok": false,
+          "detail": {
+            "generated": 269,
+            "expected": 297,
+            "first_bad_step": 27,
+            "margin_at_first_bad": 3.125,
+            "prefix_match_tokens": 27,
+            "steps_with_margin_below_1e-2": 4
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "smoke chat: prefill/显存/速度",
+          "ok": true,
+          "detail": {
+            "prompt_tokens": 72,
+            "prefill_s": 0.113,
+            "system_tok_s": 22.59,
+            "peak_allocated_gb": 15.289,
+            "peak_reserved_gb": 15.664,
+            "free_gb": 0.512,
+            "graph_capture": true
+          }
+        },
+        {
+          "level": "diagnostic",
+          "name": "smoke chat: 文本",
+          "ok": true,
+          "detail": {
+            "text": "We need answer user: \"In three sentences, explain why LLM decode at batch size 1 is memory-bandwidth bound.\" Need produce exactly three sentences. Need be concise. Need likely mention autoregressive decoding generates one token at a time, must load large model weights from memory for each token, compute per token small relative to memory traffic, so arithmetic intensity low, GPU compute underutilized, throughput limited by memory bandwidth. Three sentences. Ensure exactly three sentences. Could be:\n\"During autoregressive decoding at batch size 1, each new token requires reading the entire model's weights and KV cache from memory to perform a single forward pass. The amount of arithmetic performed per token is small compared with the bytes moved, so the operation has very low arithmetic intensity. Consequently, the GPU's compute units are mostly idle while waiting for data, making memory bandwidth the dominant bottleneck.\"\nCount sentences: 3. Good. Need final only three sentences.\n</think>\n\nDuring autoregressive decoding at batch size 1, each new token requires reading the model’s weights and KV cache from memory to perform one forward pass. The arithmetic performed per token is small relative to the bytes moved, giving the workload very low arithmetic intensity. As a result, compute units are often idle while waiting for data, so memory bandwidth becomes the dominant bottleneck."
+          }
+        },
+        {
+          "level": "gate",
+          "name": "coverage: 必测项齐全",
+          "ok": true,
+          "detail": {
+            "missing": [],
+            "required": 9
+          }
+        }
+      ],
+      "provenance": {
+        "created_at": "2026-10-22T00:23:07.365785+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+            "results/m3/20261022T001856-m3-check/graph-8192/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2842.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 53.0,
+          "power_w": 205.12
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_check.py",
+          "--worker",
+          "smoke-graph",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T001856-m3-check/smoke-graph",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "16",
+          "--smoke-max-new-tokens",
+          "2048"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "smoke-graph",
+        "steps": 16
+      },
+      "fixtures": {
+        "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+        "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+      },
+      "returncode": 0
+    }
+  ]
+}

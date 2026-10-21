@@ -1,7 +1,7 @@
 # SOL 模型（M3 实际字节）
 
-- 生成时间：2026-10-22T02:08:31.390810+08:00
-- commit：`bff10d3dae0087552a697bc69b1617e8974ef9e6`（dirty=True）
+- 生成时间：2026-10-22T02:08:43.261431+08:00
+- commit：`e23ea802ed675f9700576bd5115666847aa17467`（dirty=False）
 - checkpoint：`models/Qwen3.8-27B-NVFP4-RTX5090` revision `5b7a687fc8211a5d631c8ca6a593dd37eb26ce33`
 - 环境：torch 2.14.1+cu130、transformers 5.20.2、FlashInfer 0.7.2、driver 580.105.08
 - allocator：`expandable_segments:True`（见 §5 口径说明）

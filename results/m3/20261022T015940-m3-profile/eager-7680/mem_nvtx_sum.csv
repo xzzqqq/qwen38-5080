@@ -1,0 +1,24 @@
+Generating SQLite file /home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/eager-7680/trace.sqlite from /home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/eager-7680/trace.nsys-rep
+Processing [/home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/eager-7680/trace.sqlite] with [/opt/nvidia/nsight-systems-cli/2026.2.1/target-linux-x64/reports/cuda_gpu_mem_time_sum.py]... 
+Time (%),Total Time (ns),Count,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Operation
+99.7,3118606,768,4060.7,1856.0,608,13664,3767.4,[CUDA memcpy Device-to-Device]
+0.1,4448,8,556.0,544.0,544,576,16.6,[CUDA memcpy Host-to-Device]
+0.1,4032,8,504.0,512.0,480,512,14.8,[CUDA memcpy Device-to-Host]
+0.1,2080,8,260.0,256.0,256,288,11.3,[CUDA memset]
+
+Processing [/home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/eager-7680/trace.sqlite] with [/opt/nvidia/nsight-systems-cli/2026.2.1/target-linux-x64/reports/nvtx_sum.py]... 
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Style,Range
+33.3,918471487,1,918471487.0,918471487.0,918471487,918471487,0.0,PushPop,:decode:eager:7680
+33.1,910769088,8,113846136.0,113603246.5,112284555,115595002,1133632.7,PushPop,:model
+4.2,116512325,1,116512325.0,116512325.0,116512325,116512325,0.0,PushPop,:step7
+4.2,115869410,1,115869410.0,115869410.0,115869410,115869410,0.0,PushPop,:step3
+4.2,115787452,1,115787452.0,115787452.0,115787452,115787452,0.0,PushPop,:step0
+4.2,114880156,1,114880156.0,114880156.0,114880156,114880156,0.0,PushPop,:step4
+4.1,114174483,1,114174483.0,114174483.0,114174483,114174483,0.0,PushPop,:step5
+4.1,114048556,1,114048556.0,114048556.0,114048556,114048556,0.0,PushPop,:step6
+4.1,113924371,1,113924371.0,113924371.0,113924371,113924371,0.0,PushPop,:step1
+4.1,113257867,1,113257867.0,113257867.0,113257867,113257867,0.0,PushPop,:step2
+0.3,7022457,8,877807.1,867892.5,841280,938396,34756.6,PushPop,:sample
+0.0,308850,8,38606.3,29251.0,26232,105399,27038.6,PushPop,:host_gather
+0.0,167221,8,20902.6,15231.5,13463,59265,15636.3,PushPop,:h2d
+

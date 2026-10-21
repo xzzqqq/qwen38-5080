@@ -1,0 +1,24 @@
+Generating SQLite file /home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/graph-512/trace.sqlite from /home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/graph-512/trace.nsys-rep
+Processing [/home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/graph-512/trace.sqlite] with [/opt/nvidia/nsight-systems-cli/2026.2.1/target-linux-x64/reports/cuda_gpu_mem_time_sum.py]... 
+Time (%),Total Time (ns),Count,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Operation
+99.7,4097145,768,5334.8,2560.0,480,13632,4950.3,[CUDA memcpy Device-to-Device]
+0.1,4416,8,552.0,544.0,544,576,14.8,[CUDA memcpy Host-to-Device]
+0.1,3840,8,480.0,480.0,480,480,0.0,[CUDA memcpy Device-to-Host]
+0.1,2240,8,280.0,288.0,256,288,14.8,[CUDA memset]
+
+Processing [/home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/graph-512/trace.sqlite] with [/opt/nvidia/nsight-systems-cli/2026.2.1/target-linux-x64/reports/nvtx_sum.py]... 
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Style,Range
+33.3,260111420,1,260111420.0,260111420.0,260111420,260111420,0.0,PushPop,:decode:graph:512
+32.7,254777454,8,31847181.8,31852040.0,31816902,31862552,16260.7,PushPop,:sample
+4.3,33615268,1,33615268.0,33615268.0,33615268,33615268,0.0,PushPop,:step0
+4.2,32639831,1,32639831.0,32639831.0,32639831,32639831,0.0,PushPop,:step1
+4.2,32415130,1,32415130.0,32415130.0,32415130,32415130,0.0,PushPop,:step2
+4.1,32332682,1,32332682.0,32332682.0,32332682,32332682,0.0,PushPop,:step3
+4.1,32302705,1,32302705.0,32302705.0,32302705,32302705,0.0,PushPop,:step5
+4.1,32285672,1,32285672.0,32285672.0,32285672,32285672,0.0,PushPop,:step4
+4.1,32258883,1,32258883.0,32258883.0,32258883,32258883,0.0,PushPop,:step7
+4.1,32250274,1,32250274.0,32250274.0,32250274,32250274,0.0,PushPop,:step6
+0.6,4814420,8,601802.5,419752.5,379548,1569672,410072.1,PushPop,:model
+0.0,216325,8,27040.6,14940.5,12784,94975,28530.4,PushPop,:host_gather
+0.0,130086,8,16260.8,9631.0,8043,57435,16867.8,PushPop,:h2d
+

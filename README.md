@@ -19,9 +19,10 @@
 - 四执行方式（eager / static-exact / static-cap / CUDA Graph）在同一 checkpoint、
   dtype 和 workload 下建立 baseline：graph **31.41 tok/s**（depth 512 / cap 1024，
   48.5% SOL）、**22.53 tok/s**（8K / cap 8192，35.9% SOL）；eager 与 static cache
-  都是 11.3–12.0 tok/s，瓶颈是每步 7242–7290 个 kernel 的提交开销。
+  都是 11.5–11.9 tok/s，瓶颈是每步 7242–7290 个 kernel 的提交开销。
 - 8K + graph 峰值 15.722 GB、free 0.119 GB；graph pool 只多 34 MB。
-- 211 个正确性 gate 全通过（四模式 + 独立 padded reference + reset/边界 + smoke）。
+- 227 个正确性 gate 全通过（四模式 + 独立 padded reference + reset/边界 + smoke），
+  6/6 run dir 通过产物契约的 `--strict` 校验。
 
 详见 [M3 journal](docs/journal/2026-10-21-m3-decode-baseline.md)、
 [`docs/roadmap.md`](docs/roadmap.md) §6.1 和 [`docs/sol.md`](docs/sol.md)。

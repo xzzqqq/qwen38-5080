@@ -1,0 +1,13 @@
+M3 P0 correctness check
+run_dir: /home/xzq/workspace/qwen/results/m3/20261022T001856-m3-check
+
+=== numeric-512: OK (gates 115/115)
+
+=== numeric-8192: OK (gates 54/54)
+
+=== graph-1024: OK (gates 24/24)
+
+=== graph-8192: OK (gates 24/24)
+
+=== smoke-graph: OK (gates 10/10)
+

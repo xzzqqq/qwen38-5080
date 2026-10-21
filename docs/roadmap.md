@@ -3,6 +3,7 @@
 - 日期：2026-10-18
 - 修订：2026-10-20，按 M1 实机结果调整性能参照、显存预算和 Phase 1–4 的验收标准
 - 修订：2026-10-21，M3 baseline 实测（graph 31.41 / 22.53 tok/s）写入 §4 和 §6.1
+- 修订：2026-10-22，review 修复后于干净 commit 复跑（数字不变）；SOL 分母统一用有效 L_t，graph-512-8192 的 %SOL 修正为 35.0%
 
 ## 0. 修订摘要（2026-10-20）
 
@@ -79,7 +80,7 @@
 | 显存：带 DFlash2 | 16.39–16.74 GB | 对 16.61 GB 可用：余量 +0.22 ~ −0.13 GB；但 baseline 实测只剩 0.413 GB，drafter 容量更紧；**待 Phase 3 验证** |
 | **M3 实测：graph（depth 512 / cap 1024）** | **31.41 tok/s**（48.5% SOL，466 GB/s） | 整步 CUDA Graph；B_mean 14.812 GB，SOL 64.8 tok/s |
 | **M3 实测：graph（8K / cap 8192）** | **22.53 tok/s**（35.9% SOL，345 GB/s） | 扫满 capacity；多出的 12 ms/step 是 GQA 展开 + attention matmul |
-| **M3 实测：eager / static（两档 depth）** | **11.3–12.0 tok/s**（17.8–18.5% SOL） | 86 ms/step 里只有 30 ms 是 kernel，其余是 CPU 提交；static cache 本身不加速 |
+| **M3 实测：eager / static（两档 depth）** | **11.5–11.9 tok/s**（17.7–19.0% SOL） | 84–86 ms/step 里只有 30–44 ms 是 kernel，其余是 CPU 提交；static cache 本身不加速 |
 
 口径说明：
 
@@ -118,7 +119,7 @@ M1 只提供低成本外部参照；M2 建立正确实现；M3 建立自写 runn
 |---|---|---|---|---|
 | M1 实机参照 | ✅ 完成 2026-10-19 | 用 llama.cpp 跑 unsloth 的 `UD-IQ4_XS`（14.25 GB），用 `llama-bench` 测 depth 512 和 8192；固定 commit，脚本复现。详细清单见 `docs/plans/m1.md` | 已拿到：55.90 / 54.19 tok/s；逻辑带宽约 80%；可用显存 16.61 GB；真实生成正常。详见 [M1 journal](journal/2026-10-19-m1-llamacpp-reference.md) | 半天 |
 | M2 拼装 runner 跑通 | ✅ 完成 2026-10-21 | 执行清单见 [docs/plans/m2.md](plans/m2.md)。数值、生成、容量验收见 [M2 关闭记录](journal/2026-10-21-m2-close.md)；ShapeStableLinear 和 eager reference 冻结给 M3 | W4A4 对拍通过；runner 数值（3 prompt ×16 步）通过；三条真实 prompt 2048 上限正常 EOS；512/7680 容量通过；8K peak 15.62 GB，free 0.413 GB；**不设 tok/s 门槛** | 2–3 天 |
-| M3 decode baseline | ✅ 完成 2026-10-21 | 四执行方式（eager / static-exact / static-cap / graph）× depth 512/7680 与 capacity 1024/8192；按 §2 的固定 harness（5 次重复、两套计时、峰值显存）；按实际字节重算 SOL；nsys 时间线。详细见 [M3 journal](journal/2026-10-21-m3-decode-baseline.md) | 已拿到：graph **31.41 tok/s**（depth 512/cap 1024，48.5% SOL）、**22.53 tok/s**（8K，35.9% SOL）；eager/static 均 11.3–12.0 tok/s（launch-bound，17.8–18.5% SOL）；每步 7242–7290 个 kernel、93.6% <5 µs；8K+graph 峰值 15.722 GB、free 0.119 GB；`docs/sol.md` 按实际 14.452 GB 权重重算。**BF16 KV 已实测，FP8 只有理论值** | 1–2 天 |
+| M3 decode baseline | ✅ 完成 2026-10-21 | 四执行方式（eager / static-exact / static-cap / graph）× depth 512/7680 与 capacity 1024/8192；按 §2 的固定 harness（5 次重复、两套计时、峰值显存）；按实际字节重算 SOL；nsys 时间线。详细见 [M3 journal](journal/2026-10-21-m3-decode-baseline.md) | 已拿到：graph **31.41 tok/s**（depth 512/cap 1024，48.5% SOL）、**22.53 tok/s**（8K，35.9% SOL）；eager/static 均 11.5–11.9 tok/s（launch-bound，17.7–19.0% SOL）；每步 7242–7290 个 kernel、93.6% <5 µs；8K+graph 峰值 15.722 GB、free 0.119 GB；`docs/sol.md` 按实际 14.452 GB 权重重算。**BF16 KV 已实测，FP8 只有理论值** | 1–2 天 |
 
 ### 6.2 优化阶段
 

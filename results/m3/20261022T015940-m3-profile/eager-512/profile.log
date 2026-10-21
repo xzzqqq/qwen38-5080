@@ -1,0 +1,13 @@
+[transformers] `causal_conv1d_fn` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
+[transformers] `chunk_gated_delta_rule` is falling back to its reference PyTorch implementation because `flash-linear-attention` is not installed. This is correct but much slower; install `flash-linear-attention` for the optimized kernel.
+[transformers] `causal_conv1d_update` is falling back to its reference PyTorch implementation because `causal_conv1d` is not installed. This is correct but much slower; install `causal_conv1d` for the optimized kernel.
+[transformers] `fused_recurrent_gated_delta_rule` is falling back to its reference PyTorch implementation because `flash-linear-attention` is not installed. This is correct but much slower; install `flash-linear-attention` for the optimized kernel.
+Capture range started in the application.
+Capture range ended in the application.
+Generating '/tmp/nsys-xzq/nsys-report-271e.qdstrm'
+[1/1] [0%                          ] trace.nsys-repProcessing events...
+[1/1] [0%                          ] trace.nsys-rep[1/1] [5%                          ] trace.nsys-rep[1/1] [0%                          ] trace.nsys-rep[1/1] [8%                          ] trace.nsys-rep[1/1] [11%                         ] trace.nsys-rep[1/1] [=15%                        ] trace.nsys-rep[1/1] [==18%                       ] trace.nsys-rep[1/1] [===22%                      ] trace.nsys-rep[1/1] [====26%                     ] trace.nsys-rep[1/1] [=====29%                    ] trace.nsys-rep[1/1] [======33%                   ] trace.nsys-rep[1/1] [=======37%                  ] trace.nsys-rep[1/1] [========40%                 ] trace.nsys-rep[1/1] [=========44%                ] trace.nsys-rep[1/1] [==========48%               ] trace.nsys-rep[1/1] [===========50%              ] trace.nsys-rep[1/1] [========================100%] trace.nsys-rep[1/1] [========================100%] trace.nsys-rep
+{"execution": "eager", "depth": 512, "capacity": null, "steps": 8}
+wall per step ms: [122.78, 114.78, 114.53, 110.18, 108.66, 108.27, 108.73, 109.8]
+Generated:
+	/home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/eager-512/trace.nsys-rep

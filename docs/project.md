@@ -24,7 +24,7 @@
 | 瓶颈 | bs=1 decode 每个 token 读约 15 GB、算 51 GFLOP，算术强度比机器平衡点低约 264 倍。因此 速度 ≈ 带宽 ÷ 每步要读的字节数 |
 | SOL | AR：64 tok/s（FP8 KV）/ 63（BF16 KV）；DFlash2 spec decode：236–314 tok/s |
 | 现有推理栈（外推） | AR：46–50 tok/s；DFlash2：125–170 tok/s |
-| **M3 baseline（实测）** | graph：**31.41 tok/s**（depth 512 / cap 1024，48.5% SOL）、**22.53 tok/s**（8K / cap 8192，35.9% SOL）；eager 与 static cache 都是 11.3–12.0 tok/s（launch-bound）。见 `docs/journal/2026-10-21-m3-decode-baseline.md` |
+| **M3 baseline（实测）** | graph：**31.41 tok/s**（depth 512 / cap 1024，48.5% SOL）、**22.53 tok/s**（8K / cap 8192，35.9% SOL）；eager 与 static cache 都是 11.5–11.9 tok/s（launch-bound）。见 `docs/journal/2026-10-21-m3-decode-baseline.md` |
 | AR 实机参照（M1，外部） | IQ4_XS：55.90 / 54.19 tok/s（depth 512 / 8192），逻辑带宽约 80%；GPU 权重 13.35 GB，比 NVFP4 少约 1.06 GB，不能直接外推 |
 | 显存 | baseline 8K 实测 15.62 GB allocated / 15.86 reserved，free 0.413 GB；**M3 加 graph 后 prefill peak 15.722 GB、reserved 16.054 GB、free 0.119 GB**（graph pool 只多 34 MB）。带上 DFlash2 估算 16.39–16.74 GB，容量更紧，是否够用待 Phase 3 验证。spec decode 回滚时不能保存整份 state 快照，否则要多占 1.21 GB |
 

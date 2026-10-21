@@ -1,0 +1,264 @@
+{
+  "scenario": "exact-8192",
+  "spec": {
+    "execution": "static-exact",
+    "depth": 7680,
+    "capacity": 8192
+  },
+  "steps": 511,
+  "cache_bytes": {
+    "cache_kv_bytes": 536870912,
+    "cache_gdn_state_bytes": 0,
+    "cache_conv_state_bytes": 0,
+    "cache_kv_layers": 16,
+    "cache_linear_layers": 48,
+    "cache_finite": true
+  },
+  "harness": {
+    "execution": "static-exact",
+    "capacity": 8192,
+    "prefill_chunk": 128,
+    "max_context": 8192,
+    "input_buffer_shape": [
+      1,
+      1,
+      5120
+    ],
+    "input_buffer_ptr": 31705255936,
+    "input_buffer_dtype": "torch.bfloat16",
+    "pinned_staging_shape": [
+      1,
+      1,
+      5120
+    ],
+    "host_embedding_bytes": 2542796800,
+    "cache": {
+      "kv_bytes": 536870912,
+      "gdn_state_bytes": 0,
+      "conv_state_bytes": 0,
+      "kv_layers": 16,
+      "linear_layers": 48,
+      "kv_dtypes": [
+        "torch.bfloat16"
+      ],
+      "gdn_dtypes": [],
+      "conv_dtypes": [],
+      "finite": true
+    }
+  },
+  "determinism": {
+    "prefill_logits_equal": true,
+    "step_logits_equal": true,
+    "compared_steps": 4
+  },
+  "stages": [
+    {
+      "stage": "load",
+      "seconds": 1.3037083148956299,
+      "peak_allocated_gb": 14.45758976,
+      "peak_reserved_gb": 14.556332032,
+      "end_allocated_gb": 14.4520192,
+      "end_reserved_gb": 14.556332032,
+      "free_gb": 1.727922176,
+      "smi_used_mib": 14193.0
+    },
+    {
+      "stage": "cache_init",
+      "seconds": 0.0020726050715893507,
+      "peak_allocated_gb": 14.988908544,
+      "peak_reserved_gb": 15.101591552,
+      "end_allocated_gb": 14.988908544,
+      "end_reserved_gb": 15.101591552,
+      "free_gb": 1.182662656,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 14713.0,
+      "cache_kv_bytes": 536870912,
+      "cache_gdn_state_bytes": 0,
+      "cache_conv_state_bytes": 0,
+      "cache_kv_layers": 16,
+      "cache_linear_layers": 48,
+      "cache_finite": true
+    },
+    {
+      "stage": "prefill_cold",
+      "seconds": 7.06187500199303,
+      "peak_allocated_gb": 15.6535808,
+      "peak_reserved_gb": 15.758000128,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.758000128,
+      "free_gb": 0.513671168,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15351.0,
+      "prefill_s": 7.06004345703125,
+      "cache_len": 7680
+    },
+    {
+      "stage": "prefill_again",
+      "seconds": 6.752929435810074,
+      "peak_allocated_gb": 15.65407744,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "prefill_s": 6.7508583984375,
+      "cache_len": 7680
+    },
+    {
+      "stage": "decode",
+      "seconds": 45.407393254106864,
+      "peak_allocated_gb": 15.428393472,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "decode_peak_allocated_gb": 15.428393472,
+      "decode_peak_reserved_gb": 15.76009728,
+      "decode_tok_s": 11.2547506536075,
+      "cache_len_end": 8191
+    },
+    {
+      "stage": "reset_reprefill",
+      "seconds": 6.849967365851626,
+      "peak_allocated_gb": 15.65407744,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "prefill_s": 6.84787646484375,
+      "cache_len": 7680
+    },
+    {
+      "stage": "decode_cycle2",
+      "seconds": 1.4413117819931358,
+      "peak_allocated_gb": 15.411040256,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "decode_tok_s": 11.106845939457724,
+      "cache_len_end": 7696
+    },
+    {
+      "stage": "reset_reprefill_cycle2",
+      "seconds": 6.764381512068212,
+      "peak_allocated_gb": 15.65407744,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "prefill_s": 6.7622939453125,
+      "cache_len": 7680
+    },
+    {
+      "stage": "reset_determinism",
+      "seconds": 14.226822351105511,
+      "peak_allocated_gb": 15.65457408,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "prefill_logits_equal": true,
+      "step_logits_equal": true,
+      "compared_steps": 4
+    }
+  ],
+  "growth": {
+    "allocated_delta_gb": 0.0,
+    "reserved_delta_gb": 0.0,
+    "cycle2_allocated_delta_gb": 0.0,
+    "cycle2_reserved_delta_gb": 0.0,
+    "kv_data_ptr_stable": true,
+    "kv_data_ptr": 27402731520,
+    "kv_data_ptr_note": ""
+  },
+  "peaks": {
+    "load_peak_allocated_gb": 14.45758976,
+    "max_peak_allocated_gb": 15.65457408,
+    "max_peak_reserved_gb": 15.76009728,
+    "min_free_gb": 0.511574016,
+    "final_end_allocated_gb": 15.21982976,
+    "final_end_reserved_gb": 15.76009728
+  },
+  "ok": true,
+  "provenance": {
+    "created_at": "2026-10-22T00:26:12.658301+08:00",
+    "git": {
+      "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+      "dirty": false,
+      "status": [
+        "?? results/m3/"
+      ],
+      "untracked_source": [],
+      "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "diff_bytes": 0,
+      "untracked_files": [
+        "results/m3/20261022T001856-m3-check/check.json",
+        "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+        "results/m3/20261022T001856-m3-check/graph-8192/report.json",
+        "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+        "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+        "results/m3/20261022T001856-m3-check/provenance.json",
+        "results/m3/20261022T001856-m3-check/smoke-graph/report.json",
+        "results/m3/20261022T001856-m3-check/source_manifest.json",
+        "results/m3/20261022T001856-m3-check/summary.txt",
+        "results/m3/20261022T002310-m3-memory/eager-8192/result.json",
+        "results/m3/20261022T002310-m3-memory/memory.json",
+        "results/m3/20261022T002310-m3-memory/provenance.json",
+        "results/m3/20261022T002310-m3-memory/source_manifest.json"
+      ]
+    },
+    "source_manifest": {
+      "dirty": false,
+      "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "patch_bytes": 0,
+      "files": [],
+      "files_total_bytes": 0
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+      "torch": "2.14.1+cu130",
+      "transformers": "5.20.2",
+      "flashinfer": "0.7.2",
+      "cuda": "13.0",
+      "gpu_name": "NVIDIA GeForce RTX 5080",
+      "gpu_total_mib": 16303.0,
+      "driver": "580.105.08",
+      "clock_sm_mhz": 2835.0,
+      "clock_max_mhz": 3090.0,
+      "temperature_c": 50.0,
+      "power_w": 198.05
+    },
+    "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+    "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+    "argv": [
+      "/home/xzq/workspace/qwen/scripts/m3_memory.py",
+      "--worker",
+      "exact-8192",
+      "--out",
+      "/home/xzq/workspace/qwen/results/m3/20261022T002310-m3-memory/exact-8192",
+      "--fixtures",
+      "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+      "--steps",
+      "511",
+      "--chunk-size",
+      "128"
+    ],
+    "cwd": "/home/xzq/workspace/qwen",
+    "sol_bandwidth_bytes": 960000000000.0,
+    "worker": "exact-8192"
+  }
+}

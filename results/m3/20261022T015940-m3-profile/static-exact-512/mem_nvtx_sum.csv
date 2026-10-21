@@ -1,0 +1,24 @@
+Generating SQLite file /home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/static-exact-512/trace.sqlite from /home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/static-exact-512/trace.nsys-rep
+Processing [/home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/static-exact-512/trace.sqlite] with [/opt/nvidia/nsight-systems-cli/2026.2.1/target-linux-x64/reports/cuda_gpu_mem_time_sum.py]... 
+Time (%),Total Time (ns),Count,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Operation
+98.3,2905620,768,3783.4,2688.0,608,9056,3218.7,[CUDA memcpy Device-to-Device]
+1.5,44448,144,308.7,320.0,288,320,15.4,[CUDA memcpy Device-to-Host]
+0.1,4352,8,544.0,544.0,544,544,0.0,[CUDA memcpy Host-to-Device]
+0.1,2112,8,264.0,256.0,256,288,14.8,[CUDA memset]
+
+Processing [/home/xzq/workspace/qwen/results/m3/20261022T015940-m3-profile/static-exact-512/trace.sqlite] with [/opt/nvidia/nsight-systems-cli/2026.2.1/target-linux-x64/reports/nvtx_sum.py]... 
+Time (%),Total Time (ns),Instances,Avg (ns),Med (ns),Min (ns),Max (ns),StdDev (ns),Style,Range
+33.3,888097946,1,888097946.0,888097946.0,888097946,888097946,0.0,PushPop,:decode:static-exact:512
+33.1,881095733,8,110136966.6,110064875.5,108638961,112009893,1104123.2,PushPop,:model
+4.2,112976549,1,112976549.0,112976549.0,112976549,112976549,0.0,PushPop,:step0
+4.2,111867980,1,111867980.0,111867980.0,111867980,111867980,0.0,PushPop,:step3
+4.2,111661786,1,111661786.0,111661786.0,111661786,111661786,0.0,PushPop,:step6
+4.2,111095174,1,111095174.0,111095174.0,111095174,111095174,0.0,PushPop,:step7
+4.2,110763911,1,110763911.0,110763911.0,110763911,110763911,0.0,PushPop,:step4
+4.1,110157829,1,110157829.0,110157829.0,110157829,110157829,0.0,PushPop,:step1
+4.1,110075848,1,110075848.0,110075848.0,110075848,110075848,0.0,PushPop,:step5
+4.1,109486244,1,109486244.0,109486244.0,109486244,109486244,0.0,PushPop,:step2
+0.2,6311736,8,788967.0,790302.5,782471,793844,3733.4,PushPop,:sample
+0.0,285928,8,35741.0,29252.0,19812,88078,22144.6,PushPop,:host_gather
+0.0,155392,8,19424.0,15135.0,12407,51490,13155.4,PushPop,:h2d
+

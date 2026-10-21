@@ -1,0 +1,1691 @@
+{
+  "results": [
+    {
+      "scenario": "eager-8192",
+      "spec": {
+        "execution": "eager",
+        "depth": 7680,
+        "capacity": null
+      },
+      "steps": 511,
+      "cache_bytes": {},
+      "harness": {
+        "execution": "eager",
+        "capacity": null,
+        "prefill_chunk": 128,
+        "max_context": 8192,
+        "input_buffer_shape": [
+          1,
+          1,
+          5120
+        ],
+        "input_buffer_ptr": 31705255936,
+        "input_buffer_dtype": "torch.bfloat16",
+        "pinned_staging_shape": [
+          1,
+          1,
+          5120
+        ],
+        "host_embedding_bytes": 2542796800
+      },
+      "determinism": {
+        "prefill_logits_equal": true,
+        "step_logits_equal": true,
+        "compared_steps": 4
+      },
+      "stages": [
+        {
+          "stage": "load",
+          "seconds": 1.296553134918213,
+          "peak_allocated_gb": 14.45758976,
+          "peak_reserved_gb": 14.556332032,
+          "end_allocated_gb": 14.4520192,
+          "end_reserved_gb": 14.556332032,
+          "free_gb": 1.727922176,
+          "smi_used_mib": 14193.0
+        },
+        {
+          "stage": "cache_init",
+          "seconds": 0.00023290119133889675,
+          "peak_allocated_gb": 14.45202944,
+          "peak_reserved_gb": 14.556332032,
+          "end_allocated_gb": 14.45202944,
+          "end_reserved_gb": 14.556332032,
+          "free_gb": 1.727922176,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14193.0,
+          "execution": "eager",
+          "capacity": null,
+          "prefill_chunk": 128,
+          "max_context": 8192,
+          "input_buffer_shape": [
+            1,
+            1,
+            5120
+          ],
+          "input_buffer_ptr": 31705255936,
+          "input_buffer_dtype": "torch.bfloat16",
+          "pinned_staging_shape": [
+            1,
+            1,
+            5120
+          ],
+          "host_embedding_bytes": 2542796800
+        },
+        {
+          "stage": "prefill_cold",
+          "seconds": 6.889790862100199,
+          "peak_allocated_gb": 15.620018176,
+          "peak_reserved_gb": 15.858663424,
+          "end_allocated_gb": 15.186267136,
+          "end_reserved_gb": 15.858663424,
+          "free_gb": 0.413007872,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15447.0,
+          "prefill_s": 6.88927197265625,
+          "cache_len": 7680
+        },
+        {
+          "stage": "prefill_again",
+          "seconds": 6.57171725993976,
+          "peak_allocated_gb": 15.620514816,
+          "peak_reserved_gb": 15.860760576,
+          "end_allocated_gb": 15.186267136,
+          "end_reserved_gb": 15.860760576,
+          "free_gb": 0.41091072,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15449.0,
+          "prefill_s": 6.57082861328125,
+          "cache_len": 7680
+        },
+        {
+          "stage": "decode",
+          "seconds": 43.66193669009954,
+          "peak_allocated_gb": 15.428319744,
+          "peak_reserved_gb": 15.860760576,
+          "end_allocated_gb": 15.219756032,
+          "end_reserved_gb": 15.860760576,
+          "free_gb": 0.41091072,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15449.0,
+          "decode_peak_allocated_gb": 15.428319744,
+          "decode_peak_reserved_gb": 15.860760576,
+          "decode_tok_s": 11.705002689156611,
+          "cache_len_end": 8191
+        },
+        {
+          "stage": "reset_reprefill",
+          "seconds": 6.5850909180007875,
+          "peak_allocated_gb": 15.620514816,
+          "peak_reserved_gb": 15.860760576,
+          "end_allocated_gb": 15.186267136,
+          "end_reserved_gb": 15.860760576,
+          "free_gb": 0.41091072,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15449.0,
+          "prefill_s": 6.584150390625,
+          "cache_len": 7680
+        },
+        {
+          "stage": "decode_cycle2",
+          "seconds": 1.366999669931829,
+          "peak_allocated_gb": 15.378526208,
+          "peak_reserved_gb": 15.860760576,
+          "end_allocated_gb": 15.187315712,
+          "end_reserved_gb": 15.860760576,
+          "free_gb": 0.41091072,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15449.0,
+          "decode_tok_s": 11.710317111500082,
+          "cache_len_end": 7696
+        },
+        {
+          "stage": "reset_reprefill_cycle2",
+          "seconds": 6.588739281985909,
+          "peak_allocated_gb": 15.620514816,
+          "peak_reserved_gb": 15.860760576,
+          "end_allocated_gb": 15.186267136,
+          "end_reserved_gb": 15.860760576,
+          "free_gb": 0.41091072,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15449.0,
+          "prefill_s": 6.58780224609375,
+          "cache_len": 7680
+        },
+        {
+          "stage": "reset_determinism",
+          "seconds": 13.847161057172343,
+          "peak_allocated_gb": 15.621011456,
+          "peak_reserved_gb": 15.860760576,
+          "end_allocated_gb": 15.18652928,
+          "end_reserved_gb": 15.860760576,
+          "free_gb": 0.41091072,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15449.0,
+          "prefill_logits_equal": true,
+          "step_logits_equal": true,
+          "compared_steps": 4
+        }
+      ],
+      "growth": {
+        "allocated_delta_gb": 0.0,
+        "reserved_delta_gb": 0.0,
+        "cycle2_allocated_delta_gb": 0.0,
+        "cycle2_reserved_delta_gb": 0.0,
+        "kv_data_ptr_stable": true,
+        "kv_data_ptr": null,
+        "kv_data_ptr_note": "eager 无固定 KV buffer，跳过"
+      },
+      "peaks": {
+        "load_peak_allocated_gb": 14.45758976,
+        "max_peak_allocated_gb": 15.621011456,
+        "max_peak_reserved_gb": 15.860760576,
+        "min_free_gb": 0.41091072,
+        "final_end_allocated_gb": 15.18652928,
+        "final_end_reserved_gb": 15.860760576
+      },
+      "ok": true,
+      "provenance": {
+        "created_at": "2026-10-22T00:24:39.898602+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/check.json",
+            "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+            "results/m3/20261022T001856-m3-check/graph-8192/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/smoke-graph/report.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json",
+            "results/m3/20261022T001856-m3-check/summary.txt",
+            "results/m3/20261022T002310-m3-memory/provenance.json",
+            "results/m3/20261022T002310-m3-memory/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2835.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 52.0,
+          "power_w": 187.09
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_memory.py",
+          "--worker",
+          "eager-8192",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T002310-m3-memory/eager-8192",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "511",
+          "--chunk-size",
+          "128"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "eager-8192"
+      },
+      "returncode": 0
+    },
+    {
+      "scenario": "exact-8192",
+      "spec": {
+        "execution": "static-exact",
+        "depth": 7680,
+        "capacity": 8192
+      },
+      "steps": 511,
+      "cache_bytes": {
+        "cache_kv_bytes": 536870912,
+        "cache_gdn_state_bytes": 0,
+        "cache_conv_state_bytes": 0,
+        "cache_kv_layers": 16,
+        "cache_linear_layers": 48,
+        "cache_finite": true
+      },
+      "harness": {
+        "execution": "static-exact",
+        "capacity": 8192,
+        "prefill_chunk": 128,
+        "max_context": 8192,
+        "input_buffer_shape": [
+          1,
+          1,
+          5120
+        ],
+        "input_buffer_ptr": 31705255936,
+        "input_buffer_dtype": "torch.bfloat16",
+        "pinned_staging_shape": [
+          1,
+          1,
+          5120
+        ],
+        "host_embedding_bytes": 2542796800,
+        "cache": {
+          "kv_bytes": 536870912,
+          "gdn_state_bytes": 0,
+          "conv_state_bytes": 0,
+          "kv_layers": 16,
+          "linear_layers": 48,
+          "kv_dtypes": [
+            "torch.bfloat16"
+          ],
+          "gdn_dtypes": [],
+          "conv_dtypes": [],
+          "finite": true
+        }
+      },
+      "determinism": {
+        "prefill_logits_equal": true,
+        "step_logits_equal": true,
+        "compared_steps": 4
+      },
+      "stages": [
+        {
+          "stage": "load",
+          "seconds": 1.3037083148956299,
+          "peak_allocated_gb": 14.45758976,
+          "peak_reserved_gb": 14.556332032,
+          "end_allocated_gb": 14.4520192,
+          "end_reserved_gb": 14.556332032,
+          "free_gb": 1.727922176,
+          "smi_used_mib": 14193.0
+        },
+        {
+          "stage": "cache_init",
+          "seconds": 0.0020726050715893507,
+          "peak_allocated_gb": 14.988908544,
+          "peak_reserved_gb": 15.101591552,
+          "end_allocated_gb": 14.988908544,
+          "end_reserved_gb": 15.101591552,
+          "free_gb": 1.182662656,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14713.0,
+          "cache_kv_bytes": 536870912,
+          "cache_gdn_state_bytes": 0,
+          "cache_conv_state_bytes": 0,
+          "cache_kv_layers": 16,
+          "cache_linear_layers": 48,
+          "cache_finite": true
+        },
+        {
+          "stage": "prefill_cold",
+          "seconds": 7.06187500199303,
+          "peak_allocated_gb": 15.6535808,
+          "peak_reserved_gb": 15.758000128,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.758000128,
+          "free_gb": 0.513671168,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15351.0,
+          "prefill_s": 7.06004345703125,
+          "cache_len": 7680
+        },
+        {
+          "stage": "prefill_again",
+          "seconds": 6.752929435810074,
+          "peak_allocated_gb": 15.65407744,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "prefill_s": 6.7508583984375,
+          "cache_len": 7680
+        },
+        {
+          "stage": "decode",
+          "seconds": 45.407393254106864,
+          "peak_allocated_gb": 15.428393472,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "decode_peak_allocated_gb": 15.428393472,
+          "decode_peak_reserved_gb": 15.76009728,
+          "decode_tok_s": 11.2547506536075,
+          "cache_len_end": 8191
+        },
+        {
+          "stage": "reset_reprefill",
+          "seconds": 6.849967365851626,
+          "peak_allocated_gb": 15.65407744,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "prefill_s": 6.84787646484375,
+          "cache_len": 7680
+        },
+        {
+          "stage": "decode_cycle2",
+          "seconds": 1.4413117819931358,
+          "peak_allocated_gb": 15.411040256,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "decode_tok_s": 11.106845939457724,
+          "cache_len_end": 7696
+        },
+        {
+          "stage": "reset_reprefill_cycle2",
+          "seconds": 6.764381512068212,
+          "peak_allocated_gb": 15.65407744,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "prefill_s": 6.7622939453125,
+          "cache_len": 7680
+        },
+        {
+          "stage": "reset_determinism",
+          "seconds": 14.226822351105511,
+          "peak_allocated_gb": 15.65457408,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "prefill_logits_equal": true,
+          "step_logits_equal": true,
+          "compared_steps": 4
+        }
+      ],
+      "growth": {
+        "allocated_delta_gb": 0.0,
+        "reserved_delta_gb": 0.0,
+        "cycle2_allocated_delta_gb": 0.0,
+        "cycle2_reserved_delta_gb": 0.0,
+        "kv_data_ptr_stable": true,
+        "kv_data_ptr": 27402731520,
+        "kv_data_ptr_note": ""
+      },
+      "peaks": {
+        "load_peak_allocated_gb": 14.45758976,
+        "max_peak_allocated_gb": 15.65457408,
+        "max_peak_reserved_gb": 15.76009728,
+        "min_free_gb": 0.511574016,
+        "final_end_allocated_gb": 15.21982976,
+        "final_end_reserved_gb": 15.76009728
+      },
+      "ok": true,
+      "provenance": {
+        "created_at": "2026-10-22T00:26:12.658301+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/check.json",
+            "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+            "results/m3/20261022T001856-m3-check/graph-8192/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/smoke-graph/report.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json",
+            "results/m3/20261022T001856-m3-check/summary.txt",
+            "results/m3/20261022T002310-m3-memory/eager-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/memory.json",
+            "results/m3/20261022T002310-m3-memory/provenance.json",
+            "results/m3/20261022T002310-m3-memory/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2835.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 50.0,
+          "power_w": 198.05
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_memory.py",
+          "--worker",
+          "exact-8192",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T002310-m3-memory/exact-8192",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "511",
+          "--chunk-size",
+          "128"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "exact-8192"
+      },
+      "returncode": 0
+    },
+    {
+      "scenario": "cap-8192",
+      "spec": {
+        "execution": "static-cap",
+        "depth": 7680,
+        "capacity": 8192
+      },
+      "steps": 511,
+      "cache_bytes": {
+        "cache_kv_bytes": 536870912,
+        "cache_gdn_state_bytes": 0,
+        "cache_conv_state_bytes": 0,
+        "cache_kv_layers": 16,
+        "cache_linear_layers": 48,
+        "cache_finite": true
+      },
+      "harness": {
+        "execution": "static-cap",
+        "capacity": 8192,
+        "prefill_chunk": 128,
+        "max_context": 8192,
+        "input_buffer_shape": [
+          1,
+          1,
+          5120
+        ],
+        "input_buffer_ptr": 31705255936,
+        "input_buffer_dtype": "torch.bfloat16",
+        "pinned_staging_shape": [
+          1,
+          1,
+          5120
+        ],
+        "host_embedding_bytes": 2542796800,
+        "cache": {
+          "kv_bytes": 536870912,
+          "gdn_state_bytes": 0,
+          "conv_state_bytes": 0,
+          "kv_layers": 16,
+          "linear_layers": 48,
+          "kv_dtypes": [
+            "torch.bfloat16"
+          ],
+          "gdn_dtypes": [],
+          "conv_dtypes": [],
+          "finite": true
+        }
+      },
+      "determinism": {
+        "prefill_logits_equal": true,
+        "step_logits_equal": true,
+        "compared_steps": 4
+      },
+      "stages": [
+        {
+          "stage": "load",
+          "seconds": 1.2966084480285645,
+          "peak_allocated_gb": 14.45758976,
+          "peak_reserved_gb": 14.556332032,
+          "end_allocated_gb": 14.4520192,
+          "end_reserved_gb": 14.556332032,
+          "free_gb": 1.727922176,
+          "smi_used_mib": 14193.0
+        },
+        {
+          "stage": "cache_init",
+          "seconds": 0.002060150960460305,
+          "peak_allocated_gb": 14.988908544,
+          "peak_reserved_gb": 15.101591552,
+          "end_allocated_gb": 14.988908544,
+          "end_reserved_gb": 15.101591552,
+          "free_gb": 1.182662656,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14713.0,
+          "cache_kv_bytes": 536870912,
+          "cache_gdn_state_bytes": 0,
+          "cache_conv_state_bytes": 0,
+          "cache_kv_layers": 16,
+          "cache_linear_layers": 48,
+          "cache_finite": true
+        },
+        {
+          "stage": "prefill_cold",
+          "seconds": 6.909459561808035,
+          "peak_allocated_gb": 15.6535808,
+          "peak_reserved_gb": 15.758000128,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.758000128,
+          "free_gb": 0.513671168,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15351.0,
+          "prefill_s": 6.90764306640625,
+          "cache_len": 7680
+        },
+        {
+          "stage": "prefill_again",
+          "seconds": 6.597253764048219,
+          "peak_allocated_gb": 15.65407744,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "prefill_s": 6.59517236328125,
+          "cache_len": 7680
+        },
+        {
+          "stage": "decode",
+          "seconds": 43.2489366249647,
+          "peak_allocated_gb": 15.428418048,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "decode_peak_allocated_gb": 15.428418048,
+          "decode_peak_reserved_gb": 15.76009728,
+          "decode_tok_s": 11.816747490758814,
+          "cache_len_end": 8191
+        },
+        {
+          "stage": "reset_reprefill",
+          "seconds": 6.694170970004052,
+          "peak_allocated_gb": 15.65407744,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "prefill_s": 6.6920693359375,
+          "cache_len": 7680
+        },
+        {
+          "stage": "decode_cycle2",
+          "seconds": 1.3645417201332748,
+          "peak_allocated_gb": 15.423349248,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "decode_tok_s": 11.732625603129755,
+          "cache_len_end": 7696
+        },
+        {
+          "stage": "reset_reprefill_cycle2",
+          "seconds": 6.602228248957545,
+          "peak_allocated_gb": 15.65407744,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "prefill_s": 6.60012939453125,
+          "cache_len": 7680
+        },
+        {
+          "stage": "reset_determinism",
+          "seconds": 13.848835039883852,
+          "peak_allocated_gb": 15.65457408,
+          "peak_reserved_gb": 15.76009728,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.76009728,
+          "free_gb": 0.511574016,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15353.0,
+          "prefill_logits_equal": true,
+          "step_logits_equal": true,
+          "compared_steps": 4
+        }
+      ],
+      "growth": {
+        "allocated_delta_gb": 0.0,
+        "reserved_delta_gb": 0.0,
+        "cycle2_allocated_delta_gb": 0.0,
+        "cycle2_reserved_delta_gb": 0.0,
+        "kv_data_ptr_stable": true,
+        "kv_data_ptr": 27402731520,
+        "kv_data_ptr_note": ""
+      },
+      "peaks": {
+        "load_peak_allocated_gb": 14.45758976,
+        "max_peak_allocated_gb": 15.65457408,
+        "max_peak_reserved_gb": 15.76009728,
+        "min_free_gb": 0.511574016,
+        "final_end_allocated_gb": 15.21982976,
+        "final_end_reserved_gb": 15.76009728
+      },
+      "ok": true,
+      "provenance": {
+        "created_at": "2026-10-22T00:27:42.182646+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/check.json",
+            "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+            "results/m3/20261022T001856-m3-check/graph-8192/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/smoke-graph/report.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json",
+            "results/m3/20261022T001856-m3-check/summary.txt",
+            "results/m3/20261022T002310-m3-memory/eager-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/exact-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/memory.json",
+            "results/m3/20261022T002310-m3-memory/provenance.json",
+            "results/m3/20261022T002310-m3-memory/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2835.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 51.0,
+          "power_w": 198.51
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_memory.py",
+          "--worker",
+          "cap-8192",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T002310-m3-memory/cap-8192",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "511",
+          "--chunk-size",
+          "128"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "cap-8192"
+      },
+      "returncode": 0
+    },
+    {
+      "scenario": "graph-8192",
+      "spec": {
+        "execution": "graph",
+        "depth": 7680,
+        "capacity": 8192
+      },
+      "steps": 511,
+      "cache_bytes": {
+        "cache_kv_bytes": 536870912,
+        "cache_gdn_state_bytes": 0,
+        "cache_conv_state_bytes": 0,
+        "cache_kv_layers": 16,
+        "cache_linear_layers": 48,
+        "cache_finite": true
+      },
+      "harness": {
+        "execution": "graph",
+        "capacity": 8192,
+        "prefill_chunk": 128,
+        "max_context": 8192,
+        "input_buffer_shape": [
+          1,
+          1,
+          5120
+        ],
+        "input_buffer_ptr": 31705255936,
+        "input_buffer_dtype": "torch.bfloat16",
+        "pinned_staging_shape": [
+          1,
+          1,
+          5120
+        ],
+        "host_embedding_bytes": 2542796800,
+        "cache": {
+          "kv_bytes": 536870912,
+          "gdn_state_bytes": 0,
+          "conv_state_bytes": 0,
+          "kv_layers": 16,
+          "linear_layers": 48,
+          "kv_dtypes": [
+            "torch.bfloat16"
+          ],
+          "gdn_dtypes": [],
+          "conv_dtypes": [],
+          "finite": true
+        }
+      },
+      "graph": {
+        "warmup_iters": 3,
+        "capture_s": 0.1001329799182713,
+        "logits_shape": [
+          1,
+          1,
+          248320
+        ],
+        "logits_data_ptr": 50331705856,
+        "mem_before_allocated": 15253880832,
+        "mem_before_reserved": 16015949824,
+        "mem_after_allocated": 15287931904,
+        "mem_after_reserved": 15611199488,
+        "length_at_entry": 7680,
+        "length_before_capture": 7683,
+        "length_after_capture": 7683,
+        "warmup_length_delta": 3,
+        "warmup_peak_allocated": 15458229760,
+        "warmup_peak_reserved": 16015949824,
+        "capture_peak_allocated": 15490790912,
+        "capture_peak_reserved": 16015949824,
+        "prefill_before_peak_allocated_gb": 15.65407744,
+        "prefill_before_peak_reserved_gb": 15.76009728,
+        "prefill_after_peak_allocated_gb": 15.722179584,
+        "prefill_after_peak_reserved_gb": 16.055795712,
+        "max_phase_peak_allocated_gb": 15.722179584,
+        "max_phase_peak_reserved_gb": 16.055795712
+      },
+      "determinism": {
+        "prefill_logits_equal": true,
+        "step_logits_equal": true,
+        "compared_steps": 4
+      },
+      "stages": [
+        {
+          "stage": "load",
+          "seconds": 1.2979710102081299,
+          "peak_allocated_gb": 14.45758976,
+          "peak_reserved_gb": 14.556332032,
+          "end_allocated_gb": 14.4520192,
+          "end_reserved_gb": 14.556332032,
+          "free_gb": 1.727922176,
+          "smi_used_mib": 14193.0
+        },
+        {
+          "stage": "cache_init",
+          "seconds": 0.002882285974919796,
+          "peak_allocated_gb": 14.988908544,
+          "peak_reserved_gb": 15.101591552,
+          "end_allocated_gb": 14.988908544,
+          "end_reserved_gb": 15.101591552,
+          "free_gb": 1.182662656,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14713.0,
+          "cache_kv_bytes": 536870912,
+          "cache_gdn_state_bytes": 0,
+          "cache_conv_state_bytes": 0,
+          "cache_kv_layers": 16,
+          "cache_linear_layers": 48,
+          "cache_finite": true
+        },
+        {
+          "stage": "prefill_cold",
+          "seconds": 6.904224409954622,
+          "peak_allocated_gb": 15.6535808,
+          "peak_reserved_gb": 15.758000128,
+          "end_allocated_gb": 15.21982976,
+          "end_reserved_gb": 15.758000128,
+          "free_gb": 0.513671168,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15351.0,
+          "prefill_s": 6.90233447265625,
+          "cache_len": 7680
+        },
+        {
+          "stage": "warmup_capture",
+          "seconds": 13.544823775067925,
+          "peak_allocated_gb": 15.722179584,
+          "peak_reserved_gb": 16.055795712,
+          "end_allocated_gb": 15.287435264,
+          "end_reserved_gb": 16.055795712,
+          "free_gb": 0.119406592,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15727.0,
+          "capture_s": 0.1001329799182713,
+          "graph_pool_allocated_gb": 0.034051072,
+          "graph_pool_reserved_gb": -0.404750336,
+          "warmup_length_delta": 3,
+          "prefill_before_peak_gb": 15.65407744,
+          "warmup_peak_gb": 15.45822976,
+          "capture_peak_gb": 15.490790912,
+          "prefill_after_peak_gb": 15.722179584,
+          "max_phase_peak_gb": 15.722179584
+        },
+        {
+          "stage": "prefill_graph_resident",
+          "seconds": 6.591359033016488,
+          "peak_allocated_gb": 15.721682944,
+          "peak_reserved_gb": 16.055795712,
+          "end_allocated_gb": 15.287435264,
+          "end_reserved_gb": 16.055795712,
+          "free_gb": 0.119406592,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15727.0,
+          "prefill_s": 6.58923583984375,
+          "cache_len": 7680
+        },
+        {
+          "stage": "decode",
+          "seconds": 22.66096364101395,
+          "peak_allocated_gb": 15.292667904,
+          "peak_reserved_gb": 16.055795712,
+          "end_allocated_gb": 15.287435264,
+          "end_reserved_gb": 16.055795712,
+          "free_gb": 0.119406592,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15727.0,
+          "decode_peak_allocated_gb": 15.292667904,
+          "decode_peak_reserved_gb": 16.055795712,
+          "decode_tok_s": 22.554816987042535,
+          "cache_len_end": 8191
+        },
+        {
+          "stage": "reset_reprefill",
+          "seconds": 6.591072030132636,
+          "peak_allocated_gb": 15.721682944,
+          "peak_reserved_gb": 16.055795712,
+          "end_allocated_gb": 15.287435264,
+          "end_reserved_gb": 16.055795712,
+          "free_gb": 0.119406592,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15727.0,
+          "prefill_s": 6.58894384765625,
+          "cache_len": 7680
+        },
+        {
+          "stage": "decode_cycle2",
+          "seconds": 0.7100232129450887,
+          "peak_allocated_gb": 15.287599104,
+          "peak_reserved_gb": 16.055795712,
+          "end_allocated_gb": 15.287435264,
+          "end_reserved_gb": 16.055795712,
+          "free_gb": 0.119406592,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15727.0,
+          "decode_tok_s": 22.557141800588152,
+          "cache_len_end": 7696
+        },
+        {
+          "stage": "reset_reprefill_cycle2",
+          "seconds": 6.5840086380485445,
+          "peak_allocated_gb": 15.721682944,
+          "peak_reserved_gb": 16.055795712,
+          "end_allocated_gb": 15.287435264,
+          "end_reserved_gb": 16.055795712,
+          "free_gb": 0.119406592,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15727.0,
+          "prefill_s": 6.581880859375,
+          "cache_len": 7680
+        },
+        {
+          "stage": "reset_determinism",
+          "seconds": 13.541205707006156,
+          "peak_allocated_gb": 15.722179584,
+          "peak_reserved_gb": 16.055795712,
+          "end_allocated_gb": 15.287435264,
+          "end_reserved_gb": 16.055795712,
+          "free_gb": 0.119406592,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 15727.0,
+          "prefill_logits_equal": true,
+          "step_logits_equal": true,
+          "compared_steps": 4
+        }
+      ],
+      "growth": {
+        "allocated_delta_gb": 0.0,
+        "reserved_delta_gb": 0.0,
+        "cycle2_allocated_delta_gb": 0.0,
+        "cycle2_reserved_delta_gb": 0.0,
+        "kv_data_ptr_stable": true,
+        "kv_data_ptr": 27402731520,
+        "kv_data_ptr_note": ""
+      },
+      "peaks": {
+        "load_peak_allocated_gb": 14.45758976,
+        "max_peak_allocated_gb": 15.722179584,
+        "max_peak_reserved_gb": 16.055795712,
+        "min_free_gb": 0.119406592,
+        "final_end_allocated_gb": 15.287435264,
+        "final_end_reserved_gb": 16.055795712
+      },
+      "ok": true,
+      "provenance": {
+        "created_at": "2026-10-22T00:29:03.597714+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/check.json",
+            "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+            "results/m3/20261022T001856-m3-check/graph-8192/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/smoke-graph/report.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json",
+            "results/m3/20261022T001856-m3-check/summary.txt",
+            "results/m3/20261022T002310-m3-memory/cap-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/eager-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/exact-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/memory.json",
+            "results/m3/20261022T002310-m3-memory/provenance.json",
+            "results/m3/20261022T002310-m3-memory/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2835.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 55.0,
+          "power_w": 201.16
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_memory.py",
+          "--worker",
+          "graph-8192",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T002310-m3-memory/graph-8192",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "511",
+          "--chunk-size",
+          "128"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "graph-8192"
+      },
+      "returncode": 0
+    },
+    {
+      "scenario": "cap-512-1024",
+      "spec": {
+        "execution": "static-cap",
+        "depth": 512,
+        "capacity": 1024
+      },
+      "steps": 511,
+      "cache_bytes": {
+        "cache_kv_bytes": 67108864,
+        "cache_gdn_state_bytes": 0,
+        "cache_conv_state_bytes": 0,
+        "cache_kv_layers": 16,
+        "cache_linear_layers": 48,
+        "cache_finite": true
+      },
+      "harness": {
+        "execution": "static-cap",
+        "capacity": 1024,
+        "prefill_chunk": 128,
+        "max_context": 8192,
+        "input_buffer_shape": [
+          1,
+          1,
+          5120
+        ],
+        "input_buffer_ptr": 31705255936,
+        "input_buffer_dtype": "torch.bfloat16",
+        "pinned_staging_shape": [
+          1,
+          1,
+          5120
+        ],
+        "host_embedding_bytes": 2542796800,
+        "cache": {
+          "kv_bytes": 67108864,
+          "gdn_state_bytes": 0,
+          "conv_state_bytes": 0,
+          "kv_layers": 16,
+          "linear_layers": 48,
+          "kv_dtypes": [
+            "torch.bfloat16"
+          ],
+          "gdn_dtypes": [],
+          "conv_dtypes": [],
+          "finite": true
+        }
+      },
+      "determinism": {
+        "prefill_logits_equal": true,
+        "step_logits_equal": true,
+        "compared_steps": 4
+      },
+      "stages": [
+        {
+          "stage": "load",
+          "seconds": 1.2962939739227295,
+          "peak_allocated_gb": 14.45758976,
+          "peak_reserved_gb": 14.556332032,
+          "end_allocated_gb": 14.4520192,
+          "end_reserved_gb": 14.556332032,
+          "free_gb": 1.727922176,
+          "smi_used_mib": 14193.0
+        },
+        {
+          "stage": "cache_init",
+          "seconds": 0.000800571171566844,
+          "peak_allocated_gb": 14.519146496,
+          "peak_reserved_gb": 14.619246592,
+          "end_allocated_gb": 14.519146496,
+          "end_reserved_gb": 14.619246592,
+          "free_gb": 1.665007616,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14253.0,
+          "cache_kv_bytes": 67108864,
+          "cache_gdn_state_bytes": 0,
+          "cache_conv_state_bytes": 0,
+          "cache_kv_layers": 16,
+          "cache_linear_layers": 48,
+          "cache_finite": true
+        },
+        {
+          "stage": "prefill_cold",
+          "seconds": 0.7212074869312346,
+          "peak_allocated_gb": 14.810485248,
+          "peak_reserved_gb": 14.898167808,
+          "end_allocated_gb": 14.750067712,
+          "end_reserved_gb": 14.898167808,
+          "free_gb": 1.373503488,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14531.0,
+          "prefill_s": 0.7185187377929687,
+          "cache_len": 512
+        },
+        {
+          "stage": "prefill_again",
+          "seconds": 0.4187863729894161,
+          "peak_allocated_gb": 14.810981888,
+          "peak_reserved_gb": 14.898167808,
+          "end_allocated_gb": 14.750067712,
+          "end_reserved_gb": 14.898167808,
+          "free_gb": 1.373503488,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14531.0,
+          "prefill_s": 0.41775726318359374,
+          "cache_len": 512
+        },
+        {
+          "stage": "decode",
+          "seconds": 42.9291413880419,
+          "peak_allocated_gb": 14.780760576,
+          "peak_reserved_gb": 14.898167808,
+          "end_allocated_gb": 14.750067712,
+          "end_reserved_gb": 14.898167808,
+          "free_gb": 1.373503488,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14531.0,
+          "decode_peak_allocated_gb": 14.780760576,
+          "decode_peak_reserved_gb": 14.898167808,
+          "decode_tok_s": 11.904885811219346,
+          "cache_len_end": 1023
+        },
+        {
+          "stage": "reset_reprefill",
+          "seconds": 0.4253017748706043,
+          "peak_allocated_gb": 14.810981888,
+          "peak_reserved_gb": 14.898167808,
+          "end_allocated_gb": 14.750067712,
+          "end_reserved_gb": 14.898167808,
+          "free_gb": 1.373503488,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14531.0,
+          "prefill_s": 0.42430902099609374,
+          "cache_len": 512
+        },
+        {
+          "stage": "decode_cycle2",
+          "seconds": 1.3530983419623226,
+          "peak_allocated_gb": 14.775691776,
+          "peak_reserved_gb": 14.898167808,
+          "end_allocated_gb": 14.750067712,
+          "end_reserved_gb": 14.898167808,
+          "free_gb": 1.373503488,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14531.0,
+          "decode_tok_s": 11.831156861955836,
+          "cache_len_end": 528
+        },
+        {
+          "stage": "reset_reprefill_cycle2",
+          "seconds": 0.42330742185004056,
+          "peak_allocated_gb": 14.810981888,
+          "peak_reserved_gb": 14.898167808,
+          "end_allocated_gb": 14.750067712,
+          "end_reserved_gb": 14.898167808,
+          "free_gb": 1.373503488,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14531.0,
+          "prefill_s": 0.4222589111328125,
+          "cache_len": 512
+        },
+        {
+          "stage": "reset_determinism",
+          "seconds": 1.519657467957586,
+          "peak_allocated_gb": 14.811478528,
+          "peak_reserved_gb": 14.898167808,
+          "end_allocated_gb": 14.750067712,
+          "end_reserved_gb": 14.898167808,
+          "free_gb": 1.373503488,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14531.0,
+          "prefill_logits_equal": true,
+          "step_logits_equal": true,
+          "compared_steps": 4
+        }
+      ],
+      "growth": {
+        "allocated_delta_gb": 0.0,
+        "reserved_delta_gb": 0.0,
+        "cycle2_allocated_delta_gb": 0.0,
+        "cycle2_reserved_delta_gb": 0.0,
+        "kv_data_ptr_stable": true,
+        "kv_data_ptr": 27073085440,
+        "kv_data_ptr_note": ""
+      },
+      "peaks": {
+        "load_peak_allocated_gb": 14.45758976,
+        "max_peak_allocated_gb": 14.811478528,
+        "max_peak_reserved_gb": 14.898167808,
+        "min_free_gb": 1.373503488,
+        "final_end_allocated_gb": 14.750067712,
+        "final_end_reserved_gb": 14.898167808
+      },
+      "ok": true,
+      "provenance": {
+        "created_at": "2026-10-22T00:29:55.638075+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/check.json",
+            "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+            "results/m3/20261022T001856-m3-check/graph-8192/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/smoke-graph/report.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json",
+            "results/m3/20261022T001856-m3-check/summary.txt",
+            "results/m3/20261022T002310-m3-memory/cap-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/eager-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/exact-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/graph-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/memory.json",
+            "results/m3/20261022T002310-m3-memory/provenance.json",
+            "results/m3/20261022T002310-m3-memory/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2842.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 47.0,
+          "power_w": 136.08
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_memory.py",
+          "--worker",
+          "cap-512-1024",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T002310-m3-memory/cap-512-1024",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "511",
+          "--chunk-size",
+          "128"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "cap-512-1024"
+      },
+      "returncode": 0
+    },
+    {
+      "scenario": "graph-512-1024",
+      "spec": {
+        "execution": "graph",
+        "depth": 512,
+        "capacity": 1024
+      },
+      "steps": 511,
+      "cache_bytes": {
+        "cache_kv_bytes": 67108864,
+        "cache_gdn_state_bytes": 0,
+        "cache_conv_state_bytes": 0,
+        "cache_kv_layers": 16,
+        "cache_linear_layers": 48,
+        "cache_finite": true
+      },
+      "harness": {
+        "execution": "graph",
+        "capacity": 1024,
+        "prefill_chunk": 128,
+        "max_context": 8192,
+        "input_buffer_shape": [
+          1,
+          1,
+          5120
+        ],
+        "input_buffer_ptr": 31705255936,
+        "input_buffer_dtype": "torch.bfloat16",
+        "pinned_staging_shape": [
+          1,
+          1,
+          5120
+        ],
+        "host_embedding_bytes": 2542796800,
+        "cache": {
+          "kv_bytes": 67108864,
+          "gdn_state_bytes": 0,
+          "conv_state_bytes": 0,
+          "kv_layers": 16,
+          "linear_layers": 48,
+          "kv_dtypes": [
+            "torch.bfloat16"
+          ],
+          "gdn_dtypes": [],
+          "conv_dtypes": [],
+          "finite": true
+        }
+      },
+      "graph": {
+        "warmup_iters": 3,
+        "capture_s": 0.09834482008591294,
+        "logits_shape": [
+          1,
+          1,
+          248320
+        ],
+        "logits_data_ptr": 50331725312,
+        "mem_before_allocated": 14784118784,
+        "mem_before_reserved": 14963179520,
+        "mem_after_allocated": 14818169856,
+        "mem_after_reserved": 14961082368,
+        "length_at_entry": 512,
+        "length_before_capture": 515,
+        "length_after_capture": 515,
+        "warmup_length_delta": 3,
+        "warmup_peak_allocated": 14810572288,
+        "warmup_peak_reserved": 14963179520,
+        "capture_peak_allocated": 14843133440,
+        "capture_peak_reserved": 14963179520,
+        "prefill_before_peak_allocated_gb": 14.810981888,
+        "prefill_before_peak_reserved_gb": 14.898167808,
+        "prefill_after_peak_allocated_gb": 14.879084032,
+        "prefill_after_peak_reserved_gb": 15.00512256,
+        "max_phase_peak_allocated_gb": 14.879084032,
+        "max_phase_peak_reserved_gb": 15.00512256
+      },
+      "determinism": {
+        "prefill_logits_equal": true,
+        "step_logits_equal": true,
+        "compared_steps": 4
+      },
+      "stages": [
+        {
+          "stage": "load",
+          "seconds": 1.2993221282958984,
+          "peak_allocated_gb": 14.45758976,
+          "peak_reserved_gb": 14.556332032,
+          "end_allocated_gb": 14.4520192,
+          "end_reserved_gb": 14.556332032,
+          "free_gb": 1.727922176,
+          "smi_used_mib": 14193.0
+        },
+        {
+          "stage": "cache_init",
+          "seconds": 0.0008314650040119886,
+          "peak_allocated_gb": 14.519146496,
+          "peak_reserved_gb": 14.619246592,
+          "end_allocated_gb": 14.519146496,
+          "end_reserved_gb": 14.619246592,
+          "free_gb": 1.665007616,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14253.0,
+          "cache_kv_bytes": 67108864,
+          "cache_gdn_state_bytes": 0,
+          "cache_conv_state_bytes": 0,
+          "cache_kv_layers": 16,
+          "cache_linear_layers": 48,
+          "cache_finite": true
+        },
+        {
+          "stage": "prefill_cold",
+          "seconds": 0.7247435818426311,
+          "peak_allocated_gb": 14.810485248,
+          "peak_reserved_gb": 14.898167808,
+          "end_allocated_gb": 14.750067712,
+          "end_reserved_gb": 14.898167808,
+          "free_gb": 1.373503488,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14531.0,
+          "prefill_s": 0.7220768432617187,
+          "cache_len": 512
+        },
+        {
+          "stage": "warmup_capture",
+          "seconds": 1.2020109000150114,
+          "peak_allocated_gb": 14.879084032,
+          "peak_reserved_gb": 15.00512256,
+          "end_allocated_gb": 14.817673216,
+          "end_reserved_gb": 15.00512256,
+          "free_gb": 1.170079744,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14725.0,
+          "capture_s": 0.09834482008591294,
+          "graph_pool_allocated_gb": 0.034051072,
+          "graph_pool_reserved_gb": -0.002097152,
+          "warmup_length_delta": 3,
+          "prefill_before_peak_gb": 14.810981888,
+          "warmup_peak_gb": 14.810572288,
+          "capture_peak_gb": 14.84313344,
+          "prefill_after_peak_gb": 14.879084032,
+          "max_phase_peak_gb": 14.879084032
+        },
+        {
+          "stage": "prefill_graph_resident",
+          "seconds": 0.421884577954188,
+          "peak_allocated_gb": 14.878587392,
+          "peak_reserved_gb": 15.00512256,
+          "end_allocated_gb": 14.817673216,
+          "end_reserved_gb": 15.00512256,
+          "free_gb": 1.170079744,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14725.0,
+          "prefill_s": 0.42083737182617187,
+          "cache_len": 512
+        },
+        {
+          "stage": "decode",
+          "seconds": 16.27330208919011,
+          "peak_allocated_gb": 14.822905856,
+          "peak_reserved_gb": 15.00512256,
+          "end_allocated_gb": 14.817673216,
+          "end_reserved_gb": 15.00512256,
+          "free_gb": 1.170079744,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14725.0,
+          "decode_peak_allocated_gb": 14.822905856,
+          "decode_peak_reserved_gb": 15.00512256,
+          "decode_tok_s": 31.410794581141346,
+          "cache_len_end": 1023
+        },
+        {
+          "stage": "reset_reprefill",
+          "seconds": 0.42575063393451273,
+          "peak_allocated_gb": 14.878587392,
+          "peak_reserved_gb": 15.00512256,
+          "end_allocated_gb": 14.817673216,
+          "end_reserved_gb": 15.00512256,
+          "free_gb": 1.170079744,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14725.0,
+          "prefill_s": 0.42470339965820314,
+          "cache_len": 512
+        },
+        {
+          "stage": "decode_cycle2",
+          "seconds": 0.5103763078805059,
+          "peak_allocated_gb": 14.817837056,
+          "peak_reserved_gb": 15.00512256,
+          "end_allocated_gb": 14.817673216,
+          "end_reserved_gb": 15.00512256,
+          "free_gb": 1.170079744,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14725.0,
+          "decode_tok_s": 31.39699502232008,
+          "cache_len_end": 528
+        },
+        {
+          "stage": "reset_reprefill_cycle2",
+          "seconds": 0.42667909106239676,
+          "peak_allocated_gb": 14.878587392,
+          "peak_reserved_gb": 15.00512256,
+          "end_allocated_gb": 14.817673216,
+          "end_reserved_gb": 15.00512256,
+          "free_gb": 1.170079744,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14725.0,
+          "prefill_s": 0.4256470947265625,
+          "cache_len": 512
+        },
+        {
+          "stage": "reset_determinism",
+          "seconds": 1.09735632291995,
+          "peak_allocated_gb": 14.879084032,
+          "peak_reserved_gb": 15.00512256,
+          "end_allocated_gb": 14.817673216,
+          "end_reserved_gb": 15.00512256,
+          "free_gb": 1.170079744,
+          "total_gb": 16.609509376,
+          "smi_used_mib": 14725.0,
+          "prefill_logits_equal": true,
+          "step_logits_equal": true,
+          "compared_steps": 4
+        }
+      ],
+      "growth": {
+        "allocated_delta_gb": 0.0,
+        "reserved_delta_gb": 0.0,
+        "cycle2_allocated_delta_gb": 0.0,
+        "cycle2_reserved_delta_gb": 0.0,
+        "kv_data_ptr_stable": true,
+        "kv_data_ptr": 27073085440,
+        "kv_data_ptr_note": ""
+      },
+      "peaks": {
+        "load_peak_allocated_gb": 14.45758976,
+        "max_peak_allocated_gb": 14.879084032,
+        "max_peak_reserved_gb": 15.00512256,
+        "min_free_gb": 1.170079744,
+        "final_end_allocated_gb": 14.817673216,
+        "final_end_reserved_gb": 15.00512256
+      },
+      "ok": true,
+      "provenance": {
+        "created_at": "2026-10-22T00:30:21.016097+08:00",
+        "git": {
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "dirty": false,
+          "status": [
+            "?? results/m3/"
+          ],
+          "untracked_source": [],
+          "diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "diff_bytes": 0,
+          "untracked_files": [
+            "results/m3/20261022T001856-m3-check/check.json",
+            "results/m3/20261022T001856-m3-check/graph-1024/report.json",
+            "results/m3/20261022T001856-m3-check/graph-8192/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-512/report.json",
+            "results/m3/20261022T001856-m3-check/numeric-8192/report.json",
+            "results/m3/20261022T001856-m3-check/provenance.json",
+            "results/m3/20261022T001856-m3-check/smoke-graph/report.json",
+            "results/m3/20261022T001856-m3-check/source_manifest.json",
+            "results/m3/20261022T001856-m3-check/summary.txt",
+            "results/m3/20261022T002310-m3-memory/cap-512-1024/result.json",
+            "results/m3/20261022T002310-m3-memory/cap-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/eager-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/exact-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/graph-8192/result.json",
+            "results/m3/20261022T002310-m3-memory/memory.json",
+            "results/m3/20261022T002310-m3-memory/provenance.json",
+            "results/m3/20261022T002310-m3-memory/source_manifest.json"
+          ]
+        },
+        "source_manifest": {
+          "dirty": false,
+          "commit": "bff10d3dae0087552a697bc69b1617e8974ef9e6",
+          "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "patch_bytes": 0,
+          "files": [],
+          "files_total_bytes": 0
+        },
+        "environment": {
+          "python": "3.12.15",
+          "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+          "torch": "2.14.1+cu130",
+          "transformers": "5.20.2",
+          "flashinfer": "0.7.2",
+          "cuda": "13.0",
+          "gpu_name": "NVIDIA GeForce RTX 5080",
+          "gpu_total_mib": 16303.0,
+          "driver": "580.105.08",
+          "clock_sm_mhz": 2835.0,
+          "clock_max_mhz": 3090.0,
+          "temperature_c": 50.0,
+          "power_w": 156.5
+        },
+        "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+        "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+        "argv": [
+          "/home/xzq/workspace/qwen/scripts/m3_memory.py",
+          "--worker",
+          "graph-512-1024",
+          "--out",
+          "/home/xzq/workspace/qwen/results/m3/20261022T002310-m3-memory/graph-512-1024",
+          "--fixtures",
+          "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+          "--steps",
+          "511",
+          "--chunk-size",
+          "128"
+        ],
+        "cwd": "/home/xzq/workspace/qwen",
+        "sol_bandwidth_bytes": 960000000000.0,
+        "worker": "graph-512-1024"
+      },
+      "returncode": 0
+    }
+  ],
+  "complete": true,
+  "table": "| scenario | execution | depth | capacity | load peak GB | cache init GB | prefill peak GB | capture pool GB | prefill→warmup→capture→prefill GB | graph-resident prefill peak GB | decode peak GB | max peak GB | min free GB | reset->prefill delta GB | KV ptr stable | stale state |\n|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|\n| eager-8192 | eager | 7680 | dynamic | 14.458 | 14.452 | 15.620 | - | - | 15.621 | 15.428 | 15.621 | 0.411 | 0.0 MB | True | True |\n| exact-8192 | static-exact | 7680 | 8192 | 14.458 | 14.989 | 15.654 | - | - | 15.654 | 15.428 | 15.655 | 0.512 | 0.0 MB | True | True |\n| cap-8192 | static-cap | 7680 | 8192 | 14.458 | 14.989 | 15.654 | - | - | 15.654 | 15.428 | 15.655 | 0.512 | 0.0 MB | True | True |\n| graph-8192 | graph | 7680 | 8192 | 14.458 | 14.989 | 15.654 | 0.034 | 15.654 / 15.458 / 15.491 / 15.722 | 15.722 | 15.293 | 15.722 | 0.119 | 0.0 MB | True | True |\n| cap-512-1024 | static-cap | 512 | 1024 | 14.458 | 14.519 | 14.810 | - | - | 14.811 | 14.781 | 14.811 | 1.374 | 0.0 MB | True | True |\n| graph-512-1024 | graph | 512 | 1024 | 14.458 | 14.519 | 14.810 | 0.034 | 14.811 / 14.811 / 14.843 / 14.879 | 14.879 | 14.823 | 14.879 | 1.170 | 0.0 MB | True | True |"
+}

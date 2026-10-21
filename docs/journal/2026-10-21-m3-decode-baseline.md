@@ -3,8 +3,12 @@
 ## 状态
 
 M3（P0）完成。四执行方式在同一 checkpoint、dtype、prefill chunk 和 workload 下
-建立了可复现的 decode baseline；CUDA Graph 把单步时间从 86 ms 降到 31.8 ms
-（depth 512，capacity 1024），8K 下从 87.2 ms 降到 44.4 ms。
+建立了可复现的 decode baseline；CUDA Graph 把单步时间从约 84 ms 降到 31.8 ms
+（depth 512，capacity 1024），8K 下从约 86 ms 降到 44.4 ms。
+
+review 修复后于 2026-10-22 在**干净 commit `bff10d3`**（checkpoint 不变）复跑了
+全部 P0：227 个 gate 通过、6/6 run dir 通过产物契约的 `--strict` 校验。差异和
+新入口见 §12。
 
 - 代码：本次改动（runner/model/{static_cache,padded_reference,graph_runner,
   decode_runner,snapshots}.py、bench/e2e/decode.py、scripts/m3_*.py、
@@ -22,15 +26,15 @@ M3（P0）完成。四执行方式在同一 checkpoint、dtype、prefill chunk �
 
 | 项目 | 结果 |
 |---|---|
-| 非 graph 的三条路径（eager / static-exact / static-cap） | 11.3–12.0 tok/s，与 capacity、depth、attention 扫描长度基本无关 |
+| 非 graph 的三条路径（eager / static-exact / static-cap） | 11.5–11.9 tok/s，与 capacity、depth、attention 扫描长度基本无关 |
 | graph（depth 512，capacity 1024） | **31.41 tok/s**（48.5% SOL，465.7 GB/s 逻辑带宽） |
-| graph（depth 512，capacity 8192） | 22.71 tok/s（36.2% SOL）——多出的 12.2 ms/step 全部是扫 capacity 的 GQA 展开 |
+| graph（depth 512，capacity 8192） | 22.71 tok/s（35.0% SOL）——多出的 12.2 ms/step 全部是扫 capacity 的 GQA 展开 |
 | graph（depth 7680，capacity 8192） | 22.53 tok/s（35.9% SOL，344.6 GB/s） |
 | 模型速度 vs 系统速度 | graph 相差 <0.1%；eager 相差约 0.8%，采样和 host 传输不是瓶颈 |
 | 单步 kernel 数 | eager/static 7242–7290；graph 展开后 7290 个 node |
-| eager 的 86.4 ms/step 里 | kernel 累计只有 30.2 ms，其余约 56 ms 是 CPU 提交/间隙 |
+| eager 的 83.9 ms/step 里 | kernel 累计只有 30.3 ms，其余约 54 ms 是 CPU 提交/间隙 |
 | graph 的 31.8 ms/step 里 | NVFP4 GEMM 20.7 ms（696 GB/s，72% 峰值带宽），其余 kernel 9.0 ms |
-| 8K 的 graph 42.3 ms kernel 里 | NVFP4 GEMM 21.1 ms、`repeat_kv` 展开 9.4 ms、attention matmul 4.3 ms、其他 7.5 ms |
+| 8K 的 graph 42.4 ms kernel 里 | NVFP4 GEMM 21.1 ms、`repeat_kv` 展开 9.4 ms、attention matmul 4.3 ms、其他 7.5 ms |
 | graph 常驻后的 8K 峰值 | **15.722 GB**（reserved 16.054 GB），free 仅 **0.119 GB**，无 OOM、无增长 |
 
 一句话：**M3 的瓶颈不是模型带宽，而是 7290 个 tiny kernel 的提交开销；录成整步
@@ -82,15 +86,15 @@ attention matmul（4.3 ms）。**
 ## 4. 正确性验收（gate / diagnostic 分开）
 
 命令：`make m3-check`（5 个场景，独立子进程）。
-结果目录：`results/m3/20261021T180905-m3-check/`。
+结果目录：`results/m3/20261022T001856-m3-check/`。
 
 | 场景 | gate | 结果 |
 |---|---|---|
-| numeric-512（depth 512 / cap 1024 / 16 步） | 110 | 全通过 |
-| numeric-8192（depth 7680 / cap 8192 / 16 步） | 50 | 全通过 |
-| graph-1024 | 21 | 全通过 |
-| graph-8192 | 21 | 全通过 |
-| smoke-graph（三条真实 prompt，2048 上限） | 9 | 全通过 |
+| numeric-512（depth 512 / cap 1024 / 16 步） | 115 | 全通过 |
+| numeric-8192（depth 7680 / cap 8192 / 16 步） | 54 | 全通过 |
+| graph-1024 | 24 | 全通过 |
+| graph-8192 | 24 | 全通过 |
+| smoke-graph（三条真实 prompt，2048 上限） | 10 | 全通过 |
 
 gate 项（同 shape，全部 **bitwise** 通过）：
 
@@ -128,53 +132,53 @@ diagnostic（不作门槛）：
 
 ### 5.1 两套速度（5 次重复的中位数 [min, max]）
 
-结果目录：`results/m3/20261021T163844-m3-bench/`。
+结果目录：`results/m3/20261022T003024-m3-bench/`。
 
 | scenario | execution | depth | capacity | 模型 tok/s | 系统 tok/s | request tok/s | step p50/p95 ms | prefill s | peak GB | reserved GB | free GB |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| eager-512 | eager | 512 | dynamic | 11.55 [11.47, 11.59] | 11.46 [11.29, 11.50] | 11.37 | 86.40 / 88.51 | 0.43 | 14.780 | 14.915 | 1.357 |
-| eager-8192 | eager | 7680 | dynamic | 11.47 [11.41, 11.48] | 11.27 [11.26, 11.31] | 9.85 | 87.16 / 88.07 | 6.69 | 15.428 | 15.859 | 0.413 |
-| exact-512-1024 | static-exact | 512 | 1024 | 11.64 [11.60, 11.72] | 11.62 [11.59, 11.64] | 11.53 | 85.76 / 86.66 | 0.43 | 14.780 | 14.898 | 1.374 |
-| exact-512-8192 | static-exact | 512 | 8192 | 11.55 [11.51, 11.58] | 11.50 [11.50, 11.52] | 11.41 | 86.52 / 87.30 | 0.43 | 15.250 | 15.360 | 0.912 |
-| exact-8192 | static-exact | 7680 | 8192 | 11.62 [11.59, 11.64] | 11.59 [11.54, 11.61] | 10.10 | 85.91 / 86.83 | 6.61 | 15.428 | 15.758 | 0.514 |
-| cap-512-1024 | static-cap | 512 | 1024 | 11.27 [11.24, 11.35] | 11.17 [11.15, 11.19] | 11.09 | 88.56 / 89.46 | 0.44 | 14.780 | 14.898 | 1.374 |
-| cap-512-8192 | static-cap | 512 | 8192 | 11.95 [11.93, 11.97] | 11.77 [11.72, 11.79] | 11.68 | 83.55 / 84.37 | 0.42 | 15.428 | 15.527 | 0.744 |
-| cap-8192 | static-cap | 7680 | 8192 | 11.78 [11.74, 11.83] | 11.61 [11.53, 11.62] | 10.11 | 84.73 / 85.57 | 6.61 | 15.428 | 15.758 | 0.514 |
-| **graph-512-1024** | graph | 512 | 1024 | **31.41** [31.41, 31.41] | **31.38** [31.37, 31.38] | 30.65 | 31.84 / 31.86 | 0.42 | 14.822 | 15.005 | 1.170 |
-| **graph-512-8192** | graph | 512 | 8192 | 22.71 [22.69, 22.71] | 22.70 [22.67, 22.70] | 22.32 | 44.04 / 44.09 | 0.43 | 15.292 | 15.655 | 0.520 |
-| **graph-8192** | graph | 7680 | 8192 | 22.53 [22.53, 22.55] | 22.51 [22.51, 22.54] | 17.49 | 44.38 / 44.42 | 6.58 | 15.292 | 16.054 | 0.122 |
+| eager-512 | eager | 512 | dynamic | 11.89 [11.87, 11.90] | 11.78 [11.72, 11.79] | 11.69 | 83.94 / 84.80 | 0.42 | 14.780 | 14.915 | 1.357 |
+| eager-8192 | eager | 7680 | dynamic | 11.68 [11.63, 11.70] | 11.53 [11.45, 11.57] | 10.04 | 85.60 / 86.43 | 6.62 | 15.428 | 15.859 | 0.413 |
+| exact-512-1024 | static-exact | 512 | 1024 | 11.78 [11.76, 11.79] | 11.73 [11.71, 11.77] | 11.64 | 84.78 / 85.59 | 0.42 | 14.780 | 14.898 | 1.374 |
+| exact-512-8192 | static-exact | 512 | 8192 | 11.50 [11.48, 11.56] | 11.46 [11.41, 11.48] | 11.37 | 86.81 / 87.58 | 0.43 | 15.250 | 15.360 | 0.912 |
+| exact-8192 | static-exact | 7680 | 8192 | 11.58 [11.55, 11.63] | 11.54 [11.52, 11.56] | 10.06 | 86.23 / 87.11 | 6.64 | 15.428 | 15.758 | 0.514 |
+| cap-512-1024 | static-cap | 512 | 1024 | 11.94 [11.92, 11.98] | 11.81 [11.76, 11.84] | 11.72 | 83.59 / 84.34 | 0.42 | 14.780 | 14.898 | 1.374 |
+| cap-512-8192 | static-cap | 512 | 8192 | 11.75 [11.73, 11.78] | 11.58 [11.55, 11.61] | 11.49 | 84.96 / 85.64 | 0.43 | 15.428 | 15.527 | 0.744 |
+| cap-8192 | static-cap | 7680 | 8192 | 11.91 [11.88, 11.93] | 11.77 [11.68, 11.80] | 10.24 | 83.81 / 84.68 | 6.58 | 15.428 | 15.758 | 0.514 |
+| **graph-512-1024** | graph | 512 | 1024 | **31.41** [31.41, 31.41] | **31.38** [31.38, 31.38] | 30.64 | 31.84 / 31.86 | 0.43 | 14.822 | 15.005 | 1.170 |
+| **graph-512-8192** | graph | 512 | 8192 | 22.71 [22.69, 22.71] | 22.70 [22.66, 22.70] | 22.32 | 44.04 / 44.10 | 0.42 | 15.292 | 15.655 | 0.520 |
+| **graph-8192** | graph | 7680 | 8192 | 22.53 [22.53, 22.55] | 22.52 [22.51, 22.54] | 17.51 | 44.38 / 44.42 | 6.56 | 15.292 | 16.056 | 0.119 |
 
 要点：
 
-1. **static cache 本身不带来速度收益**：exact/cap/容量/深度都在 11.3–12.0 tok/s，
+1. **static cache 本身不带来速度收益**：exact/cap/容量/深度都在 11.5–11.9 tok/s，
    说明当前瓶颈是 CPU 提交而不是 cache 存储或 attention shape。static-exact 的
    `int(cumulative_length)` 每步同步 16 次（每个 KV 层一次），比 cap 略慢。
-2. **整步 CUDA Graph 是唯一的数量级变化**：depth 512 从 86.4 ms 降到 31.8 ms
-   （2.7×），depth 7680 从 87.2 ms 降到 44.4 ms（2.0×）。
-3. **capacity 只影响扫满 capacity 的模式**：exact 在 cap 1024 和 8192 下速度相同
-   （11.64 vs 11.55），因为只读有效前缀；graph 从 cap 1024 的 31.8 ms 涨到
+2. **整步 CUDA Graph 是唯一的数量级变化**：depth 512 从 83.9 ms 降到 31.8 ms
+   （2.6×），depth 7680 从 85.6 ms 降到 44.4 ms（1.9×）。
+3. **capacity 只影响扫满 capacity 的模式**：exact 在 cap 1024 和 8192 下速度相近
+   （11.78 vs 11.50），因为只读有效前缀；graph 从 cap 1024 的 31.8 ms 涨到
    cap 8192 的 44.0 ms，多出的 12.2 ms 就是 8K 的 GQA 展开。
 4. 单步延迟分布很窄（p95/p50 < 1.02），5 次 run 之间也稳定；没有观察到热降频。
 
 ### 5.2 Nsight Systems：每步 kernel 数与时长分布
 
-结果目录：`results/m3/20261021T182309-m3-profile/`（nsys 2026.2.1，
+结果目录：`results/m3/20261022T015940-m3-profile/`（nsys 2026.2.1，
 `--capture-range=cudaProfilerApi` 只采 8 个 decode step，
 `--cuda-graph-trace=node` 展开 graph node）。
 
 | case | 每步 kernel/node | 每步 kernel 累计 ms | 每步墙钟 ms | <5 µs kernel 数量/时间占比 |
 |---|---|---|---|---|
-| eager-512 | 7242 | 30.2 | 110.1 | 93.9% / 27.8% |
-| eager-7680 | 7242 | 44.1 | 110.5 | 92.6% / 18.6% |
-| static-exact-512 | 7290 | 30.3 | 111.1 | 93.9% / 27.9% |
-| static-cap-512 | 7290 | 31.0 | 111.7 | 93.6% / 27.0% |
-| **graph-512** | 7290 | 29.7 | **32.6** | 93.6% / 25.9% |
-| **graph-7680** | 7290 | 42.3 | **45.0** | 93.6% / 18.2% |
+| eager-512 | 7242 | 30.3 | 112.2 | 93.9% / 27.9% |
+| eager-7680 | 7242 | 44.1 | 114.8 | 92.6% / 18.6% |
+| static-exact-512 | 7290 | 30.4 | 111.0 | 93.9% / 28.0% |
+| static-cap-512 | 7290 | 31.0 | 110.0 | 93.6% / 27.1% |
+| **graph-512** | 7290 | 29.7 | **32.5** | 93.6% / 25.9% |
+| **graph-7680** | 7290 | 42.4 | **44.9** | 93.6% / 18.2% |
 
 - 表里的“每步墙钟”是**开着 profiler 且每步 synchronize** 的数字，比 bench 的
-  86.4 / 87.2 ms 大；kernel 累计不受 host 同步影响。把两者对齐到 bench 的
-  wall：非 graph 在 depth 512 是 86.4 ms 墙钟 vs 30.2 ms kernel（≈56 ms 的 CPU
-  提交/间隙），depth 7680 是 87.2 vs 44.1（≈43 ms）。graph 把这段压到 3–4 ms。
+  83.9 / 85.6 ms 大；kernel 累计不受 host 同步影响。把两者对齐到 bench 的
+  wall：非 graph 在 depth 512 是 83.9 ms 墙钟 vs 30.3 ms kernel（≈54 ms 的 CPU
+  提交/间隙），depth 7680 是 85.6 vs 44.1（≈41 ms）。graph 把这段压到 3–4 ms。
 - 93% 的 kernel 小于 5 µs，但只占 18–28% 的 kernel 时间：**数量上全是 tiny
   kernel，时间上仍是少数大 kernel 主导**。这直接说明 Phase 2 不能只靠 graph，
   必须减少/融合 kernel 或提高大 kernel 的效率。
@@ -203,7 +207,7 @@ graph-7680 相对 graph-512 多出来的部分：
 
 ## 6. 显存
 
-命令：`make m3-memory`。结果目录：`results/m3/20261021T181311-m3-memory/`。
+命令：`make m3-memory`。结果目录：`results/m3/20261022T002310-m3-memory/`。
 
 | scenario | load peak GB | cache 初始化 GB | 首次 prefill peak GB | capture pool GB | graph 常驻后 prefill peak GB | decode peak GB | 全程 max peak GB | min free GB | reset→prefill 增量 | KV ptr 稳定 |
 |---|---|---|---|---|---|---|---|---|---|---|
@@ -239,16 +243,16 @@ graph-7680 相对 graph-512 多出来的部分：
 - B_mean：depth 512 = **14.812 GB/step** → SOL **64.8 tok/s**；
   depth 7680 = **15.282 GB/step** → SOL **62.8 tok/s**（扫 capacity 8192 时
   B_mean 15.298 → 62.8）。
-- 实测 %SOL（模型速度）：eager 17.8–18.5%；graph-512-1024 48.5%；
-  graph-512-8192 36.2%；graph-8192 35.9%。
+- 实测 %SOL（模型速度）：eager/static 17.7–19.0%；graph-512-1024 48.5%；
+  graph-512-8192 35.0%；graph-8192 35.9%。
 - FP8 KV 理论值（未实测）：depth 512 14.787 GB → 64.9 tok/s；depth 7680
   15.021 GB → 63.9 tok/s。M3 只实测 BF16 KV。
 
 ## 8. 诊断：为什么 eager 只有 11.5 tok/s
 
-86.4 ms/step 里，GPU kernel 累计只有 30.2 ms，其余约 56 ms 是 CPU 提交和间隙；
+83.9 ms/step 里，GPU kernel 累计只有 30.3 ms，其余约 54 ms 是 CPU 提交和间隙；
 每步 7242 个 kernel，93.9% 小于 5 µs。也就是说 **eager 完全被 launch 开销支配**，
-逻辑带宽只有 171 GB/s（17.8% SOL）。这与 M2 的 11.6 tok/s 诊断值一致，M3 的
+逻辑带宽只有 176 GB/s（18.4% SOL）。这与 M2 的 11.6 tok/s 诊断值一致，M3 的
 统一计时入口只是把它固定成 baseline。
 
 graph 之后 kernel 累计 29.7 ms 仍是 1.93× 于 SOL（15.4 ms 权重 + KV）。其中
@@ -290,7 +294,7 @@ NVFP4 GEMM 20.7 ms 对应 14.399 GB 的 packed weight + scale，即 **696 GB/s�
 ```bash
 source scripts/m2_env.sh
 make m3-fixtures      # 固定深度 prompt + trace + smoke（约 3 分钟）
-make m3-check         # 211 个 gate，5 个场景（约 12 分钟）
+make m3-check         # 227 个 gate，5 个场景（约 9 分钟）
 make m3-bench         # 11 个场景 × 5 次 × 两套计时（约 95 分钟）
 make m3-memory        # 分阶段显存 + 完整生命周期（约 10 分钟）
 make m3-profile       # nsys 时间线（约 10 分钟）
@@ -301,9 +305,59 @@ make m3-attn-effect   # attention 长度效应 microbench
 | 产物 | 路径 |
 |---|---|
 | fixtures + manifest | `bench/workloads/m3-p0/` |
-| 正确性验收 | `results/m3/20261021T180905-m3-check/` |
-| 性能矩阵 | `results/m3/20261021T163844-m3-bench/` |
-| 分阶段显存 | `results/m3/20261021T181311-m3-memory/` |
-| nsys 时间线 | `results/m3/20261021T182309-m3-profile/` |
+| 正确性验收 | `results/m3/20261022T001856-m3-check/` |
+| 性能矩阵 | `results/m3/20261022T003024-m3-bench/` |
+| 分阶段显存 | `results/m3/20261022T002310-m3-memory/` |
+| nsys 时间线 | `results/m3/20261022T015940-m3-profile/` |
 | SOL 字节账 | `results/m3/<run>-sol/sol.json`、`docs/sol.md` |
-| attention 长度效应 | `results/m3/20261021T162645/attn_length_effect.json` |
+| attention 长度效应 | `results/m3/20261022T020813/attn_length_effect.json` |
+
+## 12. review 修复与 2026-10-22 复跑
+
+外部 review 指出 5 处「以后可能错误通过」或「记录不可恢复」的缺口；修复后在一个
+干净 commit 上重跑了 P0，并顺手把开发循环和产物校验工具化。
+
+### 12.1 修了什么
+
+| review 问题 | 修复 |
+|---|---|
+| capacity guard 没接入正式入口 | `prefill` 检查所选 capacity（含 `reserve_steps`）；`system_decode`/`model_timed_decode` 在计时区间前一次性 `require_capacity(steps)`；`ensure_graph` 为 warmup 预留 headroom。边界 gate 改为从这些入口触发 |
+| 必测 reference 异常被降级成 diagnostic | padded reference / fill=3 失败写成 gate failure；每个场景有 `required` 清单 + coverage gate，缺项即失败；每个快照额外核对 forward 数 |
+| warmup/capture 峰值被内部 prefill 重置 | prefill / warmup / capture / 再 prefill 各自 reset 并记录峰值；外层 stage 的 peak 不再被当作 capture 峰值；memory 增加 reset 后 logits/state 与干净初态的 bitwise 对比 |
+| SOL 混入 masked capacity 的额外流量 | `B_ideal` 对所有执行方式统一用有效 `L_t`；capacity 扫描额外字节单列（`docs/sol.md` 的「capacity 额外流量」列）；§7 紧凑 KV 改成全模型口径（16 层 K+V，0.067 / 0.537 GB） |
+| dirty provenance 无法恢复运行源码 | `git_state` 记录 commit / dirty / untracked；dirty 时写 `git_diff.patch` + `source_manifest.json`（逐文件 sha256，只含源码/文档/输入）。`dirty` 只统计源码改动，输出目录不算 |
+
+两个附带修掉的 bug：`model_timed_decode` 量 copy 成本时硬编码 10 次，`--steps < 10`
+会越界；`git status --porcelain` 被整体 `strip()` 后第一行的行首空格丢失，导致
+source manifest 漏掉第一个改动文件。
+
+### 12.2 复跑口径
+
+- commit：`bff10d3`（`check` / `memory` / `bench` / `profile`）；`docs/sol.md` 在
+  紧随其后的 `e23ea80` 重新生成——两次之间只有 `scripts/m3_sol.py` 的路径格式化和
+  `docs/sol.md` 本身，`git diff --stat bff10d3 e23ea80` 可核对，测量代码未变。
+- checkpoint / dtype / 协议不变；仍是 511 步 × 2 趟 × 6 遍（1 warmup + 5 次）。
+- 结果：227 个 gate 全通过；`check_results.py --all --strict` 6/6 run dir 通过。
+- 数字与旧记录一致：graph 31.41 / 22.71 / 22.53 tok/s 完全相同；非 graph 11.50–11.94
+  （旧 11.27–11.95）。差异在 run 间波动内，不改变任何结论。
+
+### 12.3 新增的开发循环工具
+
+| 工具 | 作用 |
+|---|---|
+| `make verify` / `scripts/verify.py` | 按 `git diff` 给出最小验证档位（S0–S5）和命令 |
+| `make check-results` / `scripts/check_results.py` | 秒级校验 run dir 契约（provenance、gate/coverage、样本数、step 数、显存字段）；legacy 目录单列，`--strict` 判失败 |
+| `make m3-quick` | 40 s 快档：单场景 check + memory + bench |
+| `scripts/m3_close.sh` | 一条命令、可重入的关闭（`--resume`、`SKIP=`、`REPEATS=`） |
+| `--resume` / `--repeats-non-graph` / `--list` | bench 续跑、按模式设重复次数、列场景与预计时间 |
+| `docs/bench.md` | harness 手册：协议、场景、参数、产物、恢复、recipes |
+
+自适应重复（1→3→5）按 decisions 2026-10-22 暂不实现，留给 Phase 2；M3 关闭仍用
+plan §2.4 的 5 次和完整 warmup。
+
+### 12.4 结论是否改变
+
+不改变：瓶颈仍是 7000+ 个 tiny kernel 的提交开销，整步 graph 把 83.9 ms 压到
+31.8 ms；graph 之后的热点仍是 NVFP4 GEMM（20.7 ms，696 GB/s）、8K 的 GQA 展开
+（9.4 ms）和 attention matmul（4.3 ms）。唯一口径变化是 SOL 分母：graph-512-8192
+的 %SOL 从 36.2% 修正为 **35.0%**（不再把扫 capacity 的额外流量算进理想字节）。
