@@ -402,16 +402,18 @@ class DecodeRunner:
             "cache_len_end": self.cache_length(),
         }
         if measure_copy:
-            # 夹具 copy 成本：10 次 D2D，用来确认它远小于一步。
+            # 夹具 copy 成本：若干次 D2D，用来确认它远小于一步。
+            # 注意 steps 可能小于 10（--steps 小值），上限必须跟着 steps 走。
+            copies = min(10, steps)
             torch.cuda.synchronize()
             c0 = torch.cuda.Event(enable_timing=True)
             c1 = torch.cuda.Event(enable_timing=True)
             c0.record()
-            for i in range(10):
+            for i in range(copies):
                 self.input_buf.copy_(rows_gpu[i : i + 1])
             c1.record()
             torch.cuda.synchronize()
-            result["row_copy_ms"] = c1.elapsed_time(c0) / 10.0
+            result["row_copy_ms"] = c1.elapsed_time(c0) / copies
         return result
 
     # ------------------------------------------------------ system-side timing

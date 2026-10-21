@@ -31,16 +31,18 @@ CHECKPOINT_REVISION = "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33"
 SOL_BANDWIDTH_BYTES = 960e9
 
 
-def _run(cmd: list[str], cwd: Path | None = None) -> str:
+def _run(cmd: list[str], cwd: Path | None = None, *, raw: bool = False) -> str:
+    """跑命令取输出。raw=True 时只去掉尾部换行（porcelain 的行首空格有意义）。"""
     try:
-        return subprocess.check_output(cmd, cwd=cwd, text=True, stderr=subprocess.STDOUT).strip()
+        out = subprocess.check_output(cmd, cwd=cwd, text=True, stderr=subprocess.STDOUT)
     except Exception:
         return ""
+    return out.rstrip("\n") if raw else out.strip()
 
 
 def git_state(root: Path) -> dict[str, Any]:
     commit = _run(["git", "rev-parse", "HEAD"], cwd=root)
-    status = _run(["git", "status", "--porcelain"], cwd=root)
+    status = _run(["git", "status", "--porcelain"], cwd=root, raw=True)
     diff = _run(["git", "diff"], cwd=root)
     staged = _run(["git", "diff", "--cached"], cwd=root)
     untracked = _run(["git", "ls-files", "--others", "--exclude-standard"], cwd=root)
@@ -66,10 +68,14 @@ def source_manifest(root: Path) -> dict[str, Any]:
     只有 dirty tree 才需要它；clean commit 由 commit id 唯一确定源码。
     """
     state = git_state(root)
+    # 用 --name-only 取改动文件，避免解析 porcelain 的行首空格。
     modified = [
-        line[3:].strip()
-        for line in state["status"]
-        if len(line) > 3 and line[:2] in (" M", "M ", "MM", "AM", " A", "A ")
+        line
+        for line in (
+            _run(["git", "diff", "--name-only"], cwd=root).splitlines()
+            + _run(["git", "diff", "--cached", "--name-only"], cwd=root).splitlines()
+        )
+        if line.strip()
     ]
     candidates = sorted({*modified, *state["untracked_files"]})
     files = []

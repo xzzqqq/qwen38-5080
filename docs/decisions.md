@@ -209,3 +209,42 @@
   - 迭代期混用不同 commit 的结果却不标注：无法复现，也违反 validation §6 的
     可比性要求。
   - 缩短 `--steps` 到 256 来省时间：改变了 §2.2 的计时区间，数字不可比。
+
+## 2026-10-22 开发/关闭循环的实测口径：保留 5 次、暂不做自适应重复
+
+- 决定：
+  1. **M3 收尾的全量 bench 保持 5 次重复**（plan §2.4）。2026-10-21 那条
+     “非 graph 降到 3 次”的决定只适用于**后续里程碑**，并且要写进那个里程碑的
+     plan 后再生效；M3 不追溯修改。
+  2. **自适应重复（1→3→5，极差 <1% 就停）暂不实现**，只作为 Phase 2 的候选：
+     它会改结果 schema、停止规则和 provenance 字段，不适合在 M3 收尾时动。
+     记录它要解决的问题：bench 89 分钟里约 40 分钟花在“第 4、5 次重复几乎没有
+     新信息”上（M3 实测 run 间极差 ~1%）。
+  3. **warmup 保持“完整一次”**，M3 不缩到 64 步。理由见下。后续里程碑如果要用
+     短 warmup，必须在新 plan 里写明并给出证据。
+  4. 开发档实测：`make m3-quick` = **41 s**（check 13.3 s / memory 12.9 s /
+     bench 14.7 s），不是最初估的 5 分钟。剩余优化空间主要是 3 个子进程各约
+     5–6 s 的固定开销；默认用法是只跑**改动对应的那一档**
+     （`make verify` 会给出命令），而不是每次都跑完整 quick。
+- warmup 的三种含义（容易混淆，写清楚）：
+  1. **capture warmup**（`GraphDecodeStep.warmup`，3 次 side-stream forward）：
+     PyTorch 对 CUDA Graph capture 的硬性要求，用来固定 FlashInfer JIT/workspace/
+     tactic 和 cuBLAS handle；约 0.3 s，必须保留。
+  2. **场景 warmup**（bench 里每次 warmup + 5 次测量中的那一遍完整 pass）：
+     让 GPU 时钟/功耗进入稳态、allocator 长到稳态 block size、避免第一次测量是
+     冷样本；这是 plan §2.4 的“完整 warmup 一次”。
+  3. 没有第三种。数值对拍不做 warmup（每次都是干净初态）。
+- 缩场景 warmup 到 64 步的代价（所以 M3 不改）：
+  - **时钟/功耗爬坡**：eager 每步 86 ms 但 GPU 利用率只有 ~40%，64 步只有 5.5 s，
+    不足以让 SM clock 稳定；graph 32 ms × 64 = 2 s 更短。第 1 次测量会吸收爬坡，
+    中位数不受影响，但 min/max 里会出现一个冷样本。
+  - **allocator 预增长**：eager/static-exact 的 KV 随 L 增长，最大的 block 出现在
+    L≈8191；64 步 warmup 只到 7744（8K 档），第一次测量仍会扩 allocator。
+  - **与 plan §2.4 的字面口径不一致**，要么改 plan 要么改记录，容易让后续对比
+    失去可比性。
+  - 收益：bench 89 分钟里省约 16 分钟（1/6）。
+- 理由：M3 的数值已经冻结、bench 是收尾项，优先保证口径和 plan 一致；把“缩短
+  warmup / 自适应重复”留给 Phase 2，在改之前先把代价写清楚。
+- 被否决：
+  - 现在就上 64 步 warmup：省 16 分钟换一个冷样本和一处 plan 偏差，不划算。
+  - 现在就做自适应重复：改 schema 的收益远低于在 Phase 2 和 microbench 流程一起做。

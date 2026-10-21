@@ -2,7 +2,8 @@
 # GPU 命令必须在 full access 下运行（bwrap 沙箱看不到 /dev/nvidia*）。
 
 .PHONY: m2-preflight m2-manifest m2-test m2-numeric m2-micro m2-smoke m2-memory m2-chunk \
-        m3-fixtures m3-check m3-bench m3-memory m3-profile m3-sol m3-attn-effect m3-quick
+        m3-fixtures m3-check m3-bench m3-memory m3-profile m3-sol m3-attn-effect m3-quick \
+        verify verify-run check-results
 
 # M2 环境 / CUDA 头文件 / GPU 预检
 m2-preflight:
@@ -35,6 +36,23 @@ m2-memory:
 # M2 边界对齐的 full vs chunked prefill 一致性（需要 GPU）
 m2-chunk:
 	.venv/bin/python scripts/m2_chunk_consistency.py --length 256 --chunk 128
+
+# ---- 开发循环：产物契约 + 按改动推荐最小验证 ---------------------------------
+
+# 校验 results/ 下 run dir 的文件/字段/计数契约（CPU，秒级）
+check-results:
+	.venv/bin/python scripts/check_results.py --all
+
+# 按改动文件推荐最小验证档位（只打印）
+verify:
+	.venv/bin/python scripts/verify.py
+
+# 直接执行推荐档位；关闭前用 verify-close 连全量一起跑
+verify-run:
+	.venv/bin/python scripts/verify.py --run
+
+verify-close:
+	.venv/bin/python scripts/verify.py --run --include-s5
 
 # ---- M3：decode 性能 baseline -------------------------------------------------
 

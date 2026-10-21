@@ -133,7 +133,25 @@ def measure_once(runner: DecodeRunner, prompt, trace: list[int], steps: int) -> 
     }
 
 
-def run_scenario(name: str, spec: dict, fixtures: dict, args) -> dict:
+def same_source(result: dict) -> bool:
+    """resume 时判断旧结果是否由同一份源码产生。"""
+    prev = (result.get("provenance") or {}).get("git") or {}
+    manifest = (result.get("provenance") or {}).get("source_manifest") or {}
+    current = reporting.git_state(ROOT)
+    current_manifest = reporting.source_manifest(ROOT)
+    return (
+        prev.get("commit") == current.get("commit")
+        and prev.get("dirty") == current.get("dirty")
+        and manifest.get("patch_sha256") == current_manifest.get("patch_sha256")
+    )
+
+
+def latest_bench_dir() -> Path | None:
+    dirs = sorted((ROOT / "results/m3").glob("*-m3-bench"))
+    return dirs[-1] if dirs else None
+
+
+def run_scenario(name: str, spec: dict, fixtures: dict, args, repeats: int) -> dict:
     depth = int(spec["depth"])
     capacity = spec["capacity"]
     prompt_fx = fixtures["files"][f"fixed_{depth}.json"]
@@ -169,7 +187,7 @@ def run_scenario(name: str, spec: dict, fixtures: dict, args) -> dict:
             "prompt_sha256": prompt_fx.get("prompt_sha256"),
             "trace_sha256": prompt_fx.get("trace_sha256"),
         },
-        "repeats_requested": args.repeats,
+        "repeats_requested": repeats,
         "warmup_steps": steps,
     }
 
@@ -183,8 +201,8 @@ def run_scenario(name: str, spec: dict, fixtures: dict, args) -> dict:
     result["harness"] = runner.harness_info()
 
     samples = []
-    for i in range(args.repeats):
-        print(f"  repeat {i + 1}/{args.repeats}", flush=True)
+    for i in range(repeats):
+        print(f"  repeat {i + 1}/{repeats}", flush=True)
         sample = measure_once(runner, prompt, trace, steps)
         sample["repeat"] = i
         samples.append(sample)
@@ -226,8 +244,16 @@ def run_worker(args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     fixtures = load_fixtures(Path(args.fixtures))
+    spec = SCENARIOS[args.worker]
+    repeats = args.repeats
+    if (
+        args.repeats_non_graph is not None
+        and args.repeats_non_graph > 0
+        and spec["execution"] != "graph"
+    ):
+        repeats = args.repeats_non_graph
     try:
-        result = run_scenario(args.worker, SCENARIOS[args.worker], fixtures, args)
+        result = run_scenario(args.worker, spec, fixtures, args, repeats)
         result["ok"] = True
     except Exception:
         result = {"scenario": args.worker, "ok": False, "error": traceback.format_exc()}
@@ -272,6 +298,17 @@ def main() -> int:
     parser.add_argument("--fixtures", type=Path, default=ROOT / "bench/workloads/m3-p0")
     parser.add_argument("--only", default="all")
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument(
+        "--repeats-non-graph",
+        type=int,
+        default=None,
+        help="非 graph 场景的重复次数（默认与 --repeats 相同）；graph 始终用 --repeats",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="复用 --out（或最新的 *-m3-bench）里已成功且源码一致的场景",
+    )
     parser.add_argument("--steps", type=int, default=511)
     parser.add_argument("--chunk-size", type=int, default=128)
     parser.add_argument("--graph-warmup", type=int, default=3)
@@ -291,7 +328,13 @@ def main() -> int:
         if unknown:
             raise SystemExit(f"unknown scenarios: {unknown}")
 
-    out_dir = Path(args.out) if args.out else reporting.make_run_dir(ROOT, "bench", args.tag)
+    if args.out:
+        out_dir = Path(args.out)
+    elif args.resume and latest_bench_dir() is not None:
+        out_dir = latest_bench_dir()
+        print(f"resume: 复用最近的 run dir {out_dir}", flush=True)
+    else:
+        out_dir = reporting.make_run_dir(ROOT, "bench", args.tag)
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"run dir: {out_dir}", flush=True)
     reporting.provenance(
@@ -310,6 +353,18 @@ def main() -> int:
     results = []
     for name in scenarios:
         sub = out_dir / name
+        if args.resume:
+            previous = sub / "result.json"
+            if previous.exists():
+                try:
+                    prev = json.loads(previous.read_text())
+                except Exception:
+                    prev = {}
+                if prev.get("ok") and same_source(prev):
+                    print(f"\n=== {name}: resume 跳过（已有 ok 结果，源码一致）", flush=True)
+                    results.append(prev)
+                    continue
+                print(f"\n=== {name}: resume 重跑（旧结果无效或源码不同）", flush=True)
         cmd = [
             sys.executable,
             str(Path(__file__).resolve()),
@@ -328,6 +383,8 @@ def main() -> int:
             "--graph-warmup",
             str(args.graph_warmup),
         ]
+        if args.repeats_non_graph is not None:
+            cmd += ["--repeats-non-graph", str(args.repeats_non_graph)]
         print(f"\n=== {name}: {' '.join(cmd)}", flush=True)
         rc = subprocess.call(cmd, cwd=ROOT)
         path = sub / "result.json"

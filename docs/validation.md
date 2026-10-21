@@ -133,9 +133,13 @@ gate 应该用“EOS + 长度 + 内容”，与参考 trace 的差异只作 diag
 | 层次 | 命令 | 覆盖 | 耗时 |
 |---|---|---|---|
 | 纯 CPU | `pytest tests/ops tests/model`、`python -c` 调 report/CheckReport | op 数值、报告语义、必需项覆盖 | 秒级 |
-| 快档 | `make m3-quick` | graph capture、capacity guard、分阶段显存、两套计时 | ~5 分钟 |
+| 快档 | `make m3-quick` | graph capture、capacity guard、分阶段显存、两套计时 | ~40 秒 |
 | 单场景 | `--only numeric-512` / `--only graph-1024`、bench `--repeats 1 --steps 32` | 改到哪个路径就跑哪个 | 1–3 分钟 |
 | 全量 | `make m3-check` / `m3-memory` / `m3-bench` / `m3-profile` / `m3-sol` | 里程碑关闭 | 15 + 12 + 95 + 12 + 1 分钟 |
+
+注：`make m3-quick` 的 40 s 实测拆分为 check 13.3 s / memory 12.9 s / bench 14.7 s，
+每个子进程约 5–6 s 是固定开销（import + load）。只改一条路径时优先用
+`make verify` 给出的单档，而不是每次都跑完整 quick。
 
 M3 里实际踩到的三次返工，都是 loop 没做小：
 
