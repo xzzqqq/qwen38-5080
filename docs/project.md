@@ -25,7 +25,7 @@
 | SOL | AR：64 tok/s（FP8 KV）/ 63（BF16 KV）；DFlash2 spec decode：236–314 tok/s |
 | 现有推理栈（外推） | AR：46–50 tok/s；DFlash2：125–170 tok/s |
 | AR 实机参照（M1，外部） | IQ4_XS：55.90 / 54.19 tok/s（depth 512 / 8192），逻辑带宽约 80%；GPU 权重 13.35 GB，比 NVFP4 少约 1.06 GB，不能直接外推 |
-| 显存 | 带上 DFlash2 共需 16.39–16.74 GB；对 16.61 GB 可用余量 +0.22 ~ −0.13 GB，是否够用待 Phase 3 验证。spec decode 回滚时不能保存整份 state 快照，否则要多占 1.21 GB |
+| 显存 | baseline 8K 实测 15.62 GB allocated / 15.86 reserved，free 0.413 GB；带上 DFlash2 估算 16.39–16.74 GB，容量更紧，是否够用待 Phase 3 验证。spec decode 回滚时不能保存整份 state 快照，否则要多占 1.21 GB |
 
 数字的推导见 `docs/roadmap.md` §4。
 

@@ -86,10 +86,12 @@ class NVFP4Linear(nn.Module):
         self.register_buffer("bias", None if bias is None else bias.contiguous())
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        if x.ndim != 2 or x.shape[-1] != self.in_features:
+        if x.ndim < 2 or x.shape[-1] != self.in_features:
             raise ValueError(
-                f"x must be [M, {self.in_features}], got {tuple(x.shape)}"
+                f"x must be [..., {self.in_features}], got {tuple(x.shape)}"
             )
+        original_shape = x.shape
+        x = x.reshape(-1, self.in_features)
         if not x.is_contiguous():
             x = x.contiguous()
         if x.dtype != torch.bfloat16:
@@ -120,6 +122,8 @@ class NVFP4Linear(nn.Module):
         )
         if self.bias is not None:
             out = out + self.bias
+        if len(original_shape) != 2:
+            out = out.reshape(*original_shape[:-1], self.out_features)
         return out
 
     def extra_repr(self) -> str:

@@ -1,0 +1,28 @@
+{
+  "load": {
+    "load_s": 1.3723907470703125,
+    "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+    "quantized_linears": 401,
+    "high_precision_tensors": 449,
+    "skipped_unused": 0,
+    "gpu_allocated_gb": 14.45758976,
+    "gpu_reserved_gb": 14.556332032,
+    "gpu_free_gb": 1.727922176,
+    "gpu_total_gb": 16.609509376
+  },
+  "results": [
+    {
+      "depth": 512,
+      "n_decode": 512,
+      "prompt_tokens": 512,
+      "cache_len": 1023,
+      "prefill_s": 0.6955535330343992,
+      "decode_s": 42.23758070007898,
+      "decode_tok_s": 12.098230806080341,
+      "prefill_peak_gb": 14.776388096,
+      "final_peak_gb": 14.776388096,
+      "reserved_gb": 14.914945024,
+      "free_gb": 1.356726272
+    }
+  ]
+}

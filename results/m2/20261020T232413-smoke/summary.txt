@@ -1,0 +1,43 @@
+run_id: 20261020T232413
+load: {'load_s': 1.3710942268371582, 'manifest': '/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json', 'quantized_linears': 401, 'high_precision_tensors': 449, 'skipped_unused': 0, 'gpu_allocated_gb': 14.45758976, 'gpu_reserved_gb': 14.556332032, 'gpu_free_gb': 1.727922176, 'gpu_total_gb': 16.609509376}
+
+=== results/payload_math.json
+prompt_tokens: 90
+generated_tokens: 64
+prefill_s: 0.3933
+decode_s: 5.4833
+decode_tok_s: 11.67
+finish_reason: length
+peak_allocated_gb: 14.7417
+free_gb: 1.4448
+text:
+We need answer simple math. Need solve: April 48. May half as many = 24. Total 72. Need final concise.
+</think>
+
+Natalia sold 48 clips in April. In May, she sold half as many: 48 ÷ 2 = 
+
+=== results/payload_code.json
+prompt_tokens: 84
+generated_tokens: 64
+prefill_s: 0.1127
+decode_s: 5.4633
+decode_tok_s: 11.71
+finish_reason: length
+peak_allocated_gb: 14.7408
+free_gb: 1.4427
+text:
+We need answer user: "Write a Python function is_palindrome(s) that returns True if s is a palindrome, ignoring case and non-alphanumeric characters. Include 3 test cases."
+Need provide code. Simple. Need final with function and tests. Could include explanation. Ensure tests. Use str.isalnum and
+
+=== results/payload_chat.json
+prompt_tokens: 72
+generated_tokens: 64
+prefill_s: 0.1118
+decode_s: 5.4621
+decode_tok_s: 11.72
+finish_reason: length
+peak_allocated_gb: 14.7390
+free_gb: 1.4427
+text:
+We need answer user: "In three sentences, explain why LLM decode at batch size 1 is memory-bandwidth bound." Need produce exactly three sentences. Need be concise. Need likely mention autoregressive decoding generates one token, each step loads entire model weights (or large portion) from HBM to compute small amount
+

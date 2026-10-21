@@ -74,8 +74,8 @@
 | DFlash2 SOL | 236–314 tok/s | 每个 step 17.4 ms；τ 取 4.10–5.46（card 数据，BF16，temp 1.0） |
 | MTP 7 步 SOL | 166–222 tok/s；用 32K 截断词表最多 207–278 | τ 取 3.74–5.02 |
 | 现有推理栈 DFlash2（外推） | 约 125–170 tok/s | 发布文章的 2.7–3.4× 乘 5080 的 AR 速度；只作外推参照 |
-| 显存：baseline（NVFP4，BF16 KV，8K） | 约 15.93 GB（1b 估算） | 对 16.61 GB 可用余量约 0.68 GB；workspace 仍是占位，M2 §4 实测加载 / repack / prefill / decode 峰值 |
-| 显存：带 DFlash2 | 16.39–16.74 GB | 对 16.61 GB 可用：余量 +0.22 ~ −0.13 GB，**是否够用待 Phase 3 验证**；回滚不能保存整份 state 快照 |
+| 显存：baseline（NVFP4，BF16 KV，8K） | **15.62 GB allocated / 15.86 reserved**（M2 实测） | 7680+512 固定 token；8K 后 free **0.413 GB**；比 1b 的 15.93 GB 估算更紧；eager runner 诊断值 |
+| 显存：带 DFlash2 | 16.39–16.74 GB | 对 16.61 GB 可用：余量 +0.22 ~ −0.13 GB；但 baseline 实测只剩 0.413 GB，drafter 容量更紧；**待 Phase 3 验证** |
 
 口径说明：
 
@@ -111,7 +111,7 @@ M1 只提供低成本外部参照；M2 建立正确实现；M3 建立自写 runn
 | 里程碑 | Status | 内容 | 退出标准 | 粗估 |
 |---|---|---|---|---|
 | M1 实机参照 | ✅ 完成 2026-10-19 | 用 llama.cpp 跑 unsloth 的 `UD-IQ4_XS`（14.25 GB），用 `llama-bench` 测 depth 512 和 8192；固定 commit，脚本复现。详细清单见 `docs/plans/m1.md` | 已拿到：55.90 / 54.19 tok/s；逻辑带宽约 80%；可用显存 16.61 GB；真实生成正常。详见 [M1 journal](journal/2026-10-19-m1-llamacpp-reference.md) | 半天 |
-| M2 拼装 runner 跑通 | 进行中（1a/1b/§2 完成） | 执行清单见 [docs/plans/m2.md](plans/m2.md)。提前固定依赖版本和 checkpoint revision；用 transformers 里 qwen3_5 的文本模型做骨架；实现 NVFP4Linear（调用 FlashInfer `mm_fp4`）；embedding 放 CPU；只加载 `model.language_model.*` 和 `lm_head.*`，并列出所有保留高精度的 tensor（`in_proj_a/b`、`conv1d`、各个 norm 等）；核实 FP4 nibble / scale 的 tensor 布局、`alpha = input_scale × weight_scale_2`、FlashInfer backend、`M=1 / 8` 可用性和显存账；先用 eager 模式跑 | W4A4 对拍（相同 activation quantization）通过；量化与布局转换分别验证；runner 与参考 runner 数值对拍（同一 token 输入，逐层 hidden / cache/state / 最终 logits，容差先固定）；8K 容量验证通过；**不设 tok/s 门槛** | 2–3 天 |
+| M2 拼装 runner 跑通 | 进行中（1a/1b/§2/§3 完成；chunked 一致性待查） | 执行清单见 [docs/plans/m2.md](plans/m2.md)。提前固定依赖版本和 checkpoint revision；用 transformers 里 qwen3_5 的文本模型做骨架；实现 NVFP4Linear（调用 FlashInfer `mm_fp4`）；embedding 放 CPU；只加载 `model.language_model.*` 和 `lm_head.*`，并列出所有保留高精度的 tensor（`in_proj_a/b`、`conv1d`、各个 norm 等）；核实 FP4 nibble / scale 的 tensor 布局、`alpha = input_scale × weight_scale_2`、FlashInfer backend、`M=1 / 8` 可用性和显存账；先用 eager 模式跑 | W4A4 对拍（相同 activation quantization）通过；量化与布局转换分别验证；runner 与参考 runner 数值对拍（同一 token 输入，逐层 hidden / cache/state / 最终 logits，容差先固定）；8K 容量验证通过；**不设 tok/s 门槛** | 2–3 天 |
 | M3 decode baseline | 未开始 | 改用 static cache，自己写 decode loop 并录成 CUDA Graph；按 §2 写固定 harness（多次运行，报告中位数和波动，记录峰值显存）；按实际 tensor 布局和 KV 格式重算每步字节并算 SOL；抓第一张 Nsight Systems 时间线；分别报告模型执行速度和含 sampling 的有效输出速度 | 拿到 baseline tok/s 和时间分布；top 热点明确；加载 / repack / prefill / decode 的峰值显存有记录；BF16 / FP8 KV 分开报 | 1–2 天 |
 
 ### 6.2 优化阶段
@@ -132,7 +132,8 @@ M1 已回答：空闲可用 16.61 GB，显示器没有占用 5080。剩余显存
 
 | 问题 | 什么时候能回答 | 兜底方案 |
 |---|---|---|
-| NVFP4 baseline 能否装进 16.61 GB | M2（1b 估算 15.93 GB，余 0.68；实际加载待 §4） | 减少临时副本、复用 workspace、分块 prefill；仍不足才评估 offload |
+| NVFP4 baseline 能否装进 16.61 GB | ✅ 已答（8K 实测 15.62 allocated / 15.86 reserved，free 0.413） | 余量很紧：减少临时副本、复用 workspace、分块 prefill；仍不足才评估 offload |
+| chunked prefill 与单段是否数值一致 | M2 待查（300-token cos 0.929，mask/position 已排除） | 短 prompt 用单段；8K capacity 只验容量；必要时做 state 对拍/固定 chunk 边界 |
 | 加 drafter 后是否还装得下 | Phase 3（先做容量预演） | 停在 MTP；drafter 权重 / codebook 放 host，或更激进地量化 |
 | 量化后的 τ 与净加速 | Phase 3 | MTP；按有效输出速度选 |
 | FlashInfer `mm_fp4` 在 `M=1 / 8` 的可用性 | ✅ 已答（M=1/8/128 + 尾块；backend `cutlass`） | 换 backend；或先用 CUDA core 版本把流程跑通 |

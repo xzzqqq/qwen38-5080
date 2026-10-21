@@ -1,0 +1,66 @@
+run_id: 20261020T232439
+load: {'load_s': 1.357787847518921, 'manifest': '/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json', 'quantized_linears': 401, 'high_precision_tensors': 449, 'skipped_unused': 0, 'gpu_allocated_gb': 14.45758976, 'gpu_reserved_gb': 14.556332032, 'gpu_free_gb': 1.727922176, 'gpu_total_gb': 16.609509376}
+
+=== results/payload_math.json
+prompt_tokens: 90
+generated_tokens: 87
+prefill_s: 0.3832
+decode_s: 7.1530
+decode_tok_s: 12.16
+finish_reason: eos
+peak_allocated_gb: 14.7417
+free_gb: 1.4427
+text:
+We need answer simple math. Need solve: April 48. May half as many = 24. Total 72. Need final concise.
+</think>
+
+Natalia sold 48 clips in April. In May, she sold half as many: 48 ÷ 2 = 24 clips.
+
+Altogether: 48 + 24 = **72 clips**.
+
+=== results/payload_code.json
+prompt_tokens: 84
+generated_tokens: 239
+prefill_s: 0.1055
+decode_s: 19.7923
+decode_tok_s: 12.08
+finish_reason: eos
+peak_allocated_gb: 14.7408
+free_gb: 1.4280
+text:
+We need answer user: "Write a Python function is_palindrome(s) that returns True if s is a palindrome, ignoring case and non-alphanumeric characters. Include 3 test cases."
+Need provide code. Simple. Need final with function and tests. Could include explanation. Ensure tests. Use str.isalnum and lower. Maybe handle empty string True. Test cases: "A man, a plan, a canal: Panama" True; "racecar" True; "hello" False. Or "No 'x' in Nixon" True. Need include 3 test cases. Could use assert. Provide concise.
+</think>
+
+```python
+def is_palindrome(s: str) -> bool:
+    """
+    Return True if s is a palindrome, ignoring case and non-alphanumeric characters.
+    """
+    cleaned = [ch.lower() for ch in s if ch.isalnum()]
+    return cleaned == cleaned[::-1]
+
+
+# Test cases
+assert is_palindrome("A man, a plan, a canal: Panama") is True
+assert is_palindrome("racecar") is True
+assert is_palindrome("hello") is False
+```
+
+=== results/payload_chat.json
+prompt_tokens: 72
+generated_tokens: 298
+prefill_s: 0.1061
+decode_s: 24.7772
+decode_tok_s: 12.03
+finish_reason: eos
+peak_allocated_gb: 14.7390
+free_gb: 1.4280
+text:
+We need answer user: "In three sentences, explain why LLM decode at batch size 1 is memory-bandwidth bound." Need produce exactly three sentences. Need be concise. Need likely mention autoregressive decoding generates one token, each step loads entire model weights (or large portion) from HBM to compute small amount of arithmetic for one token, arithmetic intensity low, memory bandwidth dominates. Maybe mention batch size 1 means no amortization of weight loading across many tokens, so FLOPs per byte low. Three sentences. Ensure exactly three sentences. Let's craft:
+"During autoregressive decoding, each new token requires a forward pass that reads the model’s weights from memory, while the activation tensor for a single sequence is very small. At batch size 1, the number of useful arithmetic operations per byte of weight data is low, so the GPU spends most of the time moving weights rather than computing. As a result, throughput is limited by memory bandwidth rather than compute FLOPs."
+Count sentences: 3. Good.
+</think>
+
+During autoregressive decoding, each new token requires a forward pass that reads the model’s weights from memory, while the activation tensor for a single sequence is very small. At batch size 1, the number of useful arithmetic operations per byte of weight data is low, so the GPU spends most of the time moving weights rather than computing. As a result, throughput is limited by memory bandwidth rather than compute FLOPs.
+
