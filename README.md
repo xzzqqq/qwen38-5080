@@ -10,6 +10,7 @@
 | [`docs/plans/m2.md`](docs/plans/m2.md) | M2 执行清单 |
 | [`docs/plans/m3.md`](docs/plans/m3.md) | M3 执行清单（decode baseline） |
 | [`docs/sol.md`](docs/sol.md) | 按实际字节的 SOL 模型与每步公式 |
+| [`docs/bench.md`](docs/bench.md) | decode benchmark 用法：场景、参数、产物、失败恢复 |
 | [`docs/model.md`](docs/model.md) | 模型结构、checkpoint、NVFP4 约定、manifest 和显存账 |
 | [`docs/journal/`](docs/journal/) | 实验记录 |
 

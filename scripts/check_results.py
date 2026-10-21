@@ -80,6 +80,8 @@ def kind_of(path: Path) -> str:
 def check_provenance(c: Checker) -> None:
     prov = c.load("provenance.json")
     if prov is None:
+        # 2026-10-22 之前的 run 没有 provenance.json；重跑这些场景后会被替换。
+        c.notes.append("缺 provenance.json：可能是 2026-10-22 之前的 legacy run")
         return
     git = prov.get("git") or {}
     c.expect(bool(git.get("commit")), "provenance.git.commit 为空")

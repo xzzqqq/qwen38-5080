@@ -105,6 +105,7 @@ qwen38-5080/
 | — | `docs/model.md` | 已写：模型结构、checkpoint 的 tensor 布局、NVFP4 约定 |
 | — | `docs/decisions.md` | 已写：M1–M3 的决定、理由和被否决的选项 |
 | — | `docs/validation.md` | 数值/容量验收经验与参考 |
+| — | `docs/bench.md` | decode benchmark 用法（场景/参数/产物/恢复） |
 
 `docs/model.md` 需要写进去的已知坑：
 

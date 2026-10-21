@@ -11,6 +11,7 @@
 | `docs/decisions.md` | 已经做过的决定和理由 |
 | `docs/journal/` | 实验记录 |
 | `docs/model.md` | 模型结构、checkpoint 布局、NVFP4 约定和已知坑 |
+| `docs/bench.md` | decode benchmark 使用说明：场景、参数、产物、失败恢复 |
 
 ## 命令
 
@@ -25,6 +26,8 @@ GPU 命令都必须在 full access 下运行：bwrap 沙箱看不到 `/dev/nvidi
 | `make m3-quick` | M3 快档：graph + capture + capacity guard + 显存 + 两套计时冒烟 | 约 40 秒 |
 | `make verify` | 按改动文件推荐最小验证档位（`make verify-run` 执行） | < 5 秒 |
 | `make check-results` | 校验 `results/` 下 run dir 的产物契约 | < 1 秒 |
+| `make m3-bench` | M3 全量性能矩阵（11 场景 × 5 次 × 511 步） | 约 89 分钟 |
+| `scripts/m3_close.sh` | 完整关闭：check + memory + bench + profile + sol（`SKIP=` 可裁剪，`--resume` 续跑） | 约 135 分钟 |
 
 环境检查：`nvidia-smi --query-gpu=...`、`nvidia-smi -q`、`cuda13/bin/nvcc --version`，
 结果存 `results/`。

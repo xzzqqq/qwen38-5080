@@ -1,19 +1,44 @@
 #!/usr/bin/env python3
-"""M3 P0 decode benchmark：四执行方式 × depth/capacity 矩阵，两套计时。
+"""M3 P0 decode benchmark：四执行方式 × depth/capacity，两套计时。
 
-规格（docs/plans/m3.md §2–§3）：
-- 每个场景在独立子进程里跑，避免 graph pool / JIT workspace / allocator 历史干扰；
-- prompt = ``bench/workloads/m3-p0/fixed_<depth>.json`` 的固定 token；
-- 计时协议：prefill 产生首 token（计入 TTFT），随后 **511 次 decode forward /
-  511 个输出 token** 构成计时区间；最终 cache 长度 = depth + 511；
-- 模型 decode tok/s：逐步 CUDA events，D2D copy 在 start event 之前；
-- 系统 decode tok/s：host gather / pinned / H2D / 模型 / sampling / D2H 全计时；
-- 每个场景先完整 warmup 一次，再测 5 次；每次重建逻辑初态并重新 prefill；
-- 原始逐步/逐 run 数据全部保存，汇总另外给中位数/极值/波动和 step 分布。
+场景（`--list` 会连估算时间一起打印）：
 
-用法：
-    .venv/bin/python bench/e2e/decode.py                      # 全部场景
-    .venv/bin/python bench/e2e/decode.py --only graph-512-1024 --repeats 1 --steps 32   # 冒烟
+    eager-512 / eager-8192            M2 dynamic cache，起点
+    exact-512-1024 / exact-512-8192   static cache + 有效前缀 view
+    exact-8192                        static cache + 8K
+    cap-512-1024 / cap-512-8192       decode 扫满 capacity
+    cap-8192                          同上 + 8K
+    graph-512-1024 / graph-512-8192   整步 CUDA Graph
+    graph-8192                        同上 + 8K
+
+计时协议（docs/plans/m3.md §2.2–§2.3，详见 docs/bench.md）：
+prefill 产生首 token（计入 TTFT），随后 **511 次 decode forward / 511 个输出 token**
+是计时区间，最终 cache 长度 = depth + 511。模型 tok/s 用逐步 CUDA events（D2D copy
+在 start event 之前），系统 tok/s 是真实贪心闭环墙钟（含 host gather / H2D /
+sampling / D2H）。每个场景先完整 warmup 一次，再测 `--repeats` 次，每次 reset +
+重新 prefill，原始逐步数据全部保存。
+
+四档用法（时间按 511 步、5 次估算）：
+
+    # 1) 单场景冒烟（~15 s，开发用；--steps 小值的结果不可与正式数字比较）
+    .venv/bin/python bench/e2e/decode.py --only graph-512-1024 --repeats 1 --steps 32
+
+    # 2) 定向重跑某几个场景（每个非 graph 场景约 9 min）
+    .venv/bin/python bench/e2e/decode.py --only graph-8192,cap-8192
+
+    # 3) 全量矩阵（~89 min）
+    make m3-bench
+
+    # 4) 整个里程碑关闭（check/memory/bench/profile/sol，~135 min）
+    scripts/m3_close.sh
+
+被中断的 run 用 `--resume` 续跑：只补没有 ok 结果、或源码 hash 与当前不一致的场景；
+最近目录来自别的 commit 时会自动改写到一个新目录，不覆盖旧记录。
+
+产物：`results/m3/<run-id>-m3-bench/`（`bench.json`、`summary.md`、`provenance.json`、
+`source_manifest.json`、每场景 `result.json`）。跑完用 `make check-results` 校验契约。
+
+内部参数：`--worker` 只给 driver 调用子进程用，不要手写。
 """
 
 from __future__ import annotations
@@ -37,6 +62,11 @@ from runner.model.decode_runner import DecodeRunner  # noqa: E402
 from runner.model.static_cache import cache_stats  # noqa: E402
 
 # §3.2 的 P0 矩阵。eager 没有固定 capacity，标为 dynamic。
+# 估算用的每步耗时来自 2026-10-21 的实测（163844 那次），只用于 --list 选场景；
+# 换模型/换 kernel 后要更新，正式数字永远以实跑为准。
+EST_MS_PER_STEP = {"eager": 86.0, "static-exact": 86.0, "static-cap": 85.0}
+EST_GRAPH_MS_PER_STEP = {1024: 32.0, 8192: 44.0}
+EST_PREFILL_S = {512: 0.45, 7680: 6.7}
 SCENARIOS: dict[str, dict] = {
     "eager-512": {"execution": "eager", "depth": 512, "capacity": None},
     "eager-8192": {"execution": "eager", "depth": 7680, "capacity": None},
@@ -313,11 +343,78 @@ def format_table(results: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def estimate_seconds(spec: dict, steps: int, repeats: int) -> float:
+    """按 2026-10-21 实测的每步耗时估算一个场景的墙钟时间（含 warmup）。"""
+    depth = int(spec["depth"])
+    prefill = EST_PREFILL_S.get(depth, 6.7)
+    if spec["execution"] == "graph":
+        ms = EST_GRAPH_MS_PER_STEP.get(spec["capacity"], 44.0)
+    else:
+        ms = EST_MS_PER_STEP.get(spec["execution"], 86.0)
+    per_measure = 2 * prefill + 2 * steps * ms / 1000.0
+    return (1 + repeats) * per_measure
+
+
+def list_scenarios(repeats: int, repeats_non_graph: int | None, steps: int) -> int:
+    print(f"{'scenario':18s} {'execution':12s} {'depth':>6s} {'capacity':>9s} "
+          f"{'est/measure':>12s} {'est total':>10s}")
+    total = 0.0
+    for name, spec in SCENARIOS.items():
+        r = repeats
+        if repeats_non_graph is not None and spec["execution"] != "graph":
+            r = repeats_non_graph
+        seconds = estimate_seconds(spec, steps, r)
+        total += seconds
+        per = seconds / (1 + r)
+        print(
+            f"{name:18s} {spec['execution']:12s} {spec['depth']:6d} "
+            f"{str(spec['capacity'] or 'dynamic'):>9s} {per:11.1f}s {seconds / 60:9.1f}m"
+        )
+    print(f"\n{len(SCENARIOS)} 个场景，合计约 {total / 60:.1f} 分钟 "
+          f"（steps={steps}, repeats={repeats}"
+          + (f", non-graph repeats={repeats_non_graph}" if repeats_non_graph else "")
+          + "）")
+    print("估算是按 2026-10-21 实测每步耗时算的，只用于选场景；正式数字以实跑为准。")
+    print("单场景冒烟：--only <name> --repeats 1 --steps 32")
+    return 0
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--fixtures", type=Path, default=ROOT / "bench/workloads/m3-p0")
-    parser.add_argument("--only", default="all")
-    parser.add_argument("--repeats", type=int, default=5)
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""常用任务：
+  列出场景和预计时间        --list
+  单场景冒烟               --only graph-512-1024 --repeats 1 --steps 32
+  续跑被中断的 run          --resume（配合 --out）
+  只重跑部分场景            --only graph-8192,cap-8192
+  全量（plan 口径）         make m3-bench
+  完整关闭                  scripts/m3_close.sh
+文档：docs/bench.md
+""",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="列出场景、每档估算耗时后退出（不占 GPU）",
+    )
+    parser.add_argument(
+        "--fixtures",
+        type=Path,
+        default=ROOT / "bench/workloads/m3-p0",
+        help="冻结 fixtures 目录（fixed_<depth>.json + manifest.json；启动时校验 hash）",
+    )
+    parser.add_argument(
+        "--only",
+        default="all",
+        help="逗号分隔的场景名，或 all（默认）。名字见 --list",
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=5,
+        help="每个场景的测量次数（默认 5，plan §2.4）；不含 1 次完整 warmup",
+    )
     parser.add_argument(
         "--repeats-non-graph",
         type=int,
@@ -327,15 +424,35 @@ def main() -> int:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="复用 --out（或最新的 *-m3-bench）里已成功且源码一致的场景",
+        help="续跑：复用 --out（或最新 *-m3-bench）里 ok 且源码 hash 一致的场景；"
+        "最近目录来自别的 commit 时改写新目录",
     )
-    parser.add_argument("--steps", type=int, default=511)
-    parser.add_argument("--chunk-size", type=int, default=128)
-    parser.add_argument("--graph-warmup", type=int, default=3)
-    parser.add_argument("--out", type=Path, default=None)
-    parser.add_argument("--worker", default=None)
-    parser.add_argument("--tag", default="m3-bench")
+    parser.add_argument(
+        "--steps",
+        type=int,
+        default=511,
+        help="计时 decode 步数（默认 511 = plan §2.2 口径）。小值只用于开发冒烟，"
+        "结果不可与正式数字比较",
+    )
+    parser.add_argument("--chunk-size", type=int, default=128, help="prefill 分块长度（默认 128）")
+    parser.add_argument(
+        "--graph-warmup",
+        type=int,
+        default=3,
+        help="CUDA Graph capture 前在 side stream 上的 warmup 次数（默认 3）",
+    )
+    parser.add_argument(
+        "--out",
+        type=Path,
+        default=None,
+        help="run 目录（默认 results/m3/<timestamp>-m3-bench；resume 时建议显式给出）",
+    )
+    parser.add_argument("--worker", default=None, help=argparse.SUPPRESS)
+    parser.add_argument("--tag", default="m3-bench", help="run 目录后缀（默认 m3-bench）")
     args = parser.parse_args()
+
+    if args.list:
+        return list_scenarios(args.repeats, args.repeats_non_graph, args.steps)
 
     if args.worker:
         return run_worker(args)
