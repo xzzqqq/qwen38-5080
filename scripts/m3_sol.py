@@ -456,6 +456,12 @@ def main() -> int:
             )
 
     bench_path = args.bench or find_bench()
+    if bench_path is not None:
+        try:
+            # 文档里用仓库相对路径，避免写入绝对路径。
+            bench_path = bench_path.resolve().relative_to(ROOT)
+        except ValueError:
+            pass
     rows = join_bench(bench_path, weights["total_cuda_bytes"],
                       capacities[8192]["gdn_state_bytes"],
                       capacities[8192]["conv_state_bytes"], capacities)
