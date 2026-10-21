@@ -1,0 +1,17 @@
+run_id: 20261021T111213
+load: {'load_s': 1.4074745178222656, 'manifest': '/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json', 'quantized_linears': 401, 'high_precision_tensors': 449, 'shape_stable_linears': 96, 'skipped_unused': 0, 'gpu_allocated_gb': 14.45758976, 'gpu_reserved_gb': 14.556332032, 'gpu_free_gb': 1.727922176, 'gpu_total_gb': 16.609509376}
+
+depth=512 n_decode=512
+  cache_len=1023
+  prefill_s=0.717
+  decode_s=45.979 (11.11 tok/s)
+  prefill_peak_gb=14.776 final_peak_gb=14.776
+  reserved_gb=14.915 free_gb=1.357
+
+depth=7680 n_decode=512
+  cache_len=8191
+  prefill_s=6.743
+  decode_s=45.677 (11.19 tok/s)
+  prefill_peak_gb=15.620 final_peak_gb=15.620
+  reserved_gb=15.859 free_gb=0.413
+

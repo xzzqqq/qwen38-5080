@@ -55,8 +55,11 @@ greedy decode，验证三条真实 prompt 和 8K 容量。
 
 | depth | cache_len | prefill | decode 512 | peak allocated | reserved | free |
 |---|---|---|---|---|---|---|
-| 512 | 1023 | 0.696 s | 42.238 s（12.10 tok/s） | 14.776 GB | 14.915 GB | 1.357 GB |
-| 7680 | 8191 | 6.804 s | 42.538 s（12.01 tok/s） | **15.620 GB** | **15.859 GB** | **0.413 GB** |
+| 512 | 1023 | 0.717 s | 45.979 s（11.11 tok/s） | 14.776 GB | 14.915 GB | 1.357 GB |
+| 7680 | 8191 | 6.743 s | 45.677 s（11.19 tok/s） | **15.620 GB** | **15.859 GB** | **0.413 GB** |
+
+a/b shape-stable 之后复测，峰值和 free 不变；decode 约 45–46 s，属于 reference
+fallback 的诊断波动。
 
 8K 不 OOM，没有 NaN/Inf；最后一步 token 没有再次 forward，所以 cache_len 是 8191。
 baseline 只剩约 0.41 GB 空闲，DFlash2 的容量会更紧。
@@ -70,32 +73,87 @@ baseline 只剩约 0.41 GB 空闲，DFlash2 的容量会更紧。
 | 单段 prefill | 基准 |
 | `chunk=128` | max_abs 11.75，cos **0.929**，argmax 271 vs 37550 |
 
-定位：
+定位与证据：
 
-- 显式 `position_ids` / `attention_mask` 不改变结果；
-- mask 是 `(1,1,128,256)`，前 128 个 past 位置可见，causal 正确；
-- 逐层比较从第 1 层（第一个 GDN 层）开始分叉：layer 1 max 0.125、cos 0.999996，
-  之后逐层放大。
+1. **前缀对比**：单段 300 的前 128 个 hidden states vs 单独运行 128 tokens，从
+   layer 1 就开始不同（max 0.125，cos 0.999993）。所以最初误差发生在跨段 state
+   交接之前，不需要先怀疑 cache/GDN state。
+2. **layer 0 实际子步骤**（同一份前 128 输入，M=300 vs M=128）：
+   `input_norm` 完全一致 → `linear_attn` max 0.00519 → residual 0.00525 →
+   `post_norm` 0.01465 → **MLP 0.04688** → layer0 输出 **0.125**。
+3. **linear_attn 内部**（输入是同一份 normed tensor）：
+   - `in_proj_qkv` / `in_proj_z`：**完全一致**（NVFP4 投影在此 shape 下没有分叉）
+   - `in_proj_b`：max **0.03125**，mean 0.00148
+   - `in_proj_a`：max **0.06250**，mean 0.00298
+   - conv / q / k / v：一致
+   - g：max 0.01055；beta：0.00391
+   - GDN core：0.01563
+   - norm / out_proj：0.00391 / 0.00519
 
-判断：不是 mask/position 逻辑错误，更像 **GDN chunk 边界 + FP4 GEMM 的 M 依赖累加**
-带来的数值差异；但还没有用 state/逐层 reference 闭环。smoke prompt 都 <128，走单段，
-不受影响；8K capacity 只验证不 OOM，不能当数值对拍。
+结论：**最早的分叉是 BF16 `in_proj_a/b` 的 shape 相关 GEMM 舍入**；qkv/z 的
+NVFP4 路径在这个案例里反而完全一致。之后 a/b → g/beta → GDN core → norm →
+MLP 的 W4A4 activation quantization 逐步放大到 0.125。没有证据表明 GDN state
+接错，也不能把首因归给 FP4 GEMM。
+
+### shape-stable a/b 修复后的结果
+
+把 96 个 `in_proj_a/b` 换成 `ShapeStableLinear(block_m=128)`：按固定 128 行分块，
+尾块补零，再走同一 shape 的 `F.linear`。
+
+- `in_proj_a/b` 的 full vs split 现在 **max=0**；
+- 前 128 tokens 的逐层 hidden states 与单独 128 tokens **完全一致**；
+- 按 chunk 检查：
+  - `0:128`：全 exact；
+  - `128:256`：第一个分叉在 hidden[24] = **layer 23（full_attention）**，
+    max 0.01904；
+  - `256:300`：layer 11 的分叉是前一段传播，不是新的首因。
+- layer 23 的输入 exact；`attn_out` max 0.00586，residual 0.01563，
+  post_norm 0.00781，MLP 0.01904。
+
+### 最终定位：不是 cache/state，是 attention KV 长度不同
+
+关键对照：
+
+| 对照 | 结果 |
+|---|---|
+| full **256** vs `128+128`，逐层 hidden | **max=0** |
+| full **256** vs `128+128`，最终 logits | **max=0，cos=1.0，argmax 相同** |
+| full **300** vs `128+128+44` | 第 2 段 attention 的 KV 长度是 300 vs 256；仍有差异 |
+
+full 300 的第 2 段 attention 会看到 44 个被 causal mask 的 future keys；chunked
+的第 2 段只看到 256 个 key。有效 keys 相同，但 attention 的 reduction/softmax
+长度不同，FP 结果不会 bitwise 相等。这不是 cache 接错，也不是 GDN state 错误。
+
+因此 `make m2-chunk` 用 **边界对齐** 的 full 前缀做 reference：
+
+```bash
+make m2-chunk   # full 256 vs 128+128
+```
+
+结果：`max_abs=0.0`、`cos=1.0`、argmax 相同。chunked prefill 路径本身是正确的；
+之前拿 full 300 当 `128+128+44` 的 bitwise reference 不成立。
 
 ## 结论
 
-§3 的 loader、真实生成和 8K 容量完成；M2 的 runner 数值对拍仍有一个开放项。
-下一步应先决定：
+§3 的 loader、真实生成和 8K 容量完成；chunked prefill 的数值差异已定位并收敛：
 
-1. 用单段 prefill 做短 prompt 的数值 reference，chunked 只用于长上下文；
-2. 还是把 GDN state/conv state 与单段结果逐层对拍，定位 chunk 边界的差异。
+- a/b 的 shape 依赖已修复；
+- 边界对齐的 full vs chunked **完全一致**；
+- 任意长度的 full 300 vs chunked 128+128+44 不应当作 bitwise 门槛，原因是
+  attention 的有效 KV 长度不同。
 
-在解决前不把 M2 标完成。
+M2 其余验收（reference runner、完整逐层对拍口径）仍待完成；不再用“短 prompt
+单段”绕过，也不再把 full 300 vs chunked 作为失败判据。
 
 ## 产物
 
 - `runner/loader/checkpoint.py`、`runner/loader/nvfp4_model.py`
 - `runner/model/host_embedding.py`、`runner/model/eager_runner.py`
-- `scripts/m2_smoke.py`、`scripts/m2_capacity.py`
+- `runner/ops/bf16/stable_linear.py`
+- `tests/model/test_stable_linear.py`
+- `scripts/m2_smoke.py`、`scripts/m2_capacity.py`、`scripts/m2_chunk_consistency.py`
 - `results/m2/20261020T232439-smoke/`
 - `results/m2/20261020T232552-capacity/`
 - `results/m2/20261020T232643-capacity/`
+- `results/m2/20261021T111128-chunk-consistency/`
+- `results/m2/20261021T111213-capacity/`

@@ -145,8 +145,8 @@ NVFP4 权重合计 401 个 tensor（400 文本 + `lm_head`），逻辑参数 25.
 | 加载后（401 个 NVFP4Linear） | allocated 14.457 GB / reserved 14.556 GB |
 | 8K（7680 prompt + 512 decode）peak | **allocated 15.620 GB / reserved 15.859 GB** |
 | 8K 后 `mem_get_info()` free | **0.413 GB** |
-| 7680 prefill | 6.80 s（eager；GDN/conv 走 reference fallback） |
-| 512 decode | 42.54 s，12.01 tok/s（诊断值，不是性能 baseline） |
+| 7680 prefill | 6.74 s（eager；GDN/conv 走 reference fallback） |
+| 512 decode | 45.68 s，11.19 tok/s（a/b 后复测；诊断值，不是性能 baseline） |
 
 这说明 baseline 能进 8K，但只剩约 0.4 GB 空闲；DFlash2 的容量会更紧。速度受 `causal_conv1d` / `flash-linear-attention` 未安装和 eager 路径影响，M2 不作为门槛。
 
@@ -160,7 +160,13 @@ NVFP4 权重合计 401 个 tensor（400 文本 + `lm_head`），逻辑参数 25.
 - **KV 精度**：checkpoint 写 `kv_cache_quant_algo: FP8`，但 M2 明确用 BF16；两套要分开报 SOL。
 - **HF 下载**：Xet 默认缓存写 `~/.cache`，沙箱只读；设置 `HF_HOME` / `HF_XET_CACHE` 到仓库 `.tmp`。直连超时时用 `HF_ENDPOINT=https://hf-mirror.com`。
 - **metadata 参数数**：index 的 `total_parameters` 和逻辑 shape 不一致，不要混用。
-- **chunked prefill 数值一致性未闭环**：300-token 单段 prefill vs `chunk=128` 的 logits cos 0.929、argmax 不同；mask 和 position_ids 已验证正确，分叉从第 1 层（GDN）开始，疑似 GDN chunk 边界 + FP4 GEMM 的 M 依赖累加。smoke prompt 都 <128 不受影响；8K capacity 只验证不 OOM，不能当作数值对拍。
+- **chunked prefill 数值差异已解释**：96 个 BF16 `in_proj_a/b` 已换成
+  `ShapeStableLinear(block_m=128)`，a/b full vs split max=0，前 128 hidden 也 exact。
+  **边界对齐**的 full 256 vs `128+128` 逐层 hidden 和最终 logits 都 max=0、cos=1.0。
+  full 300 vs `128+128+44` 仍不同，是因为第 2 段 attention 的 KV 长度 300 vs 256
+  （full 多 44 个被 mask 的 future keys）；这是 attention reduction 长度差异，
+  不是 cache/state 接错。正确 reference 用 `make m2-chunk`，不要拿任意 full 长度
+  做 bitwise 基准。
 
 ## 7. 复现
 

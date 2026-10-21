@@ -133,7 +133,7 @@ M1 已回答：空闲可用 16.61 GB，显示器没有占用 5080。剩余显存
 | 问题 | 什么时候能回答 | 兜底方案 |
 |---|---|---|
 | NVFP4 baseline 能否装进 16.61 GB | ✅ 已答（8K 实测 15.62 allocated / 15.86 reserved，free 0.413） | 余量很紧：减少临时副本、复用 workspace、分块 prefill；仍不足才评估 offload |
-| chunked prefill 与单段是否数值一致 | M2 待查（300-token cos 0.929，mask/position 已排除） | 短 prompt 用单段；8K capacity 只验容量；必要时做 state 对拍/固定 chunk 边界 |
+| chunked prefill 与单段是否数值一致 | ✅ 已解释（a/b 已 shape-stable；边界对齐 full 256 vs 128+128 完全一致；full 300 差异来自 attention KV 长度 300 vs 256） | 用 `make m2-chunk` 做边界对齐 reference；不拿任意 full 长度做 bitwise 基准 |
 | 加 drafter 后是否还装得下 | Phase 3（先做容量预演） | 停在 MTP；drafter 权重 / codebook 放 host，或更激进地量化 |
 | 量化后的 τ 与净加速 | Phase 3 | MTP；按有效输出速度选 |
 | FlashInfer `mm_fp4` 在 `M=1 / 8` 的可用性 | ✅ 已答（M=1/8/128 + 尾块；backend `cutlass`） | 换 backend；或先用 CUDA core 版本把流程跑通 |

@@ -70,3 +70,22 @@
 - 被否决：
   - 先用 `backend="auto"`：不同 shape 可能选不同 backend，M2 需要单一可复现路径。
   - 用「输出看起来差不多」代替固定容差：无法区分 BF16 舍入和 layout 错误。
+
+## 2026-10-21 M2 chunked prefill 数值口径与 shape-stable a/b
+
+- 决定：
+  - 96 个 BF16 `in_proj_a/b` 包成 `ShapeStableLinear(block_m=128)`，固定 M=128
+    分块、尾块补零；避免 M=300 vs 128 的 GEMM reduction 差异进入 GDN gate。
+  - chunked prefill 的数值 reference 只用**边界对齐**的 full 前缀，例如
+    `full 256 vs 128+128`；`make m2-chunk` 固化这个检查。
+  - 不再把 `full 300 vs 128+128+44` 当作 bitwise 失败判据。
+- 理由：a/b 修复后前缀和 full 256 都 exact；full 300 的第 2 段 attention 看到
+  KV 长度 300（含 44 个被 mask 的未来 key），而 chunked 第 2 段只看 256 个 key。
+  有效 key 相同但 attention reduction/softmax 长度不同，FP 不会 bitwise 相等；
+  这是 reference 口径问题，不是 cache/state 错误。
+- 被否决：
+  - 保持原生 `nn.Linear`：M=300 vs 128 的 a/b 差异可达 0.0625，会经 g/beta、
+    GDN、norm 和 W4A4 MLP 放大。
+  - 用任意 full 长度做 chunked 的 bitwise reference：会把 attention KV 长度差异
+    误判成实现 bug。
+  - 用“短 prompt 单段、长上下文只 chunked”绕过：长上下文路径仍未验证。

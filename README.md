@@ -11,7 +11,7 @@
 | [`docs/model.md`](docs/model.md) | 模型结构、checkpoint、NVFP4 约定、manifest 和显存账 |
 | [`docs/journal/`](docs/journal/) | 实验记录 |
 
-当前进度：**M1 实机参照完成**；**M2 进行中**，1a 预检、1b checkpoint/manifest、§2 NVFP4Linear、§3 eager runner 已完成。401 个量化 Linear 已装载；三条真实 prompt 正常结束；8K（7680+512）实测 peak 15.62 GB allocated / 15.86 reserved，free 0.413 GB。开放项：chunked prefill 与单段 logits 尚未一致（cos 0.929）。详见 [`docs/roadmap.md`](docs/roadmap.md) §6.1。
+当前进度：**M1 实机参照完成**；**M2 进行中**，1a 预检、1b checkpoint/manifest、§2 NVFP4Linear、§3 eager runner 已完成。401 个量化 Linear 已装载；三条真实 prompt 正常结束；8K（7680+512）实测 peak 15.62 GB allocated / 15.86 reserved，free 0.413 GB。chunked prefill：a/b 已 shape-stable，边界对齐的 full 256 vs 128+128 完全一致；full 300 的差异来自 attention KV 长度 300 vs 256。详见 [`docs/roadmap.md`](docs/roadmap.md) §6.1。
 
 M1 用的 llama.cpp 不纳入版本管理，按固定 commit 拉取和编译：
 

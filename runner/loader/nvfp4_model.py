@@ -29,12 +29,14 @@ from runner.env import configure_flashinfer_env
 configure_flashinfer_env()
 
 from runner.model.host_embedding import HostEmbedding  # noqa: E402
+from runner.ops.bf16.stable_linear import ShapeStableLinear  # noqa: E402
 from runner.ops.nvfp4.linear import NVFP4Linear  # noqa: E402
 
 from .checkpoint import CheckpointReader
 
 TEXT_PREFIX = "model.language_model."
 LM_HEAD_PREFIX = "lm_head."
+SHAPE_STABLE_BLOCK = 128
 
 
 def find_manifest(root: Path) -> Path:
@@ -162,6 +164,20 @@ def load_nvfp4_text_model(
         else:
             setattr(parent, attr, tensor)
         loaded_high_precision += 1
+
+    # 5) a/b 决定 GDN 的 gate；固定 block_m 让单段/分段 prefill 走同一 GEMM shape。
+    wrapped_stable = 0
+    for layer in model.model.layers:
+        if not hasattr(layer, "linear_attn"):
+            continue
+        for name in ("in_proj_a", "in_proj_b"):
+            linear = getattr(layer.linear_attn, name)
+            setattr(
+                layer.linear_attn,
+                name,
+                ShapeStableLinear.from_linear(linear, block_m=SHAPE_STABLE_BLOCK),
+            )
+            wrapped_stable += 1
     reader.close()
 
     meta_params = [n for n, p in model.named_parameters() if p.device.type == "meta"]
@@ -180,6 +196,7 @@ def load_nvfp4_text_model(
         "manifest": str(manifest_path),
         "quantized_linears": quantized,
         "high_precision_tensors": loaded_high_precision,
+        "shape_stable_linears": wrapped_stable,
         "skipped_unused": skipped_unused,
         "gpu_allocated_gb": torch.cuda.memory_allocated() / 1e9,
         "gpu_reserved_gb": torch.cuda.memory_reserved() / 1e9,

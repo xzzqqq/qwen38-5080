@@ -212,3 +212,25 @@ def test_nvfp4_linear_matches_dequant_reference(real_tensors, m):
     assert metrics["nrmse"] <= TOL["nrmse"], metrics
     assert metrics["cosine"] >= TOL["cosine"], metrics
     assert metrics["max_rel"] <= TOL["max_rel"], metrics
+
+
+@GPU
+def test_nvfp4_linear_same_x_split(real_tensors):
+    """同一份 x 的整段 forward vs 分段 forward，覆盖 chunked prefill 的 op 级一致性。"""
+    module = NVFP4Linear(
+        real_tensors["weight"],
+        real_tensors["weight_scale"],
+        real_tensors["weight_scale_2"],
+        real_tensors["input_scale"],
+        backend="cutlass",
+    ).cuda()
+    x = torch.randn(300, 5120, device="cuda", dtype=torch.bfloat16) * 0.5
+    full = module(x)
+    split = torch.cat(
+        [module(x[:128]), module(x[128:256]), module(x[256:])], dim=0
+    )
+    metrics = error_metrics(split, full)
+    assert metrics["finite"]
+    assert metrics["nrmse"] <= 1.0e-3, metrics
+    assert metrics["cosine"] >= 0.99999, metrics
+    assert metrics["max_rel"] <= 5.0e-3, metrics
