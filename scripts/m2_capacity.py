@@ -88,6 +88,8 @@ def run_depth(runner: EagerTextRunner, depth: int, n_decode: int, load_info: dic
     prefill_peak = torch.cuda.max_memory_allocated() / 1e9
     logits = out.logits[:, -1, :]
     finite = bool(torch.isfinite(logits).all())
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
 
     t0 = time.perf_counter()
     for step in range(n_decode):
@@ -129,12 +131,14 @@ def run_depth(runner: EagerTextRunner, depth: int, n_decode: int, load_info: dic
         "ok": ok,
         "load_allocated_gb": load_info["gpu_allocated_gb"],
         "load_reserved_gb": load_info["gpu_reserved_gb"],
+        "load_peak_allocated_gb": load_info["load_peak_allocated_gb"],
+        "load_peak_reserved_gb": load_info["load_peak_reserved_gb"],
         "prefill_s": prefill_s,
         "decode_s": decode_s,
         "decode_tok_s": (n_decode - 1) / decode_s if decode_s else 0.0,
         "prefill_peak_gb": prefill_peak,
         "decode_peak_gb": decode_peak,
-        "final_peak_gb": decode_peak,
+        "final_peak_gb": max(prefill_peak, decode_peak),
         "reserved_gb": torch.cuda.memory_reserved() / 1e9,
         "free_gb": free_b / 1e9,
     }
@@ -153,12 +157,15 @@ def main() -> int:
     out_dir = ROOT / "results/m2" / f"{run_id}-capacity"
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    torch.cuda.reset_peak_memory_stats()
     runner, info = EagerTextRunner.from_checkpoint(
         ROOT / "models/Qwen3.8-27B-NVFP4-RTX5090",
         max_context=args.max_context,
         prefill_chunk=args.chunk_size,
         manifest_path=args.manifest,
     )
+    info["load_peak_allocated_gb"] = torch.cuda.max_memory_allocated() / 1e9
+    info["load_peak_reserved_gb"] = torch.cuda.max_memory_reserved() / 1e9
     print("load:", json.dumps(info, ensure_ascii=False), flush=True)
 
     results = []
@@ -184,7 +191,8 @@ def main() -> int:
             f"  decode_s={r['decode_s']:.3f} ({r['decode_tok_s']:.2f} tok/s)",
             f"  cache_len_ok={r['cache_len_ok']} finite={r['finite']} ok={r['ok']}",
             f"  state_dtypes={r['cache_stats']}",
-            f"  load_peak_gb={r['load_allocated_gb']:.3f}/{r['load_reserved_gb']:.3f}",
+            f"  load_end_gb={r['load_allocated_gb']:.3f}/{r['load_reserved_gb']:.3f}",
+            f"  load_peak_gb={r['load_peak_allocated_gb']:.3f}/{r['load_peak_reserved_gb']:.3f}",
             f"  prefill_peak_gb={r['prefill_peak_gb']:.3f} decode_peak_gb={r['decode_peak_gb']:.3f}",
             f"  reserved_gb={r['reserved_gb']:.3f} free_gb={r['free_gb']:.3f}",
             "",

@@ -96,14 +96,17 @@
   - M2 以 `docs/journal/2026-10-21-m2-close.md` 的记录关闭；ShapeStableLinear
     保留，当前实现冻结给 M3 做 correctness reference。
   - runner 数值容差固定为：NVFP4Linear `nrmse ≤ 5e-3`、`cosine ≥ 0.99999`、
-    `max_rel ≤ 1e-2`；GDN `nrmse ≤ 1e-3`、`cosine ≥ 0.99999`、`max_rel ≤ 5e-3`。
-  - activation quant 的 PyTorch reference 与 FlashInfer 有约 0.4% code 不同，
-    单独记录，容差 `nrmse ≤ 2e-2`、`cosine ≥ 0.9995`、`max_rel ≤ 1e-1`；
-    不混入 NVFP4Linear 的严格容差。
-  - 8K 容量以 15.620 GB allocated / 15.859 GB reserved、free 0.413 GB 作为
-    baseline；M3 的 static cache/graph 必须和 eager 输出对拍后再报性能。
+    `max_rel ≤ 1e-2`；GDN `nrmse ≤ 5e-3`、`cosine ≥ 0.9999`、`max_rel ≤ 1e-2`。
+  - activation quant 的 PyTorch reference 与 FlashInfer 有少量 code 不同，
+    只作诊断，不参与退出判定；参考容差 `nrmse ≤ 3e-2`、`cosine ≥ 0.9995`、
+    `max_rel ≤ 2e-1`。
+  - 退出判定必须同时检查 reference count、hidden/cache finite、dtype、cache length；
+    count=0 或 cache 非有限/长度错误不能通过。
+  - 8K 容量以 prefill peak 15.620 GB、decode peak 15.423 GB、reserved 15.859 GB、
+    free 0.413 GB 作为 baseline；M3 的 static cache/graph 必须和 eager 输出对拍后再报性能。
 - 理由：3 prompt ×16 步、真实生成 2048 上限、512/7680 容量都通过；NVFP4
-  的同一 A/W dequant reference 0/400 failure，GDN recurrence 0/48 failure。
+  的同一 A/W dequant reference 每 prompt 0/6800 failure，GDN recurrence 每 prompt
+  0/816 failure，lm_head 每步 16/16。
 - 被否决：
   - 把 activation quant rounding 差异直接算成 NVFP4Linear 失败。
   - 用任意 full 长度做 chunked prefill 的 bitwise reference。

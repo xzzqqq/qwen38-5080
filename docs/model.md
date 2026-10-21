@@ -142,10 +142,11 @@ NVFP4 权重合计 401 个 tensor（400 文本 + `lm_head`），逻辑参数 25.
 
 | 项 | 值 |
 |---|---|
-| 加载后（401 个 NVFP4Linear） | allocated 14.457 GB / reserved 14.556 GB |
-| 8K（7680 prompt + 512 decode）peak | **allocated 15.620 GB / reserved 15.859 GB** |
+| 加载 end/peak（401 个 NVFP4Linear） | allocated 14.457 / 14.457 GB；reserved 14.556 GB |
+| 8K prefill peak | **allocated 15.620 GB / reserved 15.859 GB** |
+| 8K decode peak | **allocated 15.423 GB**（512 步后） |
 | 8K 后 `mem_get_info()` free | **0.413 GB** |
-| 7680 prefill | 6.59 s（eager；GDN/conv 走 reference fallback） |
+| 7680 prefill | 6.57 s（eager；GDN/conv 走 reference fallback） |
 | 512 decode | 44.01 s，11.61 tok/s（M2 关闭复测；诊断值，不是性能 baseline） |
 
 这说明 baseline 能进 8K，但只剩约 0.4 GB 空闲；DFlash2 的容量会更紧。速度受 `causal_conv1d` / `flash-linear-attention` 未安装和 eager 路径影响，M2 不作为门槛。

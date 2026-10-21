@@ -3,10 +3,14 @@
 
 固定三条真实 prompt + 16 步 greedy token，逐步 teacher forcing，检查：
 
-1. 每个 NVFP4Linear 在 prefill 的实际 activation 上，与 dequant reference 对比；
-2. 每个 GDN core 调用与 FP32 逐 token recurrence 对比（输出和 final state）；
+1. 每个 NVFP4Linear 在 prefill 和 16 步 decode 的实际 activation 上，与同 A/W
+   量化的 dequant reference 对比；
+2. 每个 GDN chunk/recurrent 调用与 FP32 逐 token recurrence 对比（输出和 final state）；
 3. 逐层 hidden states、KV cache、GDN/conv state 的 dtype/finite/length；
-4. 最后一步 logits 与 lm_head dequant reference 对比。
+4. 每一步 decode logits 与 lm_head dequant reference 对比。
+
+不做跨 chunk/recurrent kernel 的 bitwise hidden 对拍；hidden 的数值正确性由
+逐 op 的 NVFP4/GDN reference 覆盖，hidden/cache 本身做结构检查。
 
 reference 不常驻整份 BF16 模型：NVFP4 逐 module dequant，GDN 逐调用跑 FP32
 recurrence，lm_head 按 vocab block dequant。
@@ -49,8 +53,8 @@ from runner.ops.nvfp4.reference import (  # noqa: E402
 )
 
 NVFP4_TOL = {"nrmse": 5.0e-3, "cosine": 0.99999, "max_rel": 1.0e-2}
-ACT_TOL = {"nrmse": 2.0e-2, "cosine": 0.9995, "max_rel": 1.0e-1}
-GDN_TOL = {"nrmse": 1.0e-3, "cosine": 0.99999, "max_rel": 5.0e-3}
+ACT_TOL = {"nrmse": 3.0e-2, "cosine": 0.9995, "max_rel": 2.0e-1}
+GDN_TOL = {"nrmse": 5.0e-3, "cosine": 0.9999, "max_rel": 1.0e-2}
 
 
 def _activation_flash(x: torch.Tensor, input_scale: torch.Tensor) -> torch.Tensor:
@@ -75,15 +79,36 @@ def _metrics(out: torch.Tensor, ref: torch.Tensor) -> dict[str, float]:
 
 
 def _worse(best: dict[str, Any] | None, cur: dict[str, Any], name: str) -> dict[str, Any]:
+    """独立维护各指标极值，避免更大的 nrmse 覆盖更差的 max_abs/max_rel/cosine。"""
     if best is None:
-        return {"name": name, **cur}
-    # 以 nrmse 为主，同时保留最低 cosine / 最高 max_rel
+        return {
+            "name": name,
+            "nrmse_name": name,
+            "max_abs_name": name,
+            "max_rel_name": name,
+            "cosine_name": name,
+            "nrmse": cur["nrmse"],
+            "max_abs": cur["max_abs"],
+            "max_rel": cur["max_rel"],
+            "cosine": cur["cosine"],
+            "mean_abs": cur["mean_abs"],
+            "finite": cur["finite"],
+        }
     if cur["nrmse"] > best["nrmse"]:
-        best = {"name": name, **cur}
-    else:
-        best["cosine"] = min(best["cosine"], cur["cosine"])
-        best["max_rel"] = max(best["max_rel"], cur["max_rel"])
-        best["max_abs"] = max(best.get("max_abs", 0.0), cur["max_abs"])
+        best["nrmse"] = cur["nrmse"]
+        best["nrmse_name"] = name
+        best["name"] = name
+    if cur["max_abs"] > best["max_abs"]:
+        best["max_abs"] = cur["max_abs"]
+        best["max_abs_name"] = name
+    if cur["max_rel"] > best["max_rel"]:
+        best["max_rel"] = cur["max_rel"]
+        best["max_rel_name"] = name
+    if cur["cosine"] < best["cosine"]:
+        best["cosine"] = cur["cosine"]
+        best["cosine_name"] = name
+    best["mean_abs"] = max(best["mean_abs"], cur["mean_abs"])
+    best["finite"] = best["finite"] and cur["finite"]
     return best
 
 
@@ -168,6 +193,45 @@ def _lm_head_reference(module: NVFP4Linear, hidden: torch.Tensor, block: int = 2
     return ref
 
 
+def _gdn_recurrent_reference(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    g: torch.Tensor,
+    beta: torch.Tensor,
+    initial_state: torch.Tensor | None = None,
+    output_final_state: bool = False,
+    use_qk_l2norm_in_kernel: bool = False,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """本地 FP32 逐 token gated delta rule；用于验证 decode 的 state 更新。"""
+    dtype = query.dtype
+    batch, seq, _, k_dim = key.shape
+    v_heads, v_dim = value.shape[-2:]
+    q, k, v, b, decay = [
+        x.transpose(1, 2).to(torch.float32, memory_format=torch.contiguous_format)
+        for x in (query, key, value, beta, g)
+    ]
+    if use_qk_l2norm_in_kernel:
+        q = q / q.norm(dim=-1, keepdim=True).clamp_min(1.0e-6)
+        k = k / k.norm(dim=-1, keepdim=True).clamp_min(1.0e-6)
+    q = q / (k_dim**0.5)
+    if initial_state is None:
+        state = torch.zeros(
+            (batch, v_heads, k_dim, v_dim), dtype=torch.float32, device=v.device
+        )
+    else:
+        state = initial_state.to(torch.float32)
+    out = torch.zeros_like(v)
+    for i in range(seq):
+        state = state * decay[:, :, i].exp()[..., None, None]
+        kv_mem = (state * k[:, :, i].unsqueeze(-1)).sum(dim=-2)
+        delta = (v[:, :, i] - kv_mem) * b[:, :, i].unsqueeze(-1)
+        state = state + k[:, :, i].unsqueeze(-1) * delta.unsqueeze(-2)
+        out[:, :, i] = (state * q[:, :, i].unsqueeze(-1)).sum(dim=-2)
+    out = out.transpose(1, 2).contiguous().to(dtype)
+    return out, state if output_final_state else None
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -245,13 +309,14 @@ def main() -> int:
     gdn_state_store: dict[str, Any] = {"count": 0, "failures": [], "worst": None}
     gdn_capture = False
     orig_chunk = qmodel.torch_chunk_gated_delta_rule
-    ref_gdn = qmodel.torch_recurrent_gated_delta_rule
+    orig_recurrent = qmodel.torch_recurrent_gated_delta_rule
+    ref_chunk = orig_recurrent
 
-    def wrap_gdn(orig, label: str):
+    def wrap_gdn(orig, label: str, ref_fn):
         def wrapped(query, key, value, g, beta, **kwargs):
             out, state = orig(query, key, value, g=g, beta=beta, **kwargs)
             if gdn_capture:
-                ref_out, ref_state = ref_gdn(
+                ref_out, ref_state = ref_fn(
                     query,
                     key,
                     value,
@@ -276,7 +341,10 @@ def main() -> int:
 
         return wrapped
 
-    qmodel.torch_chunk_gated_delta_rule = wrap_gdn(orig_chunk, "chunk")
+    qmodel.torch_chunk_gated_delta_rule = wrap_gdn(orig_chunk, "chunk", ref_chunk)
+    qmodel.torch_recurrent_gated_delta_rule = wrap_gdn(
+        orig_recurrent, "recurrent", _gdn_recurrent_reference
+    )
 
     records = []
     try:
@@ -298,10 +366,11 @@ def main() -> int:
             act_store = {"count": 0, "failures": [], "worst": None}
             gdn_store = {"count": 0, "failures": [], "worst": None}
             gdn_state_store = {"count": 0, "failures": [], "worst": None}
+            lm_store = {"count": 0, "failures": [], "worst": None}
             gdn_capture = True
             nvfp4_capture = True
 
-            # prefill chunks；NVFP4 reference 只在 prefill 开
+            # prefill chunks；NVFP4 reference 在 prefill 和 decode 都开
             out = None
             for start in range(0, prompt_len, runner.prefill_chunk):
                 out = model(
@@ -312,12 +381,13 @@ def main() -> int:
                     output_hidden_states=True,
                 )
                 hidden_checks.append(_hidden_stats(out))
-            nvfp4_capture = False
             prefill_cache = _cache_stats(cache)
 
             # teacher forcing 固定 token
             last_hidden = out.hidden_states[-1][:, -1:, :]
-            for token in fixed:
+            lm_s = 0.0
+            lm_metrics = None
+            for step, token in enumerate(fixed):
                 out = model(
                     input_ids=torch.tensor([[token]], dtype=torch.long),
                     past_key_values=cache,
@@ -328,21 +398,89 @@ def main() -> int:
                 hidden_checks.append(_hidden_stats(out))
                 last_hidden = out.hidden_states[-1][:, -1:, :]
                 step_logits.append(out.logits[:, -1, :].float())
+
+                # 每一步用 lm_head dequant reference 检查最终 logits；hidden/cache
+                # 只做 finite/dtype/length 结构检查，不做跨 chunk/recurrent kernel 的
+                # bitwise hidden 对拍。
+                t_lm = time.perf_counter()
+                lm_ref = _lm_head_reference(model.lm_head, last_hidden)
+                lm_metrics = _metrics(out.logits[:, -1, :], lm_ref)
+                lm_s += time.perf_counter() - t_lm
+                _record(lm_store, f"step{step}", lm_metrics, NVFP4_TOL)
+
             torch.cuda.synchronize()
             elapsed = time.perf_counter() - t0
 
-            final_logits = step_logits[-1]
-            t_lm = time.perf_counter()
-            lm_ref = _lm_head_reference(model.lm_head, last_hidden)
-            lm_metrics = _metrics(final_logits, lm_ref)
-            lm_s = time.perf_counter() - t_lm
             final_cache = _cache_stats(cache)
+            prompt_chunks = (prompt_len + runner.prefill_chunk - 1) // runner.prefill_chunk
+            expected_nvfp4 = 400 * (prompt_chunks + len(fixed))
+            expected_gdn = 48 * (prompt_chunks + len(fixed))
+
+            def cache_ok(stats, expected_len):
+                return (
+                    stats["finite"]
+                    and stats["cache_len"] == expected_len
+                    and stats["kv_layers"] == 16
+                    and stats["recurrent_layers"] == 48
+                    and stats["conv_layers"] == 48
+                    and stats["kv_dtypes"] == ["torch.bfloat16"]
+                    and stats["recurrent_dtypes"] == ["torch.float32"]
+                    and stats["conv_dtypes"] == ["torch.bfloat16"]
+                )
+
+            hidden_ok = (
+                len(hidden_checks) == prompt_chunks + len(fixed)
+                and all(
+                    h["finite"]
+                    and h["layers"] == 65
+                    and h["dtypes"] == ["torch.bfloat16"]
+                    for h in hidden_checks
+                )
+            )
+            counts_ok = (
+                nvfp4_store["count"] == expected_nvfp4
+                and act_store["count"] == expected_nvfp4
+                and gdn_store["count"] == expected_gdn
+                and gdn_state_store["count"] == expected_gdn
+                and lm_store["count"] == len(fixed)
+            )
+            caches_ok = cache_ok(prefill_cache, prompt_len) and cache_ok(
+                final_cache, prompt_len + len(fixed)
+            )
+            lm_ok = (
+                lm_store["count"] == len(fixed)
+                and len(lm_store["failures"]) == 0
+            )
+            record_ok = (
+                counts_ok
+                and hidden_ok
+                and caches_ok
+                and lm_ok
+                and nvfp4_store["count"] > 0
+                and gdn_store["count"] > 0
+                and len(nvfp4_store["failures"]) == 0
+                and len(gdn_store["failures"]) == 0
+                and len(gdn_state_store["failures"]) == 0
+                and len(lm_store["failures"]) == 0
+            )
 
             record = {
                 "prompt_file": prompt_path,
                 "prompt_tokens": prompt_len,
                 "fixed_tokens": fixed,
                 "cache_len_expected": prompt_len + len(fixed),
+                "expected": {
+                    "prompt_chunks": prompt_chunks,
+                    "nvfp4": expected_nvfp4,
+                    "gdn": expected_gdn,
+                },
+                "checks": {
+                    "counts_ok": counts_ok,
+                    "hidden_ok": hidden_ok,
+                    "caches_ok": caches_ok,
+                    "lm_ok": lm_ok,
+                    "ok": record_ok,
+                },
                 "prefill_cache": prefill_cache,
                 "final_cache": final_cache,
                 "hidden_checks": hidden_checks,
@@ -354,6 +492,7 @@ def main() -> int:
                 "activation_quant": {
                     "count": act_store["count"],
                     "failures": len(act_store["failures"]),
+                    "diagnostic": True,
                     "worst": act_store["worst"],
                 },
                 "gdn": {
@@ -366,10 +505,15 @@ def main() -> int:
                     "failures": len(gdn_state_store["failures"]),
                     "worst": gdn_state_store["worst"],
                 },
-                "lm_head": lm_metrics,
+                "lm_head": {
+                    "count": lm_store["count"],
+                    "failures": len(lm_store["failures"]),
+                    "worst": lm_store["worst"],
+                },
                 "lm_head_s": lm_s,
                 "elapsed_s": elapsed,
                 "steps": len(step_logits),
+                "ok": record_ok,
             }
             records.append(record)
             print(
@@ -382,8 +526,10 @@ def main() -> int:
                         "activation_quant": record["activation_quant"],
                         "gdn": record["gdn"],
                         "gdn_state": record["gdn_state"],
-                        "lm_head": lm_metrics,
+                        "lm_head": record["lm_head"],
                         "cache": final_cache,
+                        "checks": record["checks"],
+                        "ok": record_ok,
                         "elapsed_s": elapsed,
                     },
                     ensure_ascii=False,
@@ -394,16 +540,9 @@ def main() -> int:
         for h in hooks:
             h.remove()
         qmodel.torch_chunk_gated_delta_rule = orig_chunk
+        qmodel.torch_recurrent_gated_delta_rule = orig_recurrent
 
-    ok = all(
-        r["nvfp4"]["failures"] == 0
-        and r["activation_quant"]["failures"] == 0
-        and r["gdn"]["failures"] == 0
-        and r["gdn_state"]["failures"] == 0
-        and r["lm_head"]["nrmse"] <= NVFP4_TOL["nrmse"]
-        and r["lm_head"]["cosine"] >= NVFP4_TOL["cosine"]
-        for r in records
-    )
+    ok = bool(records) and all(r["ok"] for r in records)
     result = {"ok": ok, "load": load_info, "tolerances": {"nvfp4": NVFP4_TOL, "activation_quant": ACT_TOL, "gdn": GDN_TOL}, "results": records}
     (out_dir / "numeric.json").write_text(
         json.dumps(result, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"

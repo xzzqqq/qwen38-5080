@@ -1,0 +1,25 @@
+run_id: 20261021T135649
+load: {'load_s': 1.3579277992248535, 'manifest': '/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json', 'quantized_linears': 401, 'high_precision_tensors': 449, 'shape_stable_linears': 96, 'skipped_unused': 0, 'gpu_allocated_gb': 14.45758976, 'gpu_reserved_gb': 14.556332032, 'gpu_free_gb': 1.727922176, 'gpu_total_gb': 16.609509376, 'load_peak_allocated_gb': 14.45758976, 'load_peak_reserved_gb': 14.556332032}
+
+depth=512 n_decode=512
+  cache_len=1023
+  prefill_s=0.700
+  decode_s=43.894 (11.64 tok/s)
+  cache_len_ok=True finite=True ok=True
+  state_dtypes={'finite': True, 'kv_layers': 16, 'recurrent_layers': 48, 'conv_layers': 48, 'kv_dtypes': ['torch.bfloat16'], 'recurrent_dtypes': ['torch.float32'], 'conv_dtypes': ['torch.bfloat16']}
+  load_end_gb=14.458/14.556
+  load_peak_gb=14.458/14.556
+  prefill_peak_gb=14.776 decode_peak_gb=14.775
+  reserved_gb=14.915 free_gb=1.357
+
+depth=7680 n_decode=512
+  cache_len=8191
+  prefill_s=6.574
+  decode_s=44.007 (11.61 tok/s)
+  cache_len_ok=True finite=True ok=True
+  state_dtypes={'finite': True, 'kv_layers': 16, 'recurrent_layers': 48, 'conv_layers': 48, 'kv_dtypes': ['torch.bfloat16'], 'recurrent_dtypes': ['torch.float32'], 'conv_dtypes': ['torch.bfloat16']}
+  load_end_gb=14.458/14.556
+  load_peak_gb=14.458/14.556
+  prefill_peak_gb=15.620 decode_peak_gb=15.423
+  reserved_gb=15.859 free_gb=0.413
+

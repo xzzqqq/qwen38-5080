@@ -1,0 +1,92 @@
+{
+  "load": {
+    "load_s": 1.3579277992248535,
+    "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+    "quantized_linears": 401,
+    "high_precision_tensors": 449,
+    "shape_stable_linears": 96,
+    "skipped_unused": 0,
+    "gpu_allocated_gb": 14.45758976,
+    "gpu_reserved_gb": 14.556332032,
+    "gpu_free_gb": 1.727922176,
+    "gpu_total_gb": 16.609509376,
+    "load_peak_allocated_gb": 14.45758976,
+    "load_peak_reserved_gb": 14.556332032
+  },
+  "results": [
+    {
+      "depth": 512,
+      "n_decode": 512,
+      "prompt_tokens": 512,
+      "cache_len": 1023,
+      "cache_len_expected": 1023,
+      "cache_len_ok": true,
+      "finite": true,
+      "cache_stats": {
+        "finite": true,
+        "kv_layers": 16,
+        "recurrent_layers": 48,
+        "conv_layers": 48,
+        "kv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "recurrent_dtypes": [
+          "torch.float32"
+        ],
+        "conv_dtypes": [
+          "torch.bfloat16"
+        ]
+      },
+      "ok": true,
+      "load_allocated_gb": 14.45758976,
+      "load_reserved_gb": 14.556332032,
+      "load_peak_allocated_gb": 14.45758976,
+      "load_peak_reserved_gb": 14.556332032,
+      "prefill_s": 0.6996512461919338,
+      "decode_s": 43.894231665180996,
+      "decode_tok_s": 11.641620791949062,
+      "prefill_peak_gb": 14.776388096,
+      "decode_peak_gb": 14.775430144,
+      "final_peak_gb": 14.776388096,
+      "reserved_gb": 14.914945024,
+      "free_gb": 1.356726272
+    },
+    {
+      "depth": 7680,
+      "n_decode": 512,
+      "prompt_tokens": 7680,
+      "cache_len": 8191,
+      "cache_len_expected": 8191,
+      "cache_len_ok": true,
+      "finite": true,
+      "cache_stats": {
+        "finite": true,
+        "kv_layers": 16,
+        "recurrent_layers": 48,
+        "conv_layers": 48,
+        "kv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "recurrent_dtypes": [
+          "torch.float32"
+        ],
+        "conv_dtypes": [
+          "torch.bfloat16"
+        ]
+      },
+      "ok": true,
+      "load_allocated_gb": 14.45758976,
+      "load_reserved_gb": 14.556332032,
+      "load_peak_allocated_gb": 14.45758976,
+      "load_peak_reserved_gb": 14.556332032,
+      "prefill_s": 6.573593802051619,
+      "decode_s": 44.00663804379292,
+      "decode_tok_s": 11.611884540952246,
+      "prefill_peak_gb": 15.620007936,
+      "decode_peak_gb": 15.423087616,
+      "final_peak_gb": 15.620007936,
+      "reserved_gb": 15.858663424,
+      "free_gb": 0.413007872
+    }
+  ]
+}
