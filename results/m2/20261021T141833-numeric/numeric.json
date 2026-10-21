@@ -1,0 +1,1004 @@
+{
+  "ok": true,
+  "load": {
+    "load_s": 1.3598315715789795,
+    "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+    "quantized_linears": 401,
+    "high_precision_tensors": 449,
+    "shape_stable_linears": 96,
+    "skipped_unused": 0,
+    "gpu_allocated_gb": 14.45758976,
+    "gpu_reserved_gb": 14.556332032,
+    "gpu_free_gb": 1.727922176,
+    "gpu_total_gb": 16.609509376
+  },
+  "tolerances": {
+    "nvfp4": {
+      "nrmse": 0.005,
+      "cosine": 0.99999,
+      "max_rel": 0.01
+    },
+    "activation_quant": {
+      "nrmse": 0.03,
+      "cosine": 0.9995,
+      "max_rel": 0.2
+    },
+    "gdn": {
+      "nrmse": 0.001,
+      "cosine": 0.99999,
+      "max_rel": 0.005
+    }
+  },
+  "results": [
+    {
+      "prompt_file": "results/payload_math.json",
+      "prompt_tokens": 90,
+      "fixed_tokens": [
+        1596,
+        1144,
+        4087,
+        4145,
+        33633,
+        13,
+        14235,
+        1534,
+        13,
+        21397,
+        25,
+        5632,
+        220,
+        19,
+        23,
+        13
+      ],
+      "cache_len_expected": 106,
+      "expected": {
+        "prompt_chunks": 1,
+        "nvfp4": 6800,
+        "gdn": 816
+      },
+      "checks": {
+        "counts_ok": true,
+        "hidden_ok": true,
+        "caches_ok": true,
+        "lm_ok": true,
+        "ok": true
+      },
+      "prefill_cache": {
+        "cache_len": 90,
+        "finite": true,
+        "kv_layers": 16,
+        "recurrent_layers": 48,
+        "conv_layers": 48,
+        "kv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "recurrent_dtypes": [
+          "torch.float32"
+        ],
+        "conv_dtypes": [
+          "torch.bfloat16"
+        ]
+      },
+      "final_cache": {
+        "cache_len": 106,
+        "finite": true,
+        "kv_layers": 16,
+        "recurrent_layers": 48,
+        "conv_layers": 48,
+        "kv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "recurrent_dtypes": [
+          "torch.float32"
+        ],
+        "conv_dtypes": [
+          "torch.bfloat16"
+        ]
+      },
+      "hidden_checks": [
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        }
+      ],
+      "nvfp4": {
+        "count": 6800,
+        "failures": 0,
+        "worst": {
+          "name": "5120x17408",
+          "nrmse_name": "5120x17408",
+          "max_abs_name": "5120x17408",
+          "max_rel_name": "5120x6144",
+          "cosine_name": "5120x6144",
+          "nrmse": 0.0032223674934357405,
+          "max_abs": 1.6495361328125,
+          "max_rel": 0.003830019850283861,
+          "cosine": 0.999997615814209,
+          "mean_abs": 0.005960802081972361,
+          "finite": true
+        }
+      },
+      "activation_quant": {
+        "count": 6800,
+        "failures": 6,
+        "worst": {
+          "name": "model.layers.57.mlp.gate_proj:act",
+          "nrmse_name": "model.layers.57.mlp.gate_proj:act",
+          "max_abs_name": "model.layers.57.mlp.gate_proj:act",
+          "max_rel_name": "model.layers.43.self_attn.o_proj:act",
+          "cosine_name": "model.layers.57.mlp.gate_proj:act",
+          "nrmse": 0.05867530032992363,
+          "max_abs": 2.75,
+          "max_rel": 0.1818181872367859,
+          "cosine": 0.9983630180358887,
+          "mean_abs": 0.0023582458961755037,
+          "finite": true
+        },
+        "diagnostic": true,
+        "samples": [
+          {
+            "name": "model.layers.38.mlp.gate_proj",
+            "metrics": {
+              "max_abs": 2.40625,
+              "mean_abs": 0.0008544921875,
+              "nrmse": 0.048565302044153214,
+              "cosine": 0.9988201260566711,
+              "max_rel": 0.0833333358168602,
+              "finite": true
+            },
+            "scale_max_abs": 0.0,
+            "code_mismatch": 10
+          },
+          {
+            "name": "model.layers.38.mlp.up_proj",
+            "metrics": {
+              "max_abs": 2.40625,
+              "mean_abs": 0.0008544921875,
+              "nrmse": 0.048565302044153214,
+              "cosine": 0.9988201260566711,
+              "max_rel": 0.0833333358168602,
+              "finite": true
+            },
+            "scale_max_abs": 0.0,
+            "code_mismatch": 10
+          },
+          {
+            "name": "model.layers.38.mlp.gate_proj",
+            "metrics": {
+              "max_abs": 2.625,
+              "mean_abs": 0.001041412353515625,
+              "nrmse": 0.0543229803442955,
+              "cosine": 0.9985237717628479,
+              "max_rel": 0.0833333358168602,
+              "finite": true
+            },
+            "scale_max_abs": 0.0,
+            "code_mismatch": 15
+          },
+          {
+            "name": "model.layers.38.mlp.up_proj",
+            "metrics": {
+              "max_abs": 2.625,
+              "mean_abs": 0.001041412353515625,
+              "nrmse": 0.0543229803442955,
+              "cosine": 0.9985237717628479,
+              "max_rel": 0.0833333358168602,
+              "finite": true
+            },
+            "scale_max_abs": 0.0,
+            "code_mismatch": 15
+          },
+          {
+            "name": "model.layers.57.mlp.gate_proj",
+            "metrics": {
+              "max_abs": 2.75,
+              "mean_abs": 0.0023582458961755037,
+              "nrmse": 0.05867530032992363,
+              "cosine": 0.9983630180358887,
+              "max_rel": 0.125,
+              "finite": true
+            },
+            "scale_max_abs": 32.0,
+            "code_mismatch": 10
+          }
+        ]
+      },
+      "gdn": {
+        "count": 816,
+        "failures": 0,
+        "worst": {
+          "name": "chunk:seq90",
+          "nrmse_name": "chunk:seq90",
+          "max_abs_name": "chunk:seq90",
+          "max_rel_name": "chunk:seq90",
+          "cosine_name": "recurrent:seq1",
+          "nrmse": 0.00015145621728152037,
+          "max_abs": 0.00048828125,
+          "max_rel": 0.0034722222480922937,
+          "cosine": 0.9999997615814209,
+          "mean_abs": 1.4048371355102063e-09,
+          "finite": true
+        }
+      },
+      "gdn_state": {
+        "count": 816,
+        "failures": 0,
+        "worst": {
+          "name": "chunk:seq90:state",
+          "nrmse_name": "chunk:seq90:state",
+          "max_abs_name": "chunk:seq90:state",
+          "max_rel_name": "chunk:seq90:state",
+          "cosine_name": "recurrent:seq1:state",
+          "nrmse": 7.895486646702921e-07,
+          "max_abs": 1.52587890625e-05,
+          "max_rel": 1.5023812238723622e-06,
+          "cosine": 0.9999997615814209,
+          "mean_abs": 7.191235162906651e-09,
+          "finite": true
+        }
+      },
+      "lm_head": {
+        "count": 16,
+        "failures": 0,
+        "worst": {
+          "name": "step11",
+          "nrmse_name": "step11",
+          "max_abs_name": "step13",
+          "max_rel_name": "step5",
+          "cosine_name": "step15",
+          "nrmse": 0.0016700878040865064,
+          "max_abs": 0.07023239135742188,
+          "max_rel": 0.002838416490703821,
+          "cosine": 0.9999985098838806,
+          "mean_abs": 0.006017760373651981,
+          "finite": true
+        }
+      },
+      "lm_head_s": 2.232739065773785,
+      "elapsed_s": 45.456894628936425,
+      "steps": 16,
+      "ok": true
+    },
+    {
+      "prompt_file": "results/payload_code.json",
+      "prompt_tokens": 84,
+      "fixed_tokens": [
+        1596,
+        1144,
+        4087,
+        1156,
+        579,
+        1622,
+        25,
+        9357,
+        12654,
+        709,
+        369,
+        70817,
+        34864,
+        1104,
+        8,
+        4523
+      ],
+      "cache_len_expected": 100,
+      "expected": {
+        "prompt_chunks": 1,
+        "nvfp4": 6800,
+        "gdn": 816
+      },
+      "checks": {
+        "counts_ok": true,
+        "hidden_ok": true,
+        "caches_ok": true,
+        "lm_ok": true,
+        "ok": true
+      },
+      "prefill_cache": {
+        "cache_len": 84,
+        "finite": true,
+        "kv_layers": 16,
+        "recurrent_layers": 48,
+        "conv_layers": 48,
+        "kv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "recurrent_dtypes": [
+          "torch.float32"
+        ],
+        "conv_dtypes": [
+          "torch.bfloat16"
+        ]
+      },
+      "final_cache": {
+        "cache_len": 100,
+        "finite": true,
+        "kv_layers": 16,
+        "recurrent_layers": 48,
+        "conv_layers": 48,
+        "kv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "recurrent_dtypes": [
+          "torch.float32"
+        ],
+        "conv_dtypes": [
+          "torch.bfloat16"
+        ]
+      },
+      "hidden_checks": [
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        }
+      ],
+      "nvfp4": {
+        "count": 6800,
+        "failures": 0,
+        "worst": {
+          "name": "5120x6144",
+          "nrmse_name": "5120x6144",
+          "max_abs_name": "5120x17408",
+          "max_rel_name": "5120x17408",
+          "cosine_name": "5120x17408",
+          "nrmse": 0.0035885327961295843,
+          "max_abs": 1.6495361328125,
+          "max_rel": 0.0038386487867683172,
+          "cosine": 0.9999974966049194,
+          "mean_abs": 0.005585205741226673,
+          "finite": true
+        }
+      },
+      "activation_quant": {
+        "count": 6800,
+        "failures": 2,
+        "worst": {
+          "name": "model.layers.10.mlp.gate_proj:act",
+          "nrmse_name": "model.layers.10.mlp.gate_proj:act",
+          "max_abs_name": "model.layers.53.linear_attn.in_proj_qkv:act",
+          "max_rel_name": "model.layers.53.mlp.gate_proj:act",
+          "cosine_name": "model.layers.10.mlp.gate_proj:act",
+          "nrmse": 0.026139164343476295,
+          "max_abs": 2.4375,
+          "max_rel": 0.20000001788139343,
+          "cosine": 0.9996588230133057,
+          "mean_abs": 0.0017316181911155581,
+          "finite": true
+        },
+        "diagnostic": true,
+        "samples": [
+          {
+            "name": "model.layers.53.mlp.gate_proj",
+            "metrics": {
+              "max_abs": 0.78125,
+              "mean_abs": 0.000400543212890625,
+              "nrmse": 0.012582768686115742,
+              "cosine": 0.9999209046363831,
+              "max_rel": 0.20000001788139343,
+              "finite": true
+            },
+            "scale_max_abs": 0.0,
+            "code_mismatch": 6
+          },
+          {
+            "name": "model.layers.53.mlp.up_proj",
+            "metrics": {
+              "max_abs": 0.78125,
+              "mean_abs": 0.000400543212890625,
+              "nrmse": 0.012582768686115742,
+              "cosine": 0.9999209046363831,
+              "max_rel": 0.20000001788139343,
+              "finite": true
+            },
+            "scale_max_abs": 0.0,
+            "code_mismatch": 6
+          }
+        ]
+      },
+      "gdn": {
+        "count": 816,
+        "failures": 0,
+        "worst": {
+          "name": "chunk:seq84",
+          "nrmse_name": "chunk:seq84",
+          "max_abs_name": "chunk:seq84",
+          "max_rel_name": "chunk:seq84",
+          "cosine_name": "recurrent:seq1",
+          "nrmse": 5.5390759371221066e-05,
+          "max_abs": 6.103515625e-05,
+          "max_rel": 0.0005319148767739534,
+          "cosine": 0.9999997019767761,
+          "mean_abs": 4.798087482882352e-10,
+          "finite": true
+        }
+      },
+      "gdn_state": {
+        "count": 816,
+        "failures": 0,
+        "worst": {
+          "name": "chunk:seq84:state",
+          "nrmse_name": "chunk:seq84:state",
+          "max_abs_name": "chunk:seq84:state",
+          "max_rel_name": "chunk:seq84:state",
+          "cosine_name": "recurrent:seq1:state",
+          "nrmse": 7.135377018130384e-07,
+          "max_abs": 1.811981201171875e-05,
+          "max_rel": 1.3060860055702506e-06,
+          "cosine": 0.9999997615814209,
+          "mean_abs": 6.714488076653424e-09,
+          "finite": true
+        }
+      },
+      "lm_head": {
+        "count": 16,
+        "failures": 0,
+        "worst": {
+          "name": "step7",
+          "nrmse_name": "step7",
+          "max_abs_name": "step8",
+          "max_rel_name": "step8",
+          "cosine_name": "step6",
+          "nrmse": 0.0016715654637664557,
+          "max_abs": 0.10710906982421875,
+          "max_rel": 0.0032317359000444412,
+          "cosine": 0.9999985098838806,
+          "mean_abs": 0.0055652791634202,
+          "finite": true
+        }
+      },
+      "lm_head_s": 2.2331385291181505,
+      "elapsed_s": 45.37577177817002,
+      "steps": 16,
+      "ok": true
+    },
+    {
+      "prompt_file": "results/payload_chat.json",
+      "prompt_tokens": 72,
+      "fixed_tokens": [
+        1596,
+        1144,
+        4087,
+        1156,
+        25,
+        328,
+        623,
+        2250,
+        22157,
+        11,
+        10033,
+        3069,
+        436,
+        10673,
+        16401,
+        506
+      ],
+      "cache_len_expected": 88,
+      "expected": {
+        "prompt_chunks": 1,
+        "nvfp4": 6800,
+        "gdn": 816
+      },
+      "checks": {
+        "counts_ok": true,
+        "hidden_ok": true,
+        "caches_ok": true,
+        "lm_ok": true,
+        "ok": true
+      },
+      "prefill_cache": {
+        "cache_len": 72,
+        "finite": true,
+        "kv_layers": 16,
+        "recurrent_layers": 48,
+        "conv_layers": 48,
+        "kv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "recurrent_dtypes": [
+          "torch.float32"
+        ],
+        "conv_dtypes": [
+          "torch.bfloat16"
+        ]
+      },
+      "final_cache": {
+        "cache_len": 88,
+        "finite": true,
+        "kv_layers": 16,
+        "recurrent_layers": 48,
+        "conv_layers": 48,
+        "kv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "recurrent_dtypes": [
+          "torch.float32"
+        ],
+        "conv_dtypes": [
+          "torch.bfloat16"
+        ]
+      },
+      "hidden_checks": [
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        },
+        {
+          "layers": 65,
+          "finite": true,
+          "dtypes": [
+            "torch.bfloat16"
+          ]
+        }
+      ],
+      "nvfp4": {
+        "count": 6800,
+        "failures": 0,
+        "worst": {
+          "name": "5120x6144",
+          "nrmse_name": "5120x6144",
+          "max_abs_name": "5120x17408",
+          "max_rel_name": "17408x5120",
+          "cosine_name": "5120x17408",
+          "nrmse": 0.0032949652522802353,
+          "max_abs": 1.6495361328125,
+          "max_rel": 0.003876730799674988,
+          "cosine": 0.999997615814209,
+          "mean_abs": 0.005708471406251192,
+          "finite": true
+        }
+      },
+      "activation_quant": {
+        "count": 6800,
+        "failures": 3,
+        "worst": {
+          "name": "model.layers.10.mlp.gate_proj:act",
+          "nrmse_name": "model.layers.10.mlp.gate_proj:act",
+          "max_abs_name": "model.layers.54.mlp.down_proj:act",
+          "max_rel_name": "model.layers.53.mlp.gate_proj:act",
+          "cosine_name": "model.layers.10.mlp.gate_proj:act",
+          "nrmse": 0.0578058585524559,
+          "max_abs": 1.4285712242126465,
+          "max_rel": 0.1666666716337204,
+          "cosine": 0.9985285997390747,
+          "mean_abs": 0.0019917807076126337,
+          "finite": true
+        },
+        "diagnostic": true,
+        "samples": [
+          {
+            "name": "model.layers.48.mlp.down_proj",
+            "metrics": {
+              "max_abs": 0.8928565979003906,
+              "mean_abs": 0.00025511448620818555,
+              "nrmse": 0.03240188583731651,
+              "cosine": 0.9995197057723999,
+              "max_rel": 0.09090904146432877,
+              "finite": true
+            },
+            "scale_max_abs": 8.0,
+            "code_mismatch": 31
+          },
+          {
+            "name": "model.layers.10.mlp.gate_proj",
+            "metrics": {
+              "max_abs": 0.6875,
+              "mean_abs": 0.0005860647070221603,
+              "nrmse": 0.0578058585524559,
+              "cosine": 0.9985285997390747,
+              "max_rel": 0.125,
+              "finite": true
+            },
+            "scale_max_abs": 32.0,
+            "code_mismatch": 17
+          },
+          {
+            "name": "model.layers.10.mlp.up_proj",
+            "metrics": {
+              "max_abs": 0.6875,
+              "mean_abs": 0.0005860647070221603,
+              "nrmse": 0.0578058585524559,
+              "cosine": 0.9985285997390747,
+              "max_rel": 0.125,
+              "finite": true
+            },
+            "scale_max_abs": 32.0,
+            "code_mismatch": 17
+          }
+        ]
+      },
+      "gdn": {
+        "count": 816,
+        "failures": 0,
+        "worst": {
+          "name": "chunk:seq72",
+          "nrmse_name": "chunk:seq72",
+          "max_abs_name": "chunk:seq72",
+          "max_rel_name": "chunk:seq72",
+          "cosine_name": "recurrent:seq1",
+          "nrmse": 0.00010196078073931858,
+          "max_abs": 0.0078125,
+          "max_rel": 0.0020242915488779545,
+          "cosine": 0.9999997615814209,
+          "mean_abs": 1.7871251145606948e-08,
+          "finite": true
+        }
+      },
+      "gdn_state": {
+        "count": 816,
+        "failures": 0,
+        "worst": {
+          "name": "chunk:seq72:state",
+          "nrmse_name": "chunk:seq72:state",
+          "max_abs_name": "chunk:seq72:state",
+          "max_rel_name": "chunk:seq72:state",
+          "cosine_name": "recurrent:seq1:state",
+          "nrmse": 6.001501446917246e-07,
+          "max_abs": 1.811981201171875e-05,
+          "max_rel": 1.2616740150406258e-06,
+          "cosine": 0.9999997615814209,
+          "mean_abs": 6.2543938916803654e-09,
+          "finite": true
+        }
+      },
+      "lm_head": {
+        "count": 16,
+        "failures": 0,
+        "worst": {
+          "name": "step2",
+          "nrmse_name": "step2",
+          "max_abs_name": "step9",
+          "max_rel_name": "step8",
+          "cosine_name": "step1",
+          "nrmse": 0.0016685840673744678,
+          "max_abs": 0.06246376037597656,
+          "max_rel": 0.002080661477521062,
+          "cosine": 0.9999985694885254,
+          "mean_abs": 0.006496284622699022,
+          "finite": true
+        }
+      },
+      "lm_head_s": 2.199741526506841,
+      "elapsed_s": 44.88924892805517,
+      "steps": 16,
+      "ok": true
+    }
+  ]
+}

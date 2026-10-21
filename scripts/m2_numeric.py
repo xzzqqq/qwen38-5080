@@ -23,6 +23,7 @@ recurrence，lm_head 按 vocab block dequant。
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import sys
 import time
@@ -49,16 +50,17 @@ from runner.ops.nvfp4.reference import (  # noqa: E402
     dequant_nvfp4,
     error_metrics,
     quantize_activation_reference,
+    unpack_e2m1,
     unswizzle_scale_128x4,
 )
 
 NVFP4_TOL = {"nrmse": 5.0e-3, "cosine": 0.99999, "max_rel": 1.0e-2}
 ACT_TOL = {"nrmse": 3.0e-2, "cosine": 0.9995, "max_rel": 2.0e-1}
-GDN_TOL = {"nrmse": 5.0e-3, "cosine": 0.9999, "max_rel": 1.0e-2}
+GDN_TOL = {"nrmse": 1.0e-3, "cosine": 0.99999, "max_rel": 5.0e-3}
 
 
-def _activation_flash(x: torch.Tensor, input_scale: torch.Tensor) -> torch.Tensor:
-    """用 FlashInfer 的 A 量化结果做 dequant；只用于验证 W layout/GEMM。"""
+def _activation_flash_meta(x: torch.Tensor, input_scale: torch.Tensor):
+    """用 FlashInfer 的 A 量化结果做 dequant，并返回 codes/scale 供诊断。"""
     k = x.shape[-1]
     flat = x.reshape(-1, k).contiguous()
     a_fp4, a_sf = nvfp4_quantize(
@@ -71,7 +73,11 @@ def _activation_flash(x: torch.Tensor, input_scale: torch.Tensor) -> torch.Tenso
     if a_sf.dtype == torch.uint8:
         a_sf = a_sf.view(torch.float8_e4m3fn)
     scale = unswizzle_scale_128x4(a_sf, flat.shape[0], k // 16)
-    return dequant_nvfp4(a_fp4, scale, input_scale)
+    return dequant_nvfp4(a_fp4, scale, input_scale), a_fp4, scale
+
+
+def _activation_flash(x: torch.Tensor, input_scale: torch.Tensor) -> torch.Tensor:
+    return _activation_flash_meta(x, input_scale)[0]
 
 
 def _metrics(out: torch.Tensor, ref: torch.Tensor) -> dict[str, float]:
@@ -123,6 +129,16 @@ def _record(store: dict[str, Any], name: str, metrics: dict[str, float], tol: di
     )
     if not ok:
         store["failures"].append({"name": name, **metrics})
+    return ok
+
+
+def _snapshot(store: dict[str, Any]) -> dict[str, Any]:
+    """保存独立快照，避免下一条 prompt 的 capture 改写已保存记录。"""
+    return {
+        "count": store["count"],
+        "failures": len(store["failures"]),
+        "worst": copy.deepcopy(store["worst"]),
+    }
 
 
 def _cache_stats(cache: DynamicCache) -> dict[str, Any]:
@@ -212,8 +228,9 @@ def _gdn_recurrent_reference(
         for x in (query, key, value, beta, g)
     ]
     if use_qk_l2norm_in_kernel:
-        q = q / q.norm(dim=-1, keepdim=True).clamp_min(1.0e-6)
-        k = k / k.norm(dim=-1, keepdim=True).clamp_min(1.0e-6)
+        # 与上游 l2norm 一致：x * rsqrt(sum(x^2) + eps)，不是 x / max(norm, eps)。
+        q = q * torch.rsqrt((q * q).sum(dim=-1, keepdim=True) + 1.0e-6)
+        k = k * torch.rsqrt((k * k).sum(dim=-1, keepdim=True) + 1.0e-6)
     q = q / (k_dim**0.5)
     if initial_state is None:
         state = torch.zeros(
@@ -255,11 +272,11 @@ def main() -> int:
 
     # --- hooks: NVFP4 dequant reference (prefill only) ---
     nvfp4_store: dict[str, Any] = {"count": 0, "failures": [], "worst": None}
-    act_store: dict[str, Any] = {"count": 0, "failures": [], "worst": None}
+    act_store: dict[str, Any] = {"count": 0, "failures": [], "worst": None, "samples": []}
     nvfp4_capture = False
     hooks = []
 
-    def make_hook(module: NVFP4Linear):
+    def make_hook(module: NVFP4Linear, module_name: str):
         def hook(_module, inputs, output):
             if not nvfp4_capture:
                 return
@@ -269,14 +286,22 @@ def main() -> int:
             scale = unswizzle_scale_128x4(
                 module.weight_scale_swizzled, n, k // 16
             )
-            a_deq = _activation_flash(x, module.input_scale)
-            _, _, a_ref = quantize_activation_reference(x, module.input_scale)
-            _record(
-                act_store,
-                f"{module.out_features}x{module.in_features}:act",
-                _metrics(a_deq, a_ref),
-                ACT_TOL,
-            )
+            a_deq, a_fp4, a_scale = _activation_flash_meta(x, module.input_scale)
+            packed_ref, sf_ref, a_ref = quantize_activation_reference(x, module.input_scale)
+            act_metrics = _metrics(a_deq, a_ref)
+            act_ok = _record(act_store, f"{module_name}:act", act_metrics, ACT_TOL)
+            if not act_ok and len(act_store["samples"]) < 5:
+                code_mismatch = int(
+                    (unpack_e2m1(a_fp4) != unpack_e2m1(packed_ref)).sum().item()
+                )
+                act_store["samples"].append(
+                    {
+                        "name": module_name,
+                        "metrics": act_metrics,
+                        "scale_max_abs": (a_scale.float() - sf_ref.float()).abs().max().item(),
+                        "code_mismatch": code_mismatch,
+                    }
+                )
             a = a_deq.reshape(-1, k).float()
             ref = torch.empty(a.shape[0], n, device=a.device, dtype=torch.float32)
             # 逐 output row block 反量化，避免 up_proj 的 FP32 权重一次占 300+ MB。
@@ -302,7 +327,7 @@ def main() -> int:
 
     for name, module in model.named_modules():
         if isinstance(module, NVFP4Linear) and module is not model.lm_head:
-            hooks.append(module.register_forward_hook(make_hook(module)))
+            hooks.append(module.register_forward_hook(make_hook(module, name)))
 
     # --- GDN FP32 recurrence reference ---
     gdn_store: dict[str, Any] = {"count": 0, "failures": [], "worst": None}
@@ -350,6 +375,9 @@ def main() -> int:
     try:
         for prompt_path in [p.strip() for p in args.prompts.split(",") if p.strip()]:
             payload = json.loads((ROOT / prompt_path).read_text())
+            # 生成固定 tokens 时关闭 capture，避免写入上一条的 store。
+            nvfp4_capture = False
+            gdn_capture = False
             prompt_ids = runner.encode_messages(payload["messages"])
             # 固定 greedy 16 步 token
             gen = runner.generate_ids(
@@ -363,7 +391,7 @@ def main() -> int:
             step_logits = []
             t0 = time.perf_counter()
             nvfp4_store = {"count": 0, "failures": [], "worst": None}
-            act_store = {"count": 0, "failures": [], "worst": None}
+            act_store = {"count": 0, "failures": [], "worst": None, "samples": []}
             gdn_store = {"count": 0, "failures": [], "worst": None}
             gdn_state_store = {"count": 0, "failures": [], "worst": None}
             lm_store = {"count": 0, "failures": [], "worst": None}
@@ -484,32 +512,15 @@ def main() -> int:
                 "prefill_cache": prefill_cache,
                 "final_cache": final_cache,
                 "hidden_checks": hidden_checks,
-                "nvfp4": {
-                    "count": nvfp4_store["count"],
-                    "failures": len(nvfp4_store["failures"]),
-                    "worst": nvfp4_store["worst"],
-                },
+                "nvfp4": _snapshot(nvfp4_store),
                 "activation_quant": {
-                    "count": act_store["count"],
-                    "failures": len(act_store["failures"]),
+                    **_snapshot(act_store),
                     "diagnostic": True,
-                    "worst": act_store["worst"],
+                    "samples": list(act_store["samples"]),
                 },
-                "gdn": {
-                    "count": gdn_store["count"],
-                    "failures": len(gdn_store["failures"]),
-                    "worst": gdn_store["worst"],
-                },
-                "gdn_state": {
-                    "count": gdn_state_store["count"],
-                    "failures": len(gdn_state_store["failures"]),
-                    "worst": gdn_state_store["worst"],
-                },
-                "lm_head": {
-                    "count": lm_store["count"],
-                    "failures": len(lm_store["failures"]),
-                    "worst": lm_store["worst"],
-                },
+                "gdn": _snapshot(gdn_store),
+                "gdn_state": _snapshot(gdn_state_store),
+                "lm_head": _snapshot(lm_store),
                 "lm_head_s": lm_s,
                 "elapsed_s": elapsed,
                 "steps": len(step_logits),

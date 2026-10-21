@@ -96,9 +96,10 @@
   - M2 以 `docs/journal/2026-10-21-m2-close.md` 的记录关闭；ShapeStableLinear
     保留，当前实现冻结给 M3 做 correctness reference。
   - runner 数值容差固定为：NVFP4Linear `nrmse ≤ 5e-3`、`cosine ≥ 0.99999`、
-    `max_rel ≤ 1e-2`；GDN `nrmse ≤ 5e-3`、`cosine ≥ 0.9999`、`max_rel ≤ 1e-2`。
-  - activation quant 的 PyTorch reference 与 FlashInfer 有少量 code 不同，
-    只作诊断，不参与退出判定；参考容差 `nrmse ≤ 3e-2`、`cosine ≥ 0.9995`、
+    `max_rel ≤ 1e-2`；GDN `nrmse ≤ 1e-3`、`cosine ≥ 0.99999`、`max_rel ≤ 5e-3`。
+  - activation quant 的 PyTorch reference 与 FlashInfer 在 FP8 scale/E2M1 midpoint
+    上有少量差异，只作诊断，不参与退出判定；失败样本（scale_max_abs、code_mismatch）
+    存入 numeric.json。参考容差 `nrmse ≤ 3e-2`、`cosine ≥ 0.9995`、
     `max_rel ≤ 2e-1`。
   - 退出判定必须同时检查 reference count、hidden/cache finite、dtype、cache length；
     count=0 或 cache 非有限/长度错误不能通过。
