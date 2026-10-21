@@ -38,6 +38,7 @@ class Checker:
         self.path = path
         self.failures: list[str] = []
         self.notes: list[str] = []
+        self.legacy = False
 
     def fail(self, message: str) -> None:
         self.failures.append(message)
@@ -74,6 +75,8 @@ def kind_of(path: Path) -> str:
         return "m3-profile"
     if (path / "sol.json").exists():
         return "sol"
+    if (path / "attn_length_effect.json").exists():
+        return "micro"
     return "unknown"
 
 
@@ -232,11 +235,40 @@ def check_sol_dir(c: Checker) -> None:
     c.expect((weights.get("total_cuda_bytes") or 0) > 1e10, "权重字节数异常")
 
 
+def is_legacy(path: Path) -> bool:
+    """旧 harness 的产物：没有 provenance.json，或有但缺 source_manifest 字段。
+
+    这些 run 早于 provenance/source_manifest 契约，重跑后会被替换；默认单列，
+    `--strict`（关闭流程）下判失败。
+    """
+    prov_path = path / "provenance.json"
+    if not prov_path.exists():
+        return True
+    try:
+        prov = json.loads(prov_path.read_text())
+    except Exception:
+        return True
+    return "source_manifest" not in prov
+
+
+def check_micro_dir(c: Checker) -> None:
+    data = c.load("attn_length_effect.json")
+    if data is None:
+        return
+    c.expect(bool(data.get("summary")), "micro 结果缺 summary")
+    c.expect(bool(data.get("provenance")), "micro 结果缺 provenance")
+    c.expect(bool(data.get("rows")), "micro 结果缺 rows")
+
+
 def check_one(path: Path) -> Checker:
     c = Checker(path)
     kind = kind_of(path)
     if kind == "unknown":
         c.fail("无法识别 run dir 类型（缺 bench/check/memory/sol/provenance）")
+        return c
+    if is_legacy(path):
+        c.notes.append("legacy：provenance/source_manifest 契约之前的 run，重跑后会被替换")
+        c.legacy = True
         return c
     check_provenance(c)
     {
@@ -245,6 +277,7 @@ def check_one(path: Path) -> Checker:
         "m3-memory": check_memory_dir,
         "m3-profile": check_profile_dir,
         "sol": check_sol_dir,
+        "micro": check_micro_dir,
     }[kind](c)
     return c
 
@@ -253,20 +286,36 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path)
     parser.add_argument("--all", action="store_true", help="检查 results/m3 下所有 run dir")
+    parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="把 legacy（无 provenance.json）也判失败；关闭流程用",
+    )
     args = parser.parse_args()
 
     paths = list(args.paths)
     if args.all or not paths:
         paths = sorted(p for p in RESULTS.iterdir() if p.is_dir())
     bad = 0
+    legacy = 0
     for path in paths:
         c = check_one(path)
+        if c.legacy:
+            legacy += 1
+            print(f"[LEGACY] {path}")
+            for note in c.notes:
+                print(f"   - {note}")
+            if args.strict:
+                bad += 1
+            continue
         status = "OK" if not c.failures else "FAIL"
         print(f"[{status}] {path}")
         for failure in c.failures:
             print(f"   - {failure}")
         bad += bool(c.failures)
-    print(f"\n{len(paths) - bad}/{len(paths)} run dir 通过产物契约检查")
+    checked = len(paths) - legacy
+    print(f"\n{checked - bad + (legacy if args.strict else 0)}/{checked} 个当前 run dir 通过；"
+          f"legacy {legacy} 个（{'判失败' if args.strict else '已跳过'}）")
     return 0 if bad == 0 else 1
 
 

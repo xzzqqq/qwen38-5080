@@ -99,7 +99,9 @@ results/m3/<run-id>-m3-bench/
 - `summary.peak_allocated_gb` 只覆盖计时区间；分阶段峰值看 `make m3-memory`。
 
 跑完用 `make check-results` 校验契约（样本数 = repeats、`per_step_ms` 长度 = steps、
-`complete=true`、provenance 齐全等）；它只需要秒级、纯 CPU。
+`complete=true`、provenance 齐全等）；它只需要秒级、纯 CPU。没有 `provenance.json`
+的 legacy 目录（2026-10-22 之前）默认单列为 `[LEGACY]` 不算失败；关闭流程用
+`scripts/check_results.py --all --strict`，那时 legacy 也判失败。
 
 ## 7. 失败与恢复
 

@@ -76,6 +76,6 @@ if ! skip sol; then
   fi
 fi
 
-step "产物契约" "$VENV/bin/python" scripts/check_results.py --all
+step "产物契约" "$VENV/bin/python" scripts/check_results.py --all --strict
 echo
 echo "M3 close 完成。结果在 results/m3/ 下，SOL 在 docs/sol.md。"

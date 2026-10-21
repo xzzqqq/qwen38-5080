@@ -139,7 +139,8 @@ def main() -> int:
         / sum(r["elements"] for r in rows),
         "median_ulps": sorted(r["unpadded_vs_padded_ulps"] for r in rows)[len(rows) // 2],
     }
-    payload = {"provenance": reporting.provenance(ROOT), "summary": summary, "rows": rows}
+    prov = reporting.provenance(ROOT, {"kind": "attn-length-effect"}, out_dir=out_dir)
+    payload = {"provenance": prov, "summary": summary, "rows": rows}
     reporting.save_json(out_dir / "attn_length_effect.json", payload)
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     print(f"output: {out_dir}")
