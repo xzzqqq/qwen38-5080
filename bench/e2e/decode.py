@@ -355,11 +355,14 @@ def estimate_seconds(spec: dict, steps: int, repeats: int) -> float:
     return (1 + repeats) * per_measure
 
 
-def list_scenarios(repeats: int, repeats_non_graph: int | None, steps: int) -> int:
+def list_scenarios(
+    scenarios: list[str], repeats: int, repeats_non_graph: int | None, steps: int
+) -> int:
     print(f"{'scenario':18s} {'execution':12s} {'depth':>6s} {'capacity':>9s} "
           f"{'est/measure':>12s} {'est total':>10s}")
     total = 0.0
-    for name, spec in SCENARIOS.items():
+    for name in scenarios:
+        spec = SCENARIOS[name]
         r = repeats
         if repeats_non_graph is not None and spec["execution"] != "graph":
             r = repeats_non_graph
@@ -370,7 +373,7 @@ def list_scenarios(repeats: int, repeats_non_graph: int | None, steps: int) -> i
             f"{name:18s} {spec['execution']:12s} {spec['depth']:6d} "
             f"{str(spec['capacity'] or 'dynamic'):>9s} {per:11.1f}s {seconds / 60:9.1f}m"
         )
-    print(f"\n{len(SCENARIOS)} 个场景，合计约 {total / 60:.1f} 分钟 "
+    print(f"\n{len(scenarios)} 个场景，合计约 {total / 60:.1f} 分钟 "
           f"（steps={steps}, repeats={repeats}"
           + (f", non-graph repeats={repeats_non_graph}" if repeats_non_graph else "")
           + "）")
@@ -451,19 +454,20 @@ def main() -> int:
     parser.add_argument("--tag", default="m3-bench", help="run 目录后缀（默认 m3-bench）")
     args = parser.parse_args()
 
+    if args.only.strip() in ("", "all"):
+        selected = list(SCENARIOS)
+    else:
+        selected = [s.strip() for s in args.only.split(",") if s.strip()]
+        unknown = [s for s in selected if s not in SCENARIOS]
+        if unknown:
+            raise SystemExit(f"unknown scenarios: {unknown}; see --list")
     if args.list:
-        return list_scenarios(args.repeats, args.repeats_non_graph, args.steps)
+        return list_scenarios(selected, args.repeats, args.repeats_non_graph, args.steps)
 
     if args.worker:
         return run_worker(args)
 
-    if args.only.strip() in ("", "all"):
-        scenarios = list(SCENARIOS)
-    else:
-        scenarios = [s.strip() for s in args.only.split(",") if s.strip()]
-        unknown = [s for s in scenarios if s not in SCENARIOS]
-        if unknown:
-            raise SystemExit(f"unknown scenarios: {unknown}")
+    scenarios = selected  # 上面已经校验过 --only
 
     if args.out:
         out_dir = Path(args.out)
