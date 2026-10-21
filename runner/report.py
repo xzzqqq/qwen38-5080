@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import platform
@@ -23,6 +24,9 @@ from typing import Any, Sequence
 import numpy as np
 
 CHECKPOINT = "models/Qwen3.8-27B-NVFP4-RTX5090"
+# 只把源码/文档/输入算进 source manifest；results/models/.tmp 不进。
+SOURCE_PREFIXES = ("runner/", "scripts/", "bench/", "docs/", "tests/")
+SOURCE_FILES = ("Makefile", "requirements.txt", "README.md", "AGENTS.md", "CLAUDE.md", ".gitignore")
 CHECKPOINT_REVISION = "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33"
 SOL_BANDWIDTH_BYTES = 960e9
 
@@ -39,12 +43,57 @@ def git_state(root: Path) -> dict[str, Any]:
     status = _run(["git", "status", "--porcelain"], cwd=root)
     diff = _run(["git", "diff"], cwd=root)
     staged = _run(["git", "diff", "--cached"], cwd=root)
+    untracked = _run(["git", "ls-files", "--others", "--exclude-standard"], cwd=root)
+    untracked_files = [line for line in untracked.splitlines() if line.strip()]
     return {
         "commit": commit,
         "dirty": bool(status),
         "status": status.splitlines() if status else [],
         "diff_sha256": _sha256_text(diff + staged),
         "diff_bytes": len(diff) + len(staged),
+        "untracked_files": untracked_files,
+        "patch": diff + staged,
+    }
+
+
+def _is_source(rel: str) -> bool:
+    return rel in SOURCE_FILES or rel.startswith(SOURCE_PREFIXES)
+
+
+def source_manifest(root: Path) -> dict[str, Any]:
+    """可复现的运行源码清单：改动 + untracked 的源码/文档/输入，逐个 hash。
+
+    只有 dirty tree 才需要它；clean commit 由 commit id 唯一确定源码。
+    """
+    state = git_state(root)
+    modified = [
+        line[3:].strip()
+        for line in state["status"]
+        if len(line) > 3 and line[:2] in (" M", "M ", "MM", "AM", " A", "A ")
+    ]
+    candidates = sorted({*modified, *state["untracked_files"]})
+    files = []
+    for rel in candidates:
+        if not _is_source(rel):
+            continue
+        path = root / rel
+        if not path.is_file():
+            continue
+        data = path.read_bytes()
+        files.append(
+            {
+                "path": rel,
+                "sha256": hashlib.sha256(data).hexdigest(),
+                "bytes": len(data),
+            }
+        )
+    return {
+        "dirty": state["dirty"],
+        "commit": state["commit"],
+        "patch_sha256": state["diff_sha256"],
+        "patch_bytes": state["diff_bytes"],
+        "files": files,
+        "files_total_bytes": sum(f["bytes"] for f in files),
     }
 
 
@@ -110,10 +159,25 @@ def environment() -> dict[str, Any]:
     return info
 
 
-def provenance(root: Path, extra: dict[str, Any] | None = None) -> dict[str, Any]:
+def write_source_artifacts(out_dir: Path, patch: str, manifest: dict[str, Any]) -> None:
+    """dirty tree 时把可恢复的 patch 和源码 manifest 落到 run dir。"""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    save_json(out_dir / "source_manifest.json", manifest)
+    if manifest.get("dirty") and patch:
+        (out_dir / "git_diff.patch").write_text(patch, encoding="utf-8")
+
+
+def provenance(
+    root: Path, extra: dict[str, Any] | None = None, out_dir: Path | None = None
+) -> dict[str, Any]:
+    state = git_state(root)
+    patch = state.pop("patch", "")
+    manifest = source_manifest(root)
     data = {
         "created_at": datetime.now().astimezone().isoformat(),
-        "git": git_state(root),
+        "git": state,
+        "source_manifest": manifest,
         "environment": environment(),
         "checkpoint": CHECKPOINT,
         "checkpoint_revision": CHECKPOINT_REVISION,
@@ -123,6 +187,8 @@ def provenance(root: Path, extra: dict[str, Any] | None = None) -> dict[str, Any
     }
     if extra:
         data.update(extra)
+    if out_dir is not None:
+        write_source_artifacts(Path(out_dir), patch, manifest)
     return data
 
 

@@ -159,6 +159,7 @@ def gqa_expansion(config, scan_length: int, kv_bytes_per_element: int = KV_BYTES
     return {
         "scan_length": scan_length,
         "compact_kv": compact,
+        "compact_full_model": 2 * N_FULL_ATTN * compact,
         "expanded_kv": expanded,
         "per_step_total": total,
         "extra_vs_compact": total - 2 * N_FULL_ATTN * compact,
@@ -171,6 +172,11 @@ def find_bench() -> Path | None:
 
 
 def join_bench(bench_path: Path | None, weights: int, gdn: int, conv: int, capacities: dict) -> list[dict]:
+    """把 bench 的实测 tok/s 和按有效 L_t 的 B_ideal 对齐。
+
+    plan §6 规定所有执行模式的 ``B_ideal`` 都用有效 ``L_t``；static-cap / graph
+    扫满 capacity 以及 GQA 展开属于**额外流量**，单列，不改变理想分母。
+    """
     if bench_path is None or not bench_path.exists():
         return []
     data = json.loads(bench_path.read_text())
@@ -183,19 +189,18 @@ def join_bench(bench_path: Path | None, weights: int, gdn: int, conv: int, capac
         steps = int(res.get("steps", 0))
         execution = spec.get("execution")
         capacity = spec.get("capacity")
-        # static-cap / graph 的 decode attention 扫满 capacity；eager / static-exact 用 L_t。
+        ideal = ideal_bytes(weights, gdn, conv, depth, steps, KV_BYTES_BF16)
+        mean_bytes = ideal["mean_bytes"]
+        mean_length = depth + (steps + 1) / 2.0
+        write_kv = 2 * N_FULL_ATTN * H_KV * D_HEAD * KV_BYTES_BF16
         if execution in ("static-cap", "graph"):
-            read_kv = 2 * N_FULL_ATTN * H_KV * D_HEAD * KV_BYTES_BF16 * capacity
-            write_kv = 2 * N_FULL_ATTN * H_KV * D_HEAD * KV_BYTES_BF16
-            kv_bytes_total = read_kv + write_kv
-            model_kind = f"scan={capacity}"
-            scan_bytes = kv_bytes_total
+            scan_bytes = 2 * N_FULL_ATTN * H_KV * D_HEAD * KV_BYTES_BF16 * capacity + write_kv
+            extra_capacity = scan_bytes - ideal["kv_bytes_total"]
+            scan = f"scan={capacity}（额外 {extra_capacity / 1e9:.3f} GB/step）"
         else:
-            stats = ideal_bytes(weights, gdn, conv, depth, steps, KV_BYTES_BF16)
-            scan_bytes = stats["kv_bytes_total"]
-            kv_bytes_total = scan_bytes
-            model_kind = f"scan=L_t~{depth + steps // 2}"
-        mean_bytes = weights + kv_bytes_total + 2 * gdn + 2 * conv
+            scan_bytes = ideal["kv_bytes_total"]
+            extra_capacity = 0.0
+            scan = f"scan=L_t~{depth + steps // 2}"
         sol = BANDWIDTH / mean_bytes
         summary = res.get("summary", {})
         model_tok = summary.get("model_tok_s", {}).get("median")
@@ -206,10 +211,13 @@ def join_bench(bench_path: Path | None, weights: int, gdn: int, conv: int, capac
                 "execution": execution,
                 "depth": depth,
                 "capacity": capacity,
-                "scan": model_kind,
+                "scan": scan,
+                "mean_length": mean_length,
                 "steps": steps,
                 "mean_bytes": mean_bytes,
-                "kv_bytes": kv_bytes_total,
+                "kv_bytes": ideal["kv_bytes_total"],
+                "extra_capacity_bytes": extra_capacity,
+                "scan_bytes": scan_bytes,
                 "sol_tok_s": sol,
                 "model_tok_s": model_tok,
                 "system_tok_s": system_tok,
@@ -317,14 +325,16 @@ def write_markdown(path: Path, ctx: dict) -> None:
     ]
     if rows:
         lines += [
-            "| scenario | execution | depth | capacity | decode 扫描长度 | B_mean GB | SOL tok/s | "
-            "模型 tok/s | 模型 %SOL | 模型逻辑 GB/s | 系统 tok/s | 系统 %SOL | 系统逻辑 GB/s | peak GB | min free GB |",
-            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
+            "| scenario | execution | depth | capacity | decode 实际扫描 | B_mean GB（L_t） | "
+            "capacity 额外流量 GB/step | SOL tok/s | 模型 tok/s | 模型 %SOL | 模型逻辑 GB/s | "
+            "系统 tok/s | 系统 %SOL | 系统逻辑 GB/s | peak GB | min free GB |",
+            "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|",
         ]
         for row in rows:
             lines.append(
                 f"| {row['scenario']} | {row['execution']} | {row['depth']} | "
                 f"{row['capacity'] or 'dynamic'} | {row['scan']} | {fmt_gb(row['mean_bytes'])} | "
+                f"{row['extra_capacity_bytes'] / 1e9:.3f} | "
                 f"{row['sol_tok_s']:.1f} | "
                 f"{row['model_tok_s']:.2f} | {fmt_pct(row['model_pct_sol'])} | "
                 f"{row['model_logical_gb_s']:.1f} | "
@@ -377,16 +387,21 @@ def write_markdown(path: Path, ctx: dict) -> None:
         "B_expand_model(C) = 2 * 16 * (O(C) + 2 * E(C))",
         "```",
         "",
-        "| 扫描长度 C | 紧凑 KV 读 | 展开路径总量估算 | 相比紧凑 KV 的额外量 |",
+        "| 扫描长度 C | 全模型紧凑 KV 读（16 层 K+V） | 展开路径总量估算 | 相比紧凑 KV 的额外量 |",
         "|---|---|---|---|",
     ]
     for scan_length in ctx["expansion"].get("scan_lengths", []):
         exp = gqa_expansion(ctx["config"], scan_length)
         lines.append(
-            f"| {scan_length} | {fmt_gb(exp['compact_kv'])} GB | {fmt_gb(exp['per_step_total'])} GB/step | "
+            f"| {scan_length} | {fmt_gb(exp['compact_full_model'])} GB | "
+            f"{fmt_gb(exp['per_step_total'])} GB/step | "
             f"{fmt_gb(exp['extra_vs_compact'])} GB/step |"
         )
     lines += [
+        "",
+        "`O(C)`/`E(C)` 是**单层单个 K 或 V** 的字节；表里的“紧凑 KV 读”是乘过 "
+        "`2 * 16`（K+V、16 个 full attention 层）的全模型值。展开路径总量按 "
+        "`2 * 16 * (O(C) + 2 * E(C))` 算。",
         "",
         "这些是数组访问量估算，不是实测 DRAM 流量或毫秒数；cache 命中、kernel 实现和调度都会"
         "影响实际成本。static-cap 的 decode 用 capacity 代入，eager/static-exact 用 `L_t` 代入。",
@@ -445,7 +460,7 @@ def main() -> int:
                       capacities[8192]["gdn_state_bytes"],
                       capacities[8192]["conv_state_bytes"], capacities)
 
-    prov = reporting.provenance(ROOT)
+    prov = reporting.provenance(ROOT, out_dir=out_dir)
     ctx = {
         "created_at": prov["created_at"],
         "git_commit": prov["git"]["commit"],

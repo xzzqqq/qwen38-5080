@@ -56,9 +56,11 @@ BOUNDARY_LENGTHS = (1, 127, 128, 129, 300)
 
 # --------------------------------------------------------------------- report
 class CheckReport:
-    def __init__(self, scenario: str):
+    def __init__(self, scenario: str, required: list[str] | None = None):
         self.scenario = scenario
         self.items: list[dict] = []
+        # 必测项前缀：缺失即算 gate failure，避免“reference 没跑也算通过”。
+        self.required = list(required or [])
 
     def _add(self, level: str, name: str, ok: bool, detail=None) -> bool:
         item = {"level": level, "name": name, "ok": bool(ok)}
@@ -82,6 +84,20 @@ class CheckReport:
         return self._add("diagnostic", name, ok, detail)
 
     def result(self) -> dict:
+        if self.required:
+            missing = [
+                pattern
+                for pattern in self.required
+                if not any(
+                    item["level"] == "gate" and item["name"].startswith(pattern)
+                    for item in self.items
+                )
+            ]
+            self.gate(
+                "coverage: 必测项齐全",
+                not missing,
+                {"missing": missing, "required": len(self.required)},
+            )
         gates = [i for i in self.items if i["level"] == "gate"]
         return {
             "scenario": self.scenario,
@@ -144,6 +160,11 @@ def check_snapshot(
         f"{name}: layer counts",
         len(snap.kv_keys) == 16 and len(snap.recurrent) == 48,
         {"kv": len(snap.kv_keys), "recurrent": len(snap.recurrent), "conv": len(snap.conv)},
+    )
+    emit(
+        f"{name}: forward 数",
+        snap.forwards == snap.decode_steps + 1,
+        {"forwards": snap.forwards, "decode_steps": snap.decode_steps},
     )
 
 
@@ -282,8 +303,12 @@ def scenario_numeric(
         torch.cuda.empty_cache()
         compare_and_report(rep, padded, cap, "padded-ref->static-cap")
         compare_and_report(rep, ref, padded, "eager->padded-ref", gate=False)
-    except RuntimeError as exc:  # 8K 下 padded 副本可能 OOM
-        rep.diag("padded-ref->static-cap: 未执行", False, {"error": str(exc)})
+    except Exception as exc:  # 必测 reference 没跑成 = gate failure，不能降级成 diagnostic
+        rep.gate(
+            "padded-ref->static-cap: 执行",
+            False,
+            {"error": f"{type(exc).__name__}: {exc}"[:600]},
+        )
 
     # 5) 填充值隔离：fill=3 与 fill=0 必须一致
     if padded is not None:
@@ -293,8 +318,12 @@ def scenario_numeric(
             del pad3_cache
             torch.cuda.empty_cache()
             compare_and_report(rep, padded, padded3, "padded-fill3 vs fill0")
-        except RuntimeError as exc:
-            rep.diag("padded-fill3: 未执行", False, {"error": str(exc)})
+        except Exception as exc:
+            rep.gate(
+                "padded-fill3 vs fill0: 执行",
+                False,
+                {"error": f"{type(exc).__name__}: {exc}"[:600]},
+            )
 
     # 6) reset / 新请求
     reset_checks(rep, model, capacity, fixtures, depth, steps)
@@ -349,42 +378,96 @@ def reset_checks(rep: CheckReport, model, capacity: int, fixtures: dict, depth: 
 
 
 def capacity_end_check(rep: CheckReport, model, tokenizer, capacity: int, base_ids: list[int]) -> None:
-    """填满 capacity 后必须由 host 侧 guard 拒绝，而不是让 kernel 越界。
+    """从**公开入口**验证 capacity 边界和越界拒绝。
 
-    直接走 model + cache（绕过 DecodeRunner 的 max_context 限制），
-    这样 8192 档也能测到 capacity 末端。
+    - prefill 超过 capacity 必须拒绝；
+    - 填满 capacity 后 system_decode / model_timed_decode 必须在提交前拒绝；
+    - graph 的 capture warmup 必须为 warmup 步数预留 headroom；
+    - reset 后能继续写。
     """
-    reps = capacity // len(base_ids) + 1
-    ids = (base_ids * reps)[:capacity]
-    prompt = torch.tensor([ids], dtype=torch.long)
-    cache, _ = build_static(model, capacity, "cap")
-    runner = DecodeRunner(model, tokenizer, execution="static-cap", capacity=capacity)
-    runner.cache = cache
-    runner._prepared = True
-    for start in range(0, capacity, 128):
-        model(
-            input_ids=prompt[:, start : start + 128],
-            past_key_values=cache,
-            use_cache=True,
-            logits_to_keep=1,
-        )
-    torch.cuda.synchronize()
-    length = int(cache.get_seq_length())
-    rep.gate(
-        "capacity: 填满 capacity 后长度正确",
-        length == capacity,
-        {"cache_len": length, "capacity": capacity},
+    # 用 max_context 比 capacity 大，确保触发的是 capacity guard 而不是 max_context。
+    runner = DecodeRunner(
+        model,
+        tokenizer,
+        execution="static-cap",
+        capacity=capacity,
+        max_context=max(8192, capacity + 2),
     )
+    runner.prepare()
+
+    reps = (capacity + 1) // len(base_ids) + 1
+    too_long = torch.tensor([(base_ids * reps)[: capacity + 1]], dtype=torch.long)
     raised = False
     try:
-        runner.require_capacity(1)
+        runner.prefill(too_long)
     except ValueError as exc:
         raised = True
-        rep.diag("capacity: 越界拒绝信息", True, {"error": str(exc)})
-    rep.gate("capacity: 越界被拒绝", raised)
-    reset_cache(cache)
-    rep.gate("capacity: reset 后可继续写", int(cache.get_seq_length()) == 0)
-    del cache, runner
+        rep.diag("capacity: prefill 拒绝信息", True, {"error": str(exc)})
+    rep.gate("capacity: prefill 拒绝超长 prompt", raised)
+
+    fill = torch.tensor([(base_ids * (capacity // len(base_ids) + 1))[:capacity]], dtype=torch.long)
+    _, stats = runner.prefill(fill)
+    rep.gate(
+        "capacity: 填满 capacity 后长度正确",
+        stats.cache_len == capacity,
+        {"cache_len": stats.cache_len, "capacity": capacity},
+    )
+
+    for label, fn in (
+        ("system_decode", lambda: runner.system_decode(0, 1)),
+        ("model_timed_decode", lambda: runner.model_timed_decode([0])),
+    ):
+        raised = False
+        try:
+            fn()
+        except ValueError as exc:
+            raised = True
+            rep.diag(f"capacity: {label} 拒绝信息", True, {"error": str(exc)})
+        rep.gate(f"capacity: {label} 拒绝越界", raised)
+
+    del runner
+    torch.cuda.empty_cache()
+
+    if capacity == 1024:
+        # graph warmup 也需要 headroom：填到 capacity-1 后 warmup 3 步必然越界。
+        graph_runner = DecodeRunner(
+            model,
+            tokenizer,
+            execution="graph",
+            capacity=capacity,
+            max_context=max(8192, capacity + 2),
+        )
+        graph_runner.prepare()
+        near_full = torch.tensor([(base_ids * (capacity // len(base_ids) + 1))[: capacity - 1]], dtype=torch.long)
+        graph_runner.prefill(near_full)
+        raised = False
+        try:
+            graph_runner.ensure_graph(near_full)
+        except ValueError as exc:
+            raised = True
+            rep.diag("capacity: graph warmup 拒绝信息", True, {"error": str(exc)})
+        rep.gate("capacity: graph warmup 拒绝越界", raised)
+        del graph_runner
+        torch.cuda.empty_cache()
+
+    # reset 后可继续写（重新 prefill 短 prompt）
+    cache_runner = DecodeRunner(
+        model,
+        tokenizer,
+        execution="static-cap",
+        capacity=capacity,
+        max_context=max(8192, capacity + 2),
+    )
+    cache_runner.prepare()
+    cache_runner.prefill(fill)
+    cache_runner.reset()
+    _, stats = cache_runner.prefill(torch.tensor([base_ids[:8]], dtype=torch.long))
+    rep.gate(
+        "capacity: reset 后可继续写",
+        stats.cache_len == 8,
+        {"cache_len": stats.cache_len},
+    )
+    del cache_runner
     torch.cuda.empty_cache()
 
 
@@ -453,8 +536,20 @@ def scenario_graph(rep: CheckReport, depth: int, capacity: int, steps: int, fixt
     info = runner.ensure_graph(prompt)
     rep.gate(
         "graph: capture 不推进位置",
-        info["length_before"] == info["length_after"],
-        {"length_before": info["length_before"], "length_after": info["length_after"]},
+        info["length_before_capture"] == info["length_after_capture"],
+        {
+            "length_before_capture": info["length_before_capture"],
+            "length_after_capture": info["length_after_capture"],
+        },
+    )
+    rep.gate(
+        "graph: entry→capture 的增量等于 warmup 步数",
+        info["length_before_capture"] - info["length_at_entry"] == runner.graph_warmup,
+        {
+            "length_at_entry": info["length_at_entry"],
+            "length_before_capture": info["length_before_capture"],
+            "warmup": runner.graph_warmup,
+        },
     )
     rep.gate(
         "graph: warmup 推进了 static cache",
@@ -667,13 +762,77 @@ def scenario_smoke(rep: CheckReport, fixtures: dict, *, max_new_tokens: int) -> 
     torch.cuda.empty_cache()
 
 
+# ------------------------------------------------------------- required items
+_NUMERIC_COMMON = [
+    "eager: finite",
+    "eager: cache length",
+    "eager: forward 数",
+    "eager->static-exact: logits",
+    "eager->static-exact: hidden",
+    "eager->static-exact: kv.keys",
+    "eager->static-exact: kv.values",
+    "eager->static-exact: conv",
+    "eager->static-exact: recurrent",
+    "padded-ref->static-cap: logits",
+    "padded-ref->static-cap: hidden",
+    "padded-ref->static-cap: kv.keys",
+    "padded-ref->static-cap: recurrent",
+    "padded-fill3 vs fill0: logits",
+    "reset: 原地 reset 重跑 A: logits",
+    "reset: A->B->A: logits",
+    "reset: 短->长->短: logits",
+    "reset: 与独立新建 cache 一致: logits",
+    "capacity: prefill 拒绝超长 prompt",
+    "capacity: 填满 capacity 后长度正确",
+    "capacity: system_decode 拒绝越界",
+    "capacity: model_timed_decode 拒绝越界",
+    "capacity: reset 后可继续写",
+]
+_GRAPH_REQUIRED = [
+    "static-cap: cache length",
+    "static-cap->graph: logits",
+    "static-cap->graph: kv.keys",
+    "static-cap->graph: kv.values",
+    "static-cap->graph: conv",
+    "static-cap->graph: recurrent",
+    "graph: 逐步 logits bitwise",
+    "graph: replay 写入 static KV 槽",
+    "graph: warmup 推进了 static cache",
+    "graph: entry→capture 的增量等于 warmup 步数",
+    "graph: reset 后 replay 结果一致",
+    "graph: 输入 buffer 影响输出",
+]
+_SMOKE_REQUIRED = [
+    f"smoke {name}: {suffix}"
+    for name in ("math", "code", "chat")
+    for suffix in ("EOS 停止", "输出长度合理", "内容合理")
+]
+
+
+def required_for(worker: str) -> list[str]:
+    if worker == "numeric-512":
+        boundary = [
+            f"boundary {length} {prefix}: logits"
+            for length in BOUNDARY_LENGTHS
+            for prefix in ("eager->static-exact", "padded-ref->static-cap")
+        ]
+        return _NUMERIC_COMMON + boundary + ["capacity: graph warmup 拒绝越界"]
+    if worker == "numeric-8192":
+        return list(_NUMERIC_COMMON)
+    if worker in ("graph-1024", "graph-8192"):
+        return list(_GRAPH_REQUIRED)
+    if worker == "smoke-graph":
+        return list(_SMOKE_REQUIRED)
+    raise ValueError(f"unknown worker {worker!r}")
+
+
 # ------------------------------------------------------------------- worker
 def run_worker(args) -> int:
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
     fixtures = load_fixtures(Path(args.fixtures))
     steps = args.steps
-    rep = CheckReport(args.worker)
+    rep = CheckReport(args.worker, required=required_for(args.worker))
     try:
         if args.worker == "numeric-512":
             scenario_numeric(rep, 512, 1024, steps, fixtures, boundaries=True)
@@ -732,17 +891,15 @@ def main() -> int:
     out_dir = Path(args.out) if args.out else reporting.make_run_dir(ROOT, "check", args.tag)
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"run dir: {out_dir}", flush=True)
-    reporting.save_json(
-        out_dir / "provenance.json",
-        reporting.provenance(
-            ROOT,
-            {
-                "scenarios": scenarios,
-                "fixtures": str(args.fixtures),
-                "steps": args.steps,
-                "smoke_max_new_tokens": args.smoke_max_new_tokens,
-            },
-        ),
+    reporting.provenance(
+        ROOT,
+        {
+            "scenarios": scenarios,
+            "fixtures": str(args.fixtures),
+            "steps": args.steps,
+            "smoke_max_new_tokens": args.smoke_max_new_tokens,
+        },
+        out_dir=out_dir,
     )
 
     results = []

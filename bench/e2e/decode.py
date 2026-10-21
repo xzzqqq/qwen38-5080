@@ -294,19 +294,17 @@ def main() -> int:
     out_dir = Path(args.out) if args.out else reporting.make_run_dir(ROOT, "bench", args.tag)
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"run dir: {out_dir}", flush=True)
-    reporting.save_json(
-        out_dir / "provenance.json",
-        reporting.provenance(
-            ROOT,
-            {
-                "scenarios": scenarios,
-                "repeats": args.repeats,
-                "steps": args.steps,
-                "chunk_size": args.chunk_size,
-                "graph_warmup": args.graph_warmup,
-                "fixtures": str(args.fixtures),
-            },
-        ),
+    reporting.provenance(
+        ROOT,
+        {
+            "scenarios": scenarios,
+            "repeats": args.repeats,
+            "steps": args.steps,
+            "chunk_size": args.chunk_size,
+            "graph_warmup": args.graph_warmup,
+            "fixtures": str(args.fixtures),
+        },
+        out_dir=out_dir,
     )
 
     results = []

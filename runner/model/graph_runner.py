@@ -37,9 +37,14 @@ class CaptureInfo:
     mem_before_reserved: int
     mem_after_allocated: int
     mem_after_reserved: int
-    length_before: int
-    length_after: int
+    length_at_entry: int
+    length_before_capture: int
+    length_after_capture: int
     warmup_length_delta: int
+    warmup_peak_allocated: int
+    warmup_peak_reserved: int
+    capture_peak_allocated: int
+    capture_peak_reserved: int
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -123,12 +128,28 @@ class GraphDecodeStep:
         """录 graph。cache 里必须有已初始化的 KV / GDN / conv state。"""
         if self.graph is not None:
             raise RuntimeError("graph already captured")
+        length_at_entry = int(self.cache.get_seq_length())
+        torch.cuda.synchronize()
+
+        # warmup 和 capture 分开记峰值：外层可能还会 prefill，不能只看阶段末 occupancy。
+        torch.cuda.reset_peak_memory_stats()
         if not self._warmup_logits:
             self.warmup()
+            torch.cuda.synchronize()
+            warmup_peak = (
+                torch.cuda.max_memory_allocated(),
+                torch.cuda.max_memory_reserved(),
+            )
+        else:
+            # 已经 warmup 过：peak 追不回来，只记当前占用，调用方应看 warmup 阶段自己的记录。
+            warmup_peak = (
+                torch.cuda.memory_allocated(),
+                torch.cuda.memory_reserved(),
+            )
         self._warmup_logits.clear()
 
-        length_before = int(self.cache.get_seq_length())
-        torch.cuda.synchronize()
+        length_before_capture = int(self.cache.get_seq_length())
+        torch.cuda.reset_peak_memory_stats()
         mem_before = (
             torch.cuda.memory_allocated(),
             torch.cuda.memory_reserved(),
@@ -139,12 +160,16 @@ class GraphDecodeStep:
             self.out = self._forward()
         torch.cuda.synchronize()
         capture_s = time.perf_counter() - t0
+        capture_peak = (
+            torch.cuda.max_memory_allocated(),
+            torch.cuda.max_memory_reserved(),
+        )
         mem_after = (
             torch.cuda.memory_allocated(),
             torch.cuda.memory_reserved(),
         )
         # capture 只记录不执行；这里再确认一次，避免把“capture 已推进位置”写错。
-        length_after = int(self.cache.get_seq_length())
+        length_after_capture = int(self.cache.get_seq_length())
         self.graph = graph
         self.capture_info = CaptureInfo(
             warmup_iters=self.warmup_iters,
@@ -155,9 +180,14 @@ class GraphDecodeStep:
             mem_before_reserved=mem_before[1],
             mem_after_allocated=mem_after[0],
             mem_after_reserved=mem_after[1],
-            length_before=length_before,
-            length_after=length_after,
+            length_at_entry=length_at_entry,
+            length_before_capture=length_before_capture,
+            length_after_capture=length_after_capture,
             warmup_length_delta=self._warmup_length_delta,
+            warmup_peak_allocated=warmup_peak[0],
+            warmup_peak_reserved=warmup_peak[1],
+            capture_peak_allocated=capture_peak[0],
+            capture_peak_reserved=capture_peak[1],
         )
         return self.capture_info
 

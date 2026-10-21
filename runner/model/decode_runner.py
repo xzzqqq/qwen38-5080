@@ -184,8 +184,21 @@ class DecodeRunner:
             ids = torch.tensor([[int(t)] for t in token_ids], dtype=torch.long)
         return torch.nn.functional.embedding(ids, self.host_weight)
 
-    def prefill(self, prompt_ids: torch.Tensor) -> tuple[torch.Tensor, PrefillStats]:
-        """reset 后重跑 prefill；返回最后位置 logits 和首 token 统计。"""
+    def prefill(
+        self,
+        prompt_ids: torch.Tensor,
+        *,
+        reset_peak: bool = True,
+        reserve_steps: int = 0,
+    ) -> tuple[torch.Tensor, PrefillStats]:
+        """reset 后重跑 prefill；返回最后位置 logits 和首 token 统计。
+
+        Args:
+            reset_peak: 是否在这里重置显存峰值。外层要观察“prefill+capture+prefill”
+                的整体峰值时传 False，由外层统一 reset/读取。
+            reserve_steps: 这次请求紧接着还要写多少 token；和 prompt 一起做
+                capacity 检查，避免 decode 阶段才越界。
+        """
         if not self._prepared:
             self.prepare()
         if prompt_ids.ndim != 2 or prompt_ids.shape[0] != 1:
@@ -197,9 +210,16 @@ class DecodeRunner:
             raise ValueError(
                 f"prompt length {prompt_len} must be < max_context {self.max_context}"
             )
+        if self.execution != "eager":
+            if prompt_len + int(reserve_steps) > self.capacity:
+                raise ValueError(
+                    f"{self.execution} capacity overflow at prefill: prompt={prompt_len} "
+                    f"reserve={reserve_steps} capacity={self.capacity}"
+                )
         self.reset()
         torch.cuda.synchronize()
-        torch.cuda.reset_peak_memory_stats()
+        if reset_peak:
+            torch.cuda.reset_peak_memory_stats()
         prompt_ids = prompt_ids.to("cpu")
         t0 = torch.cuda.Event(enable_timing=True)
         t1 = torch.cuda.Event(enable_timing=True)
@@ -231,11 +251,15 @@ class DecodeRunner:
         )
         return logits, stats
 
-    def ensure_graph(self, prompt_ids: torch.Tensor) -> dict[str, Any]:
+    def ensure_graph(self, prompt_ids: torch.Tensor, *, reset_peak: bool = False) -> dict[str, Any]:
         """首个请求上完成 warmup + capture，然后恢复正式初态。
 
-        warmup 会推进 3 步；capture 只记录不执行。capture 完成后必须 reset 并
-        重新 prefill，不能把 warmup 后的位置当成正式初态。
+        warmup 会推进 ``graph_warmup`` 步；capture 只记录不执行。capture 完成后
+        必须 reset 并重新 prefill，不能把 warmup 后的位置当成正式初态。
+
+        Args:
+            reset_peak: 默认 False，让外层能看到 prefill+warmup+capture+prefill
+                的整体峰值；内部子阶段峰值记在 ``CaptureInfo`` 里。
         """
         if self.execution != "graph":
             return {}
@@ -243,10 +267,36 @@ class DecodeRunner:
             self.prepare()
         if self.graph_step.graph is not None:
             return dict(self.graph_info or {})
-        self.prefill(prompt_ids)
+        # 每个子阶段各自 reset/读 peak：外层不能只看“阶段末 occupancy”。
+        _, pre_before = self.prefill(prompt_ids, reset_peak=True)
+        # warmup 会推进 graph_warmup 步；先确认 capacity 够，再提交。
+        self.require_capacity(self.graph_warmup)
         info = self.graph_step.capture()
+        _, pre_after = self.prefill(prompt_ids, reset_peak=True)
         self.graph_info = info.to_dict()
-        self.prefill(prompt_ids)
+        self.graph_info.update(
+            {
+                "length_at_entry": info.length_at_entry,
+                "length_before_capture": info.length_before_capture,
+                "length_after_capture": info.length_after_capture,
+                "prefill_before_peak_allocated_gb": pre_before.peak_allocated_gb,
+                "prefill_before_peak_reserved_gb": pre_before.peak_reserved_gb,
+                "prefill_after_peak_allocated_gb": pre_after.peak_allocated_gb,
+                "prefill_after_peak_reserved_gb": pre_after.peak_reserved_gb,
+            }
+        )
+        self.graph_info["max_phase_peak_allocated_gb"] = max(
+            pre_before.peak_allocated_gb,
+            info.warmup_peak_allocated / 1e9,
+            info.capture_peak_allocated / 1e9,
+            pre_after.peak_allocated_gb,
+        )
+        self.graph_info["max_phase_peak_reserved_gb"] = max(
+            pre_before.peak_reserved_gb,
+            info.warmup_peak_reserved / 1e9,
+            info.capture_peak_reserved / 1e9,
+            pre_after.peak_reserved_gb,
+        )
         return dict(self.graph_info)
 
     # ------------------------------------------------------------------ steps
@@ -314,6 +364,8 @@ class DecodeRunner:
             raise ValueError("trace_ids is empty")
         if self.execution == "graph" and (self.graph_step is None or self.graph_step.graph is None):
             raise RuntimeError("graph 还没 capture；先调用 ensure_graph")
+        # 计时区间开始前一次性检查完整步数预算；循环里不再逐 step 同步。
+        self.require_capacity(steps)
 
         rows = self.host_gather(trace_ids)  # [steps, 1, hidden] CPU
         rows_gpu = rows.to(self.device, non_blocking=False)
@@ -376,6 +428,8 @@ class DecodeRunner:
             raise ValueError("steps must be positive")
         if self.execution == "graph" and (self.graph_step is None or self.graph_step.graph is None):
             raise RuntimeError("graph 还没 capture；先调用 ensure_graph")
+        # 闭环开始前一次性检查完整步数预算；循环里不再逐 step 同步。
+        self.require_capacity(steps)
         tokens: list[int] = []
         margins: list[float] = []
         next_id = int(first_token)

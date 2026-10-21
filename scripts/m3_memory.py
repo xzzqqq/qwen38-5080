@@ -168,6 +168,8 @@ def run_scenario(name: str, spec: dict, fixtures: dict, args) -> dict:
     if spec["execution"] == "graph":
         def do_capture():
             info = runner.ensure_graph(prompt)
+            # 子阶段各自 reset 过 peak，必须逐项记录；外层 stage 的 peak 只代表最后一个
+            # 子阶段（prefill_after），不能当作 capture 的峰值。
             return {
                 "capture_s": info.get("capture_s"),
                 "graph_pool_allocated_gb": (
@@ -179,6 +181,11 @@ def run_scenario(name: str, spec: dict, fixtures: dict, args) -> dict:
                 )
                 / 1e9,
                 "warmup_length_delta": info.get("warmup_length_delta"),
+                "prefill_before_peak_gb": info.get("prefill_before_peak_allocated_gb"),
+                "warmup_peak_gb": info.get("warmup_peak_allocated", 0) / 1e9,
+                "capture_peak_gb": info.get("capture_peak_allocated", 0) / 1e9,
+                "prefill_after_peak_gb": info.get("prefill_after_peak_allocated_gb"),
+                "max_phase_peak_gb": info.get("max_phase_peak_allocated_gb"),
             }
 
         rec.stage("warmup_capture", do_capture)
@@ -230,6 +237,29 @@ def run_scenario(name: str, spec: dict, fixtures: dict, args) -> dict:
     rec.stage("decode_cycle2", do_decode2)
     row_cycle2 = rec.stage("reset_reprefill_cycle2", do_reset_reprefill)
 
+    # stale state 检查：reset 后重新 prefill 的 logits 和随后 4 步，必须与干净初态
+    # bitwise 一致（不只比较 occupancy）。
+    def do_determinism():
+        logits_a, _ = runner.prefill(prompt)
+        steps_a = runner.trace_decode(trace[: min(4, steps)])["logits"]
+        runner.reset()
+        logits_b, _ = runner.prefill(prompt)
+        steps_b = runner.trace_decode(trace[: min(4, steps)])["logits"]
+        return {
+            "prefill_logits_equal": torch.equal(
+                logits_a.to("cpu", torch.bfloat16), logits_b.to("cpu", torch.bfloat16)
+            ),
+            "step_logits_equal": all(torch.equal(x, y) for x, y in zip(steps_a, steps_b)),
+            "compared_steps": len(steps_a),
+        }
+
+    det = rec.stage("reset_determinism", do_determinism)
+    result["determinism"] = {
+        "prefill_logits_equal": det["prefill_logits_equal"],
+        "step_logits_equal": det["step_logits_equal"],
+        "compared_steps": det["compared_steps"],
+    }
+
     result["stages"] = rec.rows
     result["growth"] = {
         "allocated_delta_gb": row_after_reset["end_allocated_gb"] - row_gresident["end_allocated_gb"],
@@ -256,6 +286,8 @@ def run_scenario(name: str, spec: dict, fixtures: dict, args) -> dict:
         and abs(result["growth"]["cycle2_reserved_delta_gb"]) < 0.008
         and result["growth"]["kv_data_ptr_stable"]
         and result["peaks"]["min_free_gb"] > 0
+        and result["determinism"]["prefill_logits_equal"]
+        and result["determinism"]["step_logits_equal"]
     )
     del runner
     torch.cuda.empty_cache()
@@ -280,15 +312,16 @@ def run_worker(args) -> int:
 def format_table(results: list[dict]) -> str:
     lines = [
         "| scenario | execution | depth | capacity | load peak GB | cache init GB | "
-        "prefill peak GB | capture pool GB | graph-resident prefill peak GB | decode peak GB | "
-        "max peak GB | min free GB | reset->prefill delta GB | KV ptr stable |",
-        "|" + "---|" * 14,
+        "prefill peak GB | capture pool GB | prefill→warmup→capture→prefill GB | "
+        "graph-resident prefill peak GB | decode peak GB | "
+        "max peak GB | min free GB | reset->prefill delta GB | KV ptr stable | stale state |",
+        "|" + "---|" * 16,
     ]
     for res in results:
         spec = res.get("spec", {})
         stages = {r["stage"]: r for r in res.get("stages", [])}
         if not stages:
-            lines.append(f"| {res['scenario']} | FAILED | | | | | | | | | | | | |")
+            lines.append(f"| {res['scenario']} | FAILED | | | | | | | | | | | | | |")
             continue
 
         def peak(name):
@@ -297,15 +330,27 @@ def format_table(results: list[dict]) -> str:
 
         cap = stages.get("warmup_capture", {})
         pool = cap.get("graph_pool_allocated_gb")
+        phases = None
+        if cap:
+            parts = [
+                cap.get("prefill_before_peak_gb"),
+                cap.get("warmup_peak_gb"),
+                cap.get("capture_peak_gb"),
+                cap.get("prefill_after_peak_gb"),
+            ]
+            if all(p is not None for p in parts):
+                phases = " / ".join(f"{p:.3f}" for p in parts)
         grow = res.get("growth", {})
         lines.append(
             f"| {res['scenario']} | {spec.get('execution')} | {spec.get('depth')} | "
             f"{spec.get('capacity') or 'dynamic'} | {peak('load')} | {peak('cache_init')} | "
             f"{peak('prefill_cold')} | {f'{pool:.3f}' if pool is not None else '-'} | "
+            f"{phases if phases else '-'} | "
             f"{peak('prefill_graph_resident') if 'prefill_graph_resident' in stages else peak('prefill_again')} | "
             f"{peak('decode')} | {res.get('peaks', {}).get('max_peak_allocated_gb', 0):.3f} | "
             f"{res.get('peaks', {}).get('min_free_gb', 0):.3f} | "
-            f"{grow.get('allocated_delta_gb', 0) * 1000:.1f} MB | {grow.get('kv_data_ptr_stable')} |"
+            f"{grow.get('allocated_delta_gb', 0) * 1000:.1f} MB | {grow.get('kv_data_ptr_stable')} | "
+            f"{res.get('determinism', {}).get('step_logits_equal')} |"
         )
     return "\n".join(lines)
 
@@ -335,9 +380,8 @@ def main() -> int:
     out_dir = Path(args.out) if args.out else reporting.make_run_dir(ROOT, "memory", args.tag)
     out_dir.mkdir(parents=True, exist_ok=True)
     print(f"run dir: {out_dir}", flush=True)
-    reporting.save_json(
-        out_dir / "provenance.json",
-        reporting.provenance(ROOT, {"scenarios": scenarios, "steps": args.steps}),
+    reporting.provenance(
+        ROOT, {"scenarios": scenarios, "steps": args.steps}, out_dir=out_dir
     )
 
     results = []

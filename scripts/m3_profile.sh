@@ -35,6 +35,16 @@ if [ -z "$NSYS" ] || [ ! -x "$NSYS" ]; then
   echo "nsys not found" >&2
   exit 1
 fi
+# provenance：commit、dirty patch、源码 manifest（nsys 采集也是结果的一部分）。
+"$VENV/bin/python" - "$OUT" <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, ".")
+from runner import report as reporting
+
+reporting.provenance(Path("."), {"kind": "m3-profile"}, out_dir=Path(sys.argv[1]))
+PY
+
 echo "using $NSYS" | tee "$OUT/nsys_version.txt"
 "$NSYS" --version >> "$OUT/nsys_version.txt" 2>&1 || true
 

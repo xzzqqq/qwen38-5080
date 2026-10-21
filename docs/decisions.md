@@ -152,3 +152,32 @@
   - 把 free-running greedy trace 当 gate：数值上不可达，只会掩盖真正的问题。
   - 用 nsys 2023.4（CUDA 12.4 自带）采集：它没有 Blackwell 的 GPU target info，
     报告里没有 CUDA kernel data；改用 `/opt/nvidia/nsight-systems-cli/2026.2.1`。
+
+## 2026-10-21 M3 review 修复：入口 guard、必测覆盖、capture 峰值、SOL 分母、provenance
+
+- 决定：
+  - **capacity guard 进公开入口**：`prefill` 同时检查 `max_context` 和所选 capacity
+    （含 `reserve_steps`）；`system_decode` / `model_timed_decode` 在计时区间开始前
+    一次性 `require_capacity(steps)`；`ensure_graph` 为 warmup 预留 headroom。
+    计时循环内不增加逐 step 同步。
+  - **必测 reference 不允许降级**：padded reference、fill=3 隔离检查失败时写
+    gate failure（不是 diagnostic）；每个场景带 `required` 前缀清单，`result()` 里
+    有 coverage gate，缺项即整场景失败。`check_snapshot` 另外核对 forward 数。
+  - **warmup/capture 峰值独立记录**：`ensure_graph` 里 prefill→warmup→capture→prefill
+    各自 reset/读 peak，`CaptureInfo` 保存 warmup 和 capture 峰值；外层 stage 的
+    peak 只代表最后一个子阶段，不能当 capture 峰值。memory 的 `ok` 增加 reset 后
+    logits/state 与干净初态 bitwise 对比。
+  - **SOL 分母统一用有效 `L_t`**：plan §6 的口径对所有执行方式一致；static-cap /
+    graph 扫满 capacity 的额外字节单列，不进 `B_ideal`。`docs/sol.md` §7 的
+    “紧凑 KV 读”改成全模型口径（16 层 K+V），与展开流量可比。
+  - **provenance 可恢复**：dirty tree 时把 `git diff`+staged 写成 `git_diff.patch`，
+    并保存源码/文档/输入的 `source_manifest.json`（逐文件 sha256），results/models/
+    .tmp 不进 manifest。clean commit 时由 commit id 唯一确定源码。
+- 理由：review 指出的五处都是"以后可能错误通过"或"记录不可恢复"，不是已提交数值
+  失败；修完后在干净 commit 上复跑 check/memory/sol/profile/bench，让记录的
+  provenance 直接指向 commit。
+- 被否决：
+  - 只在 helper 层保留 `require_capacity`：公开入口不检查等于没有保护。
+  - 把 padded reference 的 OOM 当 diagnostic：必测 reference 没跑成不能算通过。
+  - 用 capacity 当 `B_ideal` 的 KV 字节：同一 workload 的 SOL 会随实现变化。
+  - 只记录 `commit + dirty`：无法恢复实际运行的源码。
