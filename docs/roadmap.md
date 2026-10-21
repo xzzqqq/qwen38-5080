@@ -108,6 +108,8 @@
 
 M1 只提供低成本外部参照；M2 建立正确实现；M3 建立自写 runner 的性能 baseline。M1 的数字不参与验收，只用于校准带宽效率。
 
+数值/容量验收可参考 [validation 经验](validation.md)；具体 gate 以各 milestone plan 为准。
+
 | 里程碑 | Status | 内容 | 退出标准 | 粗估 |
 |---|---|---|---|---|
 | M1 实机参照 | ✅ 完成 2026-10-19 | 用 llama.cpp 跑 unsloth 的 `UD-IQ4_XS`（14.25 GB），用 `llama-bench` 测 depth 512 和 8192；固定 commit，脚本复现。详细清单见 `docs/plans/m1.md` | 已拿到：55.90 / 54.19 tok/s；逻辑带宽约 80%；可用显存 16.61 GB；真实生成正常。详见 [M1 journal](journal/2026-10-19-m1-llamacpp-reference.md) | 半天 |

@@ -35,6 +35,14 @@ GPU 命令都必须在 full access 下运行：bwrap 沙箱看不到 `/dev/nvidi
 - 文档、注释、汇报用中文；标识符、命令和技术术语保持英文。
 - commit message 一律用英文（`type: subject` 格式），不要用中文。
 
+## 结论与验证
+
+- 数值/性能结论必须附可复现命令、commit、checkpoint revision 和结果路径。
+- 报告差异前先说明比较对象是否可比；不可比路径的差异不能作为回归或正确性结论。
+- 明确区分 gate 和 diagnostic；diagnostic failure 不能写成“通过”。
+- 正确性 baseline 未冻结前，不做 kernel 级性能优化。
+- 失败实验也要记录，结论和已知限制不能只留在对话里。
+
 ## 需要先问的事
 
 - 用 sudo，或改动驱动、CUDA、系统设置

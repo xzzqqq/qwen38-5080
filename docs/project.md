@@ -103,6 +103,7 @@ qwen38-5080/
 | — | `docs/sol.md` | 待写：SOL 模型和字节数公式。写好之前以 `docs/roadmap.md` §4 为准 |
 | — | `docs/model.md` | 待写：模型结构、checkpoint 的 tensor 布局、NVFP4 约定（见下方已知坑） |
 | — | `docs/decisions.md` | 待写：用 roadmap §5 初始化 |
+| — | `docs/validation.md` | 数值/容量验收经验与参考 |
 
 `docs/model.md` 需要写进去的已知坑：
 
