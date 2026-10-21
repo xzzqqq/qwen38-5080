@@ -2,7 +2,7 @@
 # GPU 命令必须在 full access 下运行（bwrap 沙箱看不到 /dev/nvidia*）。
 
 .PHONY: m2-preflight m2-manifest m2-test m2-numeric m2-micro m2-smoke m2-memory m2-chunk \
-        m3-fixtures m3-check m3-bench m3-memory m3-profile m3-sol m3-attn-effect
+        m3-fixtures m3-check m3-bench m3-memory m3-profile m3-sol m3-attn-effect m3-quick
 
 # M2 环境 / CUDA 头文件 / GPU 预检
 m2-preflight:
@@ -37,6 +37,14 @@ m2-chunk:
 	.venv/bin/python scripts/m2_chunk_consistency.py --length 256 --chunk 128
 
 # ---- M3：decode 性能 baseline -------------------------------------------------
+
+# 快档（约 5 分钟）：改一点就跑这个。覆盖 graph capture + capacity guard +
+# 分阶段显存 + 两套计时；改动涉及 reference/reset/boundary 时再加跑
+# `--only numeric-512`。产物写到 .tmp/，不进 results/。
+m3-quick:
+	.venv/bin/python scripts/m3_check.py --only graph-1024 --steps 16 --out .tmp/m3-quick/check
+	.venv/bin/python scripts/m3_memory.py --only graph-512-1024 --steps 32 --out .tmp/m3-quick/memory
+	.venv/bin/python bench/e2e/decode.py --only graph-512-1024 --repeats 1 --steps 32 --out .tmp/m3-quick/bench
 
 # P0 fixtures：固定深度 prompt + greedy trace + 三条真实 smoke（需要 GPU，约 3 分钟）
 m3-fixtures:

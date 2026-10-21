@@ -124,3 +124,27 @@ gate 应该用“EOS + 长度 + 内容”，与参考 trace 的差异只作 diag
 `expandable_segments` 会改变 8K 的可行性和 peak/reserved 观测值：默认 allocator
 在 7680+128 prefill 因碎片 OOM，开启后与 M2 记录逐位一致。它不改变数值，但
 **不写进 provenance 就没法解释“同一脚本两次峰值不同”**。
+
+## 14. 渐进式验证：把 loop 做小（M3）
+
+原则：**改一点就跑最小闭环，全量只在里程碑关闭前跑。** 目标是最快拿到反馈，
+不是每次都证明整条流水线。
+
+| 层次 | 命令 | 覆盖 | 耗时 |
+|---|---|---|---|
+| 纯 CPU | `pytest tests/ops tests/model`、`python -c` 调 report/CheckReport | op 数值、报告语义、必需项覆盖 | 秒级 |
+| 快档 | `make m3-quick` | graph capture、capacity guard、分阶段显存、两套计时 | ~5 分钟 |
+| 单场景 | `--only numeric-512` / `--only graph-1024`、bench `--repeats 1 --steps 32` | 改到哪个路径就跑哪个 | 1–3 分钟 |
+| 全量 | `make m3-check` / `m3-memory` / `m3-bench` / `m3-profile` / `m3-sol` | 里程碑关闭 | 15 + 12 + 95 + 12 + 1 分钟 |
+
+M3 里实际踩到的三次返工，都是 loop 没做小：
+
+1. 改完记录字段后直接跑全量 check（15 分钟），结果是产物缺 `provenance.json`
+   才失败。**“产物是否齐全”用一个场景 3 分钟就能确认**，不需要五个。
+2. fixture 生成连跑两次全量（每次 3 分钟）才定位到 8K prefill 的 allocator OOM；
+   应该先 `--depths 7680` 单独跑。
+3. 用脚本批量替换一个大 slice，`old` 恰好为空导致文件被写坏，只能整份重写。
+   大范围编辑前先 `cp` 备份，并对“替换目标非空 / 命中次数”做断言。
+
+对应到本仓库的做法：快档产物写 `.tmp/`，不进 `results/`；全量结果才进
+`results/m3/<run-id>-*/` 并带 provenance。

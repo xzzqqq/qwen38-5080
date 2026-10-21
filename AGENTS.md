@@ -22,12 +22,16 @@ GPU 命令都必须在 full access 下运行：bwrap 沙箱看不到 `/dev/nvidi
 | `scripts/setup_llama_cpp.sh` | 按固定 commit 拉取并编译 llama.cpp | 10–20 分钟 |
 | `scripts/run_ar_bench.sh` | M1 AR decode benchmark（depth 512 / 8192，各 5 次） | 约 2 分钟 |
 | `scripts/run_server_check.sh` | math / code / chat 三条真实 prompt | 约 30 秒 |
+| `make m3-quick` | M3 快档：graph + capture + capacity guard + 显存 + 两套计时冒烟 | 约 5 分钟 |
 
 环境检查：`nvidia-smi --query-gpu=...`、`nvidia-smi -q`、`cuda13/bin/nvcc --version`，
 结果存 `results/`。
 
 ## 约定
 
+- 渐进式验证：改一点先跑 `make m3-quick`（或对应 op 的单测 / 单场景 `--only`），
+  把 loop 做小、fail fast；里程碑关闭前才跑全量（check / memory / bench / profile / sol）。
+  产物类问题（缺文件、缺字段、退出码）只需 1 个场景就能发现，不要用全量去等。
 - 每做完一次实验，在 `docs/journal/` 记一篇：做了什么、结果、结论。没成功的也要记。
 - 给出性能结论时，附上复现命令和 commit。
 - 在 kernel 源文件开头简要说明设计，包括数据流和预期瓶颈。
