@@ -151,6 +151,26 @@ def latest_bench_dir() -> Path | None:
     return dirs[-1] if dirs else None
 
 
+def dir_source_matches(path: Path) -> bool:
+    """run dir 的 provenance 是否属于当前源码（用于决定能否 resume 进去）。"""
+    prov_path = path / "provenance.json"
+    if not prov_path.exists():
+        return False
+    try:
+        prov = json.loads(prov_path.read_text())
+    except Exception:
+        return False
+    prev = prov.get("git") or {}
+    prev_manifest = prov.get("source_manifest") or {}
+    current = reporting.git_state(ROOT)
+    current_manifest = reporting.source_manifest(ROOT)
+    return (
+        prev.get("commit") == current.get("commit")
+        and prev.get("dirty") == current.get("dirty")
+        and prev_manifest.get("patch_sha256") == current_manifest.get("patch_sha256")
+    )
+
+
 def run_scenario(name: str, spec: dict, fixtures: dict, args, repeats: int) -> dict:
     depth = int(spec["depth"])
     capacity = spec["capacity"]
@@ -331,8 +351,18 @@ def main() -> int:
     if args.out:
         out_dir = Path(args.out)
     elif args.resume and latest_bench_dir() is not None:
-        out_dir = latest_bench_dir()
-        print(f"resume: 复用最近的 run dir {out_dir}", flush=True)
+        candidate = latest_bench_dir()
+        if dir_source_matches(candidate):
+            out_dir = candidate
+            print(f"resume: 复用最近的 run dir {out_dir}", flush=True)
+        else:
+            # 最近的 dir 来自另一份源码：不能往里写，否则会覆盖掉那次记录。
+            out_dir = reporting.make_run_dir(ROOT, "bench", args.tag)
+            print(
+                f"resume: 最近目录 {candidate.name} 的源码与当前不一致，"
+                f"改写到新目录 {out_dir.name}",
+                flush=True,
+            )
     else:
         out_dir = reporting.make_run_dir(ROOT, "bench", args.tag)
     out_dir.mkdir(parents=True, exist_ok=True)

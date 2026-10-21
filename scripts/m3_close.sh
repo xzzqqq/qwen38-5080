@@ -55,7 +55,8 @@ if ! skip memory; then
 fi
 
 if ! skip bench; then
-  BENCH_ARGS=(--repeats "$REPEATS" --steps "$STEPS")
+  # --resume：被中断时只补跑没完成的场景；源码变了会自动落到新目录。
+  BENCH_ARGS=(--repeats "$REPEATS" --steps "$STEPS" --resume)
   if [ -n "$REPEATS_NON_GRAPH" ]; then
     BENCH_ARGS+=(--repeats-non-graph "$REPEATS_NON_GRAPH")
   fi
