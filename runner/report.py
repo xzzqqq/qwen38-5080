@@ -41,16 +41,24 @@ def _run(cmd: list[str], cwd: Path | None = None, *, raw: bool = False) -> str:
 
 
 def git_state(root: Path) -> dict[str, Any]:
+    """记录 git 状态。
+
+    ``dirty`` 只看**源码/文档/测试**的改动：``results/``、``.tmp/`` 等输出目录
+    缺省不算脏，否则一次运行写出来的产物会让它自己的 provenance 变成 dirty。
+    """
     commit = _run(["git", "rev-parse", "HEAD"], cwd=root)
     status = _run(["git", "status", "--porcelain"], cwd=root, raw=True)
     diff = _run(["git", "diff"], cwd=root)
     staged = _run(["git", "diff", "--cached"], cwd=root)
     untracked = _run(["git", "ls-files", "--others", "--exclude-standard"], cwd=root)
     untracked_files = [line for line in untracked.splitlines() if line.strip()]
+    untracked_source = [f for f in untracked_files if _is_source(f)]
+    dirty = bool(diff.strip() or staged.strip() or untracked_source)
     return {
         "commit": commit,
-        "dirty": bool(status),
+        "dirty": dirty,
         "status": status.splitlines() if status else [],
+        "untracked_source": untracked_source,
         "diff_sha256": _sha256_text(diff + staged),
         "diff_bytes": len(diff) + len(staged),
         "untracked_files": untracked_files,
