@@ -1,0 +1,365 @@
+{
+  "scenario": "graph-1024",
+  "ok": true,
+  "gate_count": 21,
+  "gate_failures": [],
+  "items": [
+    {
+      "level": "diagnostic",
+      "name": "load",
+      "ok": true,
+      "detail": {
+        "load_s": 1.3700284957885742,
+        "manifest": "/home/xzq/workspace/qwen/results/m2/20261020T175405-manifest/tensor_manifest.json",
+        "quantized_linears": 401,
+        "high_precision_tensors": 449,
+        "shape_stable_linears": 96,
+        "skipped_unused": 0,
+        "gpu_allocated_gb": 14.45758976,
+        "gpu_reserved_gb": 14.556332032,
+        "gpu_free_gb": 1.727922176,
+        "gpu_total_gb": 16.609509376
+      }
+    },
+    {
+      "level": "gate",
+      "name": "static-cap: cache 布局",
+      "ok": true,
+      "detail": {
+        "kv_layers": 16,
+        "linear_layers": 48,
+        "kv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "gdn_dtypes": [
+          "torch.float32"
+        ],
+        "conv_dtypes": [
+          "torch.bfloat16"
+        ],
+        "kv_bytes": 67108864,
+        "capacity": 1024
+      }
+    },
+    {
+      "level": "gate",
+      "name": "static-cap: finite",
+      "ok": true
+    },
+    {
+      "level": "gate",
+      "name": "static-cap: cache length",
+      "ok": true,
+      "detail": {
+        "got": 528,
+        "expected": 528,
+        "forwards": 17
+      }
+    },
+    {
+      "level": "gate",
+      "name": "static-cap: layer counts",
+      "ok": true,
+      "detail": {
+        "kv": 16,
+        "recurrent": 48,
+        "conv": 48
+      }
+    },
+    {
+      "level": "gate",
+      "name": "graph: capture 不推进位置",
+      "ok": true,
+      "detail": {
+        "length_before": 515,
+        "length_after": 515
+      }
+    },
+    {
+      "level": "gate",
+      "name": "graph: warmup 推进了 static cache",
+      "ok": true,
+      "detail": {
+        "warmup_length_delta": 3,
+        "expected": 3
+      }
+    },
+    {
+      "level": "gate",
+      "name": "graph: logits 形状",
+      "ok": true,
+      "detail": {
+        "logits_shape": [
+          1,
+          1,
+          248320
+        ]
+      }
+    },
+    {
+      "level": "diagnostic",
+      "name": "graph: capture pool 增量",
+      "ok": true,
+      "detail": {
+        "allocated_gb": 0.034051072,
+        "reserved_gb": -0.002097152,
+        "capture_s": 0.09799019806087017
+      }
+    },
+    {
+      "level": "gate",
+      "name": "graph: 正式初态长度",
+      "ok": true,
+      "detail": {
+        "cache_len": 512,
+        "depth": 512
+      }
+    },
+    {
+      "level": "gate",
+      "name": "graph: prefill logits == static-cap",
+      "ok": true
+    },
+    {
+      "level": "gate",
+      "name": "graph: decode 后长度",
+      "ok": true,
+      "detail": {
+        "cache_len": 528,
+        "expected": 528
+      }
+    },
+    {
+      "level": "gate",
+      "name": "graph: replay 写入 static KV 槽",
+      "ok": true,
+      "detail": {
+        "layers": 16,
+        "written": 16
+      }
+    },
+    {
+      "level": "gate",
+      "name": "graph: 逐步 logits bitwise",
+      "ok": true,
+      "detail": {
+        "first_bad_steps": [],
+        "steps": 16
+      }
+    },
+    {
+      "level": "diagnostic",
+      "name": "graph: 逐步 argmax 与冻结 trace 一致",
+      "ok": false,
+      "detail": {
+        "bad_steps": [
+          2
+        ],
+        "checked": 15,
+        "bad_step_top2_margin": [
+          0.5625
+        ],
+        "min_margin": 0.5625
+      }
+    },
+    {
+      "level": "gate",
+      "name": "static-cap->graph: logits",
+      "ok": true,
+      "detail": {
+        "name": "logits",
+        "count": 17,
+        "bad_count": 0,
+        "max_abs": 0.0,
+        "first_bad": [],
+        "first_bad_forward": null,
+        "first_bad_forward_layers": [],
+        "shapes_equal": true,
+        "bitwise": true
+      }
+    },
+    {
+      "level": "gate",
+      "name": "static-cap->graph: kv.keys",
+      "ok": true,
+      "detail": {
+        "name": "kv.keys",
+        "count": 16,
+        "bad_count": 0,
+        "max_abs": 0.0,
+        "first_bad": [],
+        "first_bad_forward": null,
+        "first_bad_forward_layers": [],
+        "shapes_equal": true,
+        "bitwise": true,
+        "first_bad_layers": []
+      }
+    },
+    {
+      "level": "gate",
+      "name": "static-cap->graph: kv.values",
+      "ok": true,
+      "detail": {
+        "name": "kv.values",
+        "count": 16,
+        "bad_count": 0,
+        "max_abs": 0.0,
+        "first_bad": [],
+        "first_bad_forward": null,
+        "first_bad_forward_layers": [],
+        "shapes_equal": true,
+        "bitwise": true,
+        "first_bad_layers": []
+      }
+    },
+    {
+      "level": "gate",
+      "name": "static-cap->graph: conv",
+      "ok": true,
+      "detail": {
+        "name": "conv",
+        "count": 48,
+        "bad_count": 0,
+        "max_abs": 0.0,
+        "first_bad": [],
+        "first_bad_forward": null,
+        "first_bad_forward_layers": [],
+        "shapes_equal": true,
+        "bitwise": true,
+        "first_bad_layers": []
+      }
+    },
+    {
+      "level": "gate",
+      "name": "static-cap->graph: recurrent",
+      "ok": true,
+      "detail": {
+        "name": "recurrent",
+        "count": 48,
+        "bad_count": 0,
+        "max_abs": 0.0,
+        "first_bad": [],
+        "first_bad_forward": null,
+        "first_bad_forward_layers": [],
+        "shapes_equal": true,
+        "bitwise": true,
+        "first_bad_layers": []
+      }
+    },
+    {
+      "level": "diagnostic",
+      "name": "static-cap->graph: 未记录项",
+      "ok": true,
+      "detail": {
+        "skipped": [
+          "hidden"
+        ],
+        "reason": "graph replay 内没有 Python hook"
+      }
+    },
+    {
+      "level": "gate",
+      "name": "graph: logits 地址稳定",
+      "ok": true,
+      "detail": {
+        "ptr": 50331725312,
+        "capture_ptr": 50331725312
+      }
+    },
+    {
+      "level": "gate",
+      "name": "graph: reset 后 prefill logits 一致",
+      "ok": true
+    },
+    {
+      "level": "gate",
+      "name": "graph: reset 后 replay 结果一致",
+      "ok": true
+    },
+    {
+      "level": "gate",
+      "name": "graph: 输入 buffer 影响输出",
+      "ok": true,
+      "detail": {
+        "max_abs": 14.6201171875
+      }
+    }
+  ],
+  "provenance": {
+    "created_at": "2026-10-21T18:31:04.316914+08:00",
+    "git": {
+      "commit": "524cc28a39b17c93bb3dfa935345851b8351a1ee",
+      "dirty": true,
+      "status": [
+        "M Makefile",
+        " M README.md",
+        " M docs/decisions.md",
+        " M docs/plans/m3.md",
+        " M docs/project.md",
+        " M docs/roadmap.md",
+        " M docs/sol.md",
+        " M docs/validation.md",
+        " M runner/__init__.py",
+        " M runner/env.py",
+        "?? bench/e2e/decode.py",
+        "?? bench/micro/attn_length_effect.py",
+        "?? bench/workloads/m3-p0/",
+        "?? docs/journal/2026-10-21-m3-decode-baseline.md",
+        "?? results/m3/",
+        "?? runner/model/decode_runner.py",
+        "?? runner/model/graph_runner.py",
+        "?? runner/model/padded_reference.py",
+        "?? runner/model/snapshots.py",
+        "?? runner/model/static_cache.py",
+        "?? runner/report.py",
+        "?? scripts/m3_check.py",
+        "?? scripts/m3_fixtures.py",
+        "?? scripts/m3_memory.py",
+        "?? scripts/m3_profile.py",
+        "?? scripts/m3_profile.sh",
+        "?? scripts/m3_profile_stats.py",
+        "?? scripts/m3_sol.py"
+      ],
+      "diff_sha256": "9bc7a997b39a46abf18662d1353d55b9c4361c2146babf07506cccfa52975339",
+      "diff_bytes": 22730
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+      "torch": "2.14.1+cu130",
+      "transformers": "5.20.2",
+      "flashinfer": "0.7.2",
+      "cuda": "13.0",
+      "gpu_name": "NVIDIA GeForce RTX 5080",
+      "gpu_total_mib": 16303.0,
+      "driver": "580.105.08",
+      "clock_sm_mhz": 2827.0,
+      "clock_max_mhz": 3090.0,
+      "temperature_c": 49.0,
+      "power_w": 163.7
+    },
+    "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+    "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+    "argv": [
+      "/home/xzq/workspace/qwen/scripts/m3_check.py",
+      "--worker",
+      "graph-1024",
+      "--out",
+      "results/m3/20261021T180905-m3-check/graph-1024",
+      "--fixtures",
+      "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+      "--steps",
+      "16",
+      "--smoke-max-new-tokens",
+      "2048"
+    ],
+    "cwd": "/home/xzq/workspace/qwen",
+    "sol_bandwidth_bytes": 960000000000.0,
+    "worker": "graph-1024",
+    "steps": 16
+  },
+  "fixtures": {
+    "dir": "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+    "manifest_sha256": "8548929c4f3ddd2ea3ed720e75d12a6d59b62cd4523913ec852f632d290ead20"
+  }
+}

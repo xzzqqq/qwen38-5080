@@ -2,6 +2,7 @@
 
 - 日期：2026-10-18
 - 修订：2026-10-20，按 M1 实机结果调整性能参照、显存预算和 Phase 1–4 的验收标准
+- 修订：2026-10-21，M3 baseline 实测（graph 31.41 / 22.53 tok/s）写入 §4 和 §6.1
 
 ## 0. 修订摘要（2026-10-20）
 
@@ -76,6 +77,9 @@
 | 现有推理栈 DFlash2（外推） | 约 125–170 tok/s | 发布文章的 2.7–3.4× 乘 5080 的 AR 速度；只作外推参照 |
 | 显存：baseline（NVFP4，BF16 KV，8K） | **15.62 GB allocated / 15.86 reserved**（M2 实测） | 7680+512 固定 token；8K 后 free **0.413 GB**；比 1b 的 15.93 GB 估算更紧；eager runner 诊断值 |
 | 显存：带 DFlash2 | 16.39–16.74 GB | 对 16.61 GB 可用：余量 +0.22 ~ −0.13 GB；但 baseline 实测只剩 0.413 GB，drafter 容量更紧；**待 Phase 3 验证** |
+| **M3 实测：graph（depth 512 / cap 1024）** | **31.41 tok/s**（48.5% SOL，466 GB/s） | 整步 CUDA Graph；B_mean 14.812 GB，SOL 64.8 tok/s |
+| **M3 实测：graph（8K / cap 8192）** | **22.53 tok/s**（35.9% SOL，345 GB/s） | 扫满 capacity；多出的 12 ms/step 是 GQA 展开 + attention matmul |
+| **M3 实测：eager / static（两档 depth）** | **11.3–12.0 tok/s**（17.8–18.5% SOL） | 86 ms/step 里只有 30 ms 是 kernel，其余是 CPU 提交；static cache 本身不加速 |
 
 口径说明：
 
@@ -114,7 +118,7 @@ M1 只提供低成本外部参照；M2 建立正确实现；M3 建立自写 runn
 |---|---|---|---|---|
 | M1 实机参照 | ✅ 完成 2026-10-19 | 用 llama.cpp 跑 unsloth 的 `UD-IQ4_XS`（14.25 GB），用 `llama-bench` 测 depth 512 和 8192；固定 commit，脚本复现。详细清单见 `docs/plans/m1.md` | 已拿到：55.90 / 54.19 tok/s；逻辑带宽约 80%；可用显存 16.61 GB；真实生成正常。详见 [M1 journal](journal/2026-10-19-m1-llamacpp-reference.md) | 半天 |
 | M2 拼装 runner 跑通 | ✅ 完成 2026-10-21 | 执行清单见 [docs/plans/m2.md](plans/m2.md)。数值、生成、容量验收见 [M2 关闭记录](journal/2026-10-21-m2-close.md)；ShapeStableLinear 和 eager reference 冻结给 M3 | W4A4 对拍通过；runner 数值（3 prompt ×16 步）通过；三条真实 prompt 2048 上限正常 EOS；512/7680 容量通过；8K peak 15.62 GB，free 0.413 GB；**不设 tok/s 门槛** | 2–3 天 |
-| M3 decode baseline | 未开始 | 改用 static cache，自己写 decode loop 并录成 CUDA Graph；按 §2 写固定 harness（多次运行，报告中位数和波动，记录峰值显存）；按实际 tensor 布局和 KV 格式重算每步字节并算 SOL；抓第一张 Nsight Systems 时间线；分别报告模型执行速度和含 sampling 的有效输出速度 | 拿到 baseline tok/s 和时间分布；top 热点明确；加载 / repack / prefill / decode 的峰值显存有记录；BF16 / FP8 KV 分开报 | 1–2 天 |
+| M3 decode baseline | ✅ 完成 2026-10-21 | 四执行方式（eager / static-exact / static-cap / graph）× depth 512/7680 与 capacity 1024/8192；按 §2 的固定 harness（5 次重复、两套计时、峰值显存）；按实际字节重算 SOL；nsys 时间线。详细见 [M3 journal](journal/2026-10-21-m3-decode-baseline.md) | 已拿到：graph **31.41 tok/s**（depth 512/cap 1024，48.5% SOL）、**22.53 tok/s**（8K，35.9% SOL）；eager/static 均 11.3–12.0 tok/s（launch-bound，17.8–18.5% SOL）；每步 7242–7290 个 kernel、93.6% <5 µs；8K+graph 峰值 15.722 GB、free 0.119 GB；`docs/sol.md` 按实际 14.452 GB 权重重算。**BF16 KV 已实测，FP8 只有理论值** | 1–2 天 |
 
 ### 6.2 优化阶段
 
@@ -139,8 +143,8 @@ M1 已回答：空闲可用 16.61 GB，显示器没有占用 5080。剩余显存
 | 加 drafter 后是否还装得下 | Phase 3（先做容量预演） | 停在 MTP；drafter 权重 / codebook 放 host，或更激进地量化 |
 | 量化后的 τ 与净加速 | Phase 3 | MTP；按有效输出速度选 |
 | FlashInfer `mm_fp4` 在 `M=1 / 8` 的可用性 | ✅ 已答（M=1/8/128 + 尾块；backend `cutlass`） | 换 backend；或先用 CUDA core 版本把流程跑通 |
-| `mm_fp4` 在 M=1 时的效率 | M3（§2 已给单 op microbench） | 只影响 baseline 的数字，Phase 2 会替换掉 |
-| transformers 的 hybrid cache 能不能直接录进 CUDA Graph | M3 | 自己写静态的 state 管理 |
+| `mm_fp4` 在 M=1 时的效率 | ✅ 已答（M3：401 次/step 共 20.7 ms，14.399 GB 权重 → 696 GB/s，72.5% 峰值） | Phase 2 换自写 GEMV |
+| transformers 的 hybrid cache 能不能直接录进 CUDA Graph | ✅ 已答（static cache 适配 + 整步 capture 通过，21 gate；8K 下 graph pool 只多 34 MB） | 已经在用；必须显式传 `past_key_values` |
 | 小 N 的 W4A4 GEMM 能跑到多少带宽 | Phase 2–3 | N=8 时理论上离算力上限还很远 |
 | 逻辑带宽与 DRAM 实测是否一致 | 需要时 | `ncu` 的 `dram__bytes` / `dram__throughput` |
 

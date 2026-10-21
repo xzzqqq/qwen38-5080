@@ -1,0 +1,2 @@
+using /opt/nvidia/nsight-systems-cli/2026.2.1/bin/nsys
+NVIDIA Nsight Systems version 2026.2.1.210-262137639646v0

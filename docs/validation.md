@@ -89,3 +89,38 @@ KV 长度不同，不适合直接做 bitwise 判据。
 
 提交前按任务需要检查测试、`py_compile`、`git diff --check`、文档链接/表格，
 并清理中间 results。失败实验也值得写 journal。
+
+## 10. bitwise 只在同 shape 有意义（M3）
+
+M3 把“执行方式改造”和“attention 长度变化”分开，才能同时通过 gate 并解释差异：
+
+- 同 shape 的三组（eager→static-exact、padded reference→static-cap、
+  static-cap→graph）全部 bitwise；这是可以严格验收的部分。
+- 不同 shape 的两组（eager→static-cap、eager→padded）差到 O(1)，但原因是
+  `repeat_kv` 展开后的 matmul 在更长的 K 维上用了不同的 float32 累加分组：
+  用 microbench 隔离单个 attention op 后，两条路径与 float64 参考的距离相同，
+  差异只有 0.22 ulp。**不能用“模式名”判断 bitwise，也不要跨 shape 设容差。**
+
+## 11. free-running 生成不能当 bitwise gate（M3）
+
+即使逐 step（teacher forcing）bitwise，自由贪心生成也可能在几十步后分叉：
+sub-ulp 的注意力差异经过 64 层 BF16 残差和 401 个 W4A4 GEMM 会被放大。
+gate 应该用“EOS + 长度 + 内容”，与参考 trace 的差异只作 diagnostic，并记录
+首处分叉的 top-2 margin，用来区分“实现差异”和“near-tie 翻转”。
+
+## 12. launch-bound 与带宽-bound 的区分（M3）
+
+只看 tok/s 会把两种完全不同的瓶颈混为一谈：
+
+- 先算 `B_mean / tok/s` 得到逻辑带宽；17% SOL 说明不是带宽问题；
+- 再看 nsys 的每步 kernel 数与 kernel 累计时间：86 ms 墙钟 vs 30 ms kernel
+  累计、7242 个 kernel、93.9% 小于 5 µs → 提交开销占主导。
+- graph 之后 kernel 累计几乎不变、墙钟掉到 kernel 累计附近，才进入真正的
+  kernel 效率问题。**先用“每步 kernel 数 + 墙钟/kernel 比值”判断，再决定
+  优化方向，不要直接按源码 op 数量猜。**
+
+## 13. allocator 策略要固定并写进 provenance（M3）
+
+`expandable_segments` 会改变 8K 的可行性和 peak/reserved 观测值：默认 allocator
+在 7680+128 prefill 因碎片 OOM，开启后与 M2 记录逐位一致。它不改变数值，但
+**不写进 provenance 就没法解释“同一脚本两次峰值不同”**。

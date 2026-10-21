@@ -1,0 +1,241 @@
+{
+  "scenario": "exact-8192",
+  "spec": {
+    "execution": "static-exact",
+    "depth": 7680,
+    "capacity": 8192
+  },
+  "steps": 511,
+  "cache_bytes": {
+    "cache_kv_bytes": 536870912,
+    "cache_gdn_state_bytes": 0,
+    "cache_conv_state_bytes": 0,
+    "cache_kv_layers": 16,
+    "cache_linear_layers": 48,
+    "cache_finite": true
+  },
+  "harness": {
+    "execution": "static-exact",
+    "capacity": 8192,
+    "prefill_chunk": 128,
+    "max_context": 8192,
+    "input_buffer_shape": [
+      1,
+      1,
+      5120
+    ],
+    "input_buffer_ptr": 31705255936,
+    "input_buffer_dtype": "torch.bfloat16",
+    "pinned_staging_shape": [
+      1,
+      1,
+      5120
+    ],
+    "host_embedding_bytes": 2542796800,
+    "cache": {
+      "kv_bytes": 536870912,
+      "gdn_state_bytes": 0,
+      "conv_state_bytes": 0,
+      "kv_layers": 16,
+      "linear_layers": 48,
+      "kv_dtypes": [
+        "torch.bfloat16"
+      ],
+      "gdn_dtypes": [],
+      "conv_dtypes": [],
+      "finite": true
+    }
+  },
+  "stages": [
+    {
+      "stage": "load",
+      "seconds": 1.3005304336547852,
+      "peak_allocated_gb": 14.45758976,
+      "peak_reserved_gb": 14.556332032,
+      "end_allocated_gb": 14.4520192,
+      "end_reserved_gb": 14.556332032,
+      "free_gb": 1.727922176,
+      "smi_used_mib": 14193.0
+    },
+    {
+      "stage": "cache_init",
+      "seconds": 0.002072912873700261,
+      "peak_allocated_gb": 14.988908544,
+      "peak_reserved_gb": 15.101591552,
+      "end_allocated_gb": 14.988908544,
+      "end_reserved_gb": 15.101591552,
+      "free_gb": 1.182662656,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 14713.0,
+      "cache_kv_bytes": 536870912,
+      "cache_gdn_state_bytes": 0,
+      "cache_conv_state_bytes": 0,
+      "cache_kv_layers": 16,
+      "cache_linear_layers": 48,
+      "cache_finite": true
+    },
+    {
+      "stage": "prefill_cold",
+      "seconds": 6.925635806052014,
+      "peak_allocated_gb": 15.6535808,
+      "peak_reserved_gb": 15.758000128,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.758000128,
+      "free_gb": 0.513671168,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15351.0,
+      "prefill_s": 6.92375244140625,
+      "cache_len": 7680
+    },
+    {
+      "stage": "prefill_again",
+      "seconds": 6.611477673985064,
+      "peak_allocated_gb": 15.65407744,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "prefill_s": 6.60938232421875,
+      "cache_len": 7680
+    },
+    {
+      "stage": "decode",
+      "seconds": 44.188212149078026,
+      "peak_allocated_gb": 15.428393472,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "decode_peak_allocated_gb": 15.428393472,
+      "decode_peak_reserved_gb": 15.76009728,
+      "decode_tok_s": 11.565267867756925,
+      "cache_len_end": 8191
+    },
+    {
+      "stage": "reset_reprefill",
+      "seconds": 6.725203638896346,
+      "peak_allocated_gb": 15.65407744,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "prefill_s": 6.723126953125,
+      "cache_len": 7680
+    },
+    {
+      "stage": "decode_cycle2",
+      "seconds": 1.390521468827501,
+      "peak_allocated_gb": 15.411040256,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "decode_tok_s": 11.511882085504107,
+      "cache_len_end": 7696
+    },
+    {
+      "stage": "reset_reprefill_cycle2",
+      "seconds": 6.63430176791735,
+      "peak_allocated_gb": 15.65407744,
+      "peak_reserved_gb": 15.76009728,
+      "end_allocated_gb": 15.21982976,
+      "end_reserved_gb": 15.76009728,
+      "free_gb": 0.511574016,
+      "total_gb": 16.609509376,
+      "smi_used_mib": 15353.0,
+      "prefill_s": 6.63223291015625,
+      "cache_len": 7680
+    }
+  ],
+  "growth": {
+    "allocated_delta_gb": 0.0,
+    "reserved_delta_gb": 0.0,
+    "cycle2_allocated_delta_gb": 0.0,
+    "cycle2_reserved_delta_gb": 0.0,
+    "kv_data_ptr_stable": true,
+    "kv_data_ptr": 27402731520,
+    "kv_data_ptr_note": ""
+  },
+  "peaks": {
+    "load_peak_allocated_gb": 14.45758976,
+    "max_peak_allocated_gb": 15.65407744,
+    "max_peak_reserved_gb": 15.76009728,
+    "min_free_gb": 0.511574016,
+    "final_end_allocated_gb": 15.21982976,
+    "final_end_reserved_gb": 15.76009728
+  },
+  "ok": true,
+  "provenance": {
+    "created_at": "2026-10-21T18:15:44.417245+08:00",
+    "git": {
+      "commit": "524cc28a39b17c93bb3dfa935345851b8351a1ee",
+      "dirty": true,
+      "status": [
+        "M Makefile",
+        " M docs/decisions.md",
+        " M runner/__init__.py",
+        " M runner/env.py",
+        "?? bench/e2e/decode.py",
+        "?? bench/micro/attn_length_effect.py",
+        "?? bench/workloads/m3-p0/",
+        "?? results/m3/",
+        "?? runner/model/decode_runner.py",
+        "?? runner/model/graph_runner.py",
+        "?? runner/model/padded_reference.py",
+        "?? runner/model/snapshots.py",
+        "?? runner/model/static_cache.py",
+        "?? runner/report.py",
+        "?? scripts/m3_check.py",
+        "?? scripts/m3_fixtures.py",
+        "?? scripts/m3_memory.py",
+        "?? scripts/m3_profile.py",
+        "?? scripts/m3_profile.sh",
+        "?? scripts/m3_profile_stats.py",
+        "?? scripts/m3_sol.py"
+      ],
+      "diff_sha256": "45741d1aada93f0146494279b5ab4a302b4ccbf75f0ac33211fe17b6e8e3c0a6",
+      "diff_bytes": 5125
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+      "torch": "2.14.1+cu130",
+      "transformers": "5.20.2",
+      "flashinfer": "0.7.2",
+      "cuda": "13.0",
+      "gpu_name": "NVIDIA GeForce RTX 5080",
+      "gpu_total_mib": 16303.0,
+      "driver": "580.105.08",
+      "clock_sm_mhz": 2835.0,
+      "clock_max_mhz": 3090.0,
+      "temperature_c": 53.0,
+      "power_w": 197.46
+    },
+    "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+    "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+    "argv": [
+      "/home/xzq/workspace/qwen/scripts/m3_memory.py",
+      "--worker",
+      "exact-8192",
+      "--out",
+      "/home/xzq/workspace/qwen/results/m3/20261021T181311-m3-memory/exact-8192",
+      "--fixtures",
+      "/home/xzq/workspace/qwen/bench/workloads/m3-p0",
+      "--steps",
+      "511",
+      "--chunk-size",
+      "128"
+    ],
+    "cwd": "/home/xzq/workspace/qwen",
+    "sol_bandwidth_bytes": 960000000000.0,
+    "worker": "exact-8192"
+  }
+}

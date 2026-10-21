@@ -1,0 +1,403 @@
+{
+  "weights": {
+    "categories": {
+      "nvfp4_weight_packed": 12799180800,
+      "nvfp4_weight_scale_swizzled": 1599897600,
+      "nvfp4_scalars": 3208,
+      "bf16_params": 52476928,
+      "bf16_buffers": 256
+    },
+    "total_cuda_bytes": 14451558792,
+    "nvfp4_linears": 401,
+    "host_embedding_bytes": 2542796800
+  },
+  "cache": {
+    "1024": {
+      "capacity": 1024,
+      "kv_bytes": 67108864,
+      "gdn_state_bytes": 150994944,
+      "conv_state_bytes": 3932160,
+      "total_bytes": 222035968
+    },
+    "8192": {
+      "capacity": 8192,
+      "kv_bytes": 536870912,
+      "gdn_state_bytes": 150994944,
+      "conv_state_bytes": 3932160,
+      "total_bytes": 691798016
+    }
+  },
+  "ideal": {
+    "bf16_512": {
+      "steps": 511,
+      "depth": 512,
+      "first": {
+        "t": 1,
+        "L_t": 513,
+        "read_kv": 33619968,
+        "write_kv": 65536,
+        "total": 14795098504
+      },
+      "last": {
+        "t": 511,
+        "L_t": 1023,
+        "read_kv": 67043328,
+        "write_kv": 65536,
+        "total": 14828521864
+      },
+      "mean_bytes": 14811810184.0,
+      "min_bytes": 14795098504,
+      "max_bytes": 14828521864,
+      "kv_bytes_total": 50397184.0
+    },
+    "bf16_7680": {
+      "steps": 511,
+      "depth": 7680,
+      "first": {
+        "t": 1,
+        "L_t": 7681,
+        "read_kv": 503382016,
+        "write_kv": 65536,
+        "total": 15264860552
+      },
+      "last": {
+        "t": 511,
+        "L_t": 8191,
+        "read_kv": 536805376,
+        "write_kv": 65536,
+        "total": 15298283912
+      },
+      "mean_bytes": 15281572232.0,
+      "min_bytes": 15264860552,
+      "max_bytes": 15298283912,
+      "kv_bytes_total": 520159232.0
+    },
+    "fp8_512": {
+      "steps": 511,
+      "depth": 512,
+      "first": {
+        "t": 1,
+        "L_t": 513,
+        "read_kv": 16809984,
+        "write_kv": 32768,
+        "total": 14778255752
+      },
+      "last": {
+        "t": 511,
+        "L_t": 1023,
+        "read_kv": 33521664,
+        "write_kv": 32768,
+        "total": 14794967432
+      },
+      "mean_bytes": 14786611592.0,
+      "min_bytes": 14778255752,
+      "max_bytes": 14794967432,
+      "kv_bytes_total": 25198592.0
+    },
+    "fp8_7680": {
+      "steps": 511,
+      "depth": 7680,
+      "first": {
+        "t": 1,
+        "L_t": 7681,
+        "read_kv": 251691008,
+        "write_kv": 32768,
+        "total": 15013136776
+      },
+      "last": {
+        "t": 511,
+        "L_t": 8191,
+        "read_kv": 268402688,
+        "write_kv": 32768,
+        "total": 15029848456
+      },
+      "mean_bytes": 15021492616.0,
+      "min_bytes": 15013136776,
+      "max_bytes": 15029848456,
+      "kv_bytes_total": 260079616.0
+    }
+  },
+  "bench_rows": [
+    {
+      "scenario": "eager-512",
+      "execution": "eager",
+      "depth": 512,
+      "capacity": null,
+      "scan": "scan=L_t~767",
+      "steps": 511,
+      "mean_bytes": 14811810184.0,
+      "kv_bytes": 50397184.0,
+      "sol_tok_s": 64.81314492113937,
+      "model_tok_s": 11.548929731512725,
+      "system_tok_s": 11.456076005461052,
+      "model_pct_sol": 0.1781880781370006,
+      "system_pct_sol": 0.1767554408816313,
+      "model_logical_gb_s": 171.06055501152056,
+      "system_logical_gb_s": 169.68522324636604,
+      "peak_allocated_gb": 14.780165632,
+      "free_gb_min": 1.356660736
+    },
+    {
+      "scenario": "eager-8192",
+      "execution": "eager",
+      "depth": 7680,
+      "capacity": null,
+      "scan": "scan=L_t~7935",
+      "steps": 511,
+      "mean_bytes": 15281572232.0,
+      "kv_bytes": 520159232.0,
+      "sol_tok_s": 62.82076120346672,
+      "model_tok_s": 11.468654467880711,
+      "system_tok_s": 11.274000819815129,
+      "model_pct_sol": 0.1825615329737173,
+      "system_pct_sol": 0.17946297694961677,
+      "model_logical_gb_s": 175.2590716547686,
+      "system_logical_gb_s": 172.2844578716321,
+      "peak_allocated_gb": 15.427823104,
+      "free_gb_min": 0.413007872
+    },
+    {
+      "scenario": "exact-512-1024",
+      "execution": "static-exact",
+      "depth": 512,
+      "capacity": 1024,
+      "scan": "scan=L_t~767",
+      "steps": 511,
+      "mean_bytes": 14811810184.0,
+      "kv_bytes": 50397184.0,
+      "sol_tok_s": 64.81314492113937,
+      "model_tok_s": 11.640979126966478,
+      "system_tok_s": 11.616544570072026,
+      "model_pct_sol": 0.17960830540055575,
+      "system_pct_sol": 0.17923130538112786,
+      "model_logical_gb_s": 172.4239731845335,
+      "system_logical_gb_s": 172.06205316588276,
+      "peak_allocated_gb": 14.78023936,
+      "free_gb_min": 1.373503488
+    },
+    {
+      "scenario": "exact-512-8192",
+      "execution": "static-exact",
+      "depth": 512,
+      "capacity": 8192,
+      "scan": "scan=L_t~767",
+      "steps": 511,
+      "mean_bytes": 14811810184.0,
+      "kv_bytes": 50397184.0,
+      "sol_tok_s": 64.81314492113937,
+      "model_tok_s": 11.546372560227292,
+      "system_tok_s": 11.50168069041398,
+      "model_pct_sol": 0.1781486236206591,
+      "system_pct_sol": 0.17745907414936454,
+      "model_logical_gb_s": 171.02267867583276,
+      "system_logical_gb_s": 170.36071118338995,
+      "peak_allocated_gb": 15.250001408,
+      "free_gb_min": 0.912130048
+    },
+    {
+      "scenario": "exact-8192",
+      "execution": "static-exact",
+      "depth": 7680,
+      "capacity": 8192,
+      "scan": "scan=L_t~7935",
+      "steps": 511,
+      "mean_bytes": 15281572232.0,
+      "kv_bytes": 520159232.0,
+      "sol_tok_s": 62.82076120346672,
+      "model_tok_s": 11.618963232118336,
+      "system_tok_s": 11.588227504592195,
+      "model_pct_sol": 0.18495419363809223,
+      "system_pct_sol": 0.18446493297111952,
+      "model_logical_gb_s": 177.55602589256856,
+      "system_logical_gb_s": 177.08633565227476,
+      "peak_allocated_gb": 15.427896832,
+      "free_gb_min": 0.513671168
+    },
+    {
+      "scenario": "cap-512-1024",
+      "execution": "static-cap",
+      "depth": 512,
+      "capacity": 1024,
+      "scan": "scan=1024",
+      "steps": 511,
+      "mean_bytes": 14828587400,
+      "kv_bytes": 67174400,
+      "sol_tok_s": 64.73981466366783,
+      "model_tok_s": 11.274780399171314,
+      "system_tok_s": 11.17105290102787,
+      "model_pct_sol": 0.17415527767179034,
+      "system_pct_sol": 0.17255305655512013,
+      "model_logical_gb_s": 167.18906656491873,
+      "system_logical_gb_s": 165.6509342929153,
+      "peak_allocated_gb": 14.780263936,
+      "free_gb_min": 1.373503488
+    },
+    {
+      "scenario": "cap-512-8192",
+      "execution": "static-cap",
+      "depth": 512,
+      "capacity": 8192,
+      "scan": "scan=8192",
+      "steps": 511,
+      "mean_bytes": 15298349448,
+      "kv_bytes": 536936448,
+      "sol_tok_s": 62.75186766148185,
+      "model_tok_s": 11.952667257831266,
+      "system_tok_s": 11.77480340642304,
+      "model_pct_sol": 0.19047508390205273,
+      "system_pct_sol": 0.18764068457600044,
+      "model_logical_gb_s": 182.8560805459706,
+      "system_logical_gb_s": 180.13505719296043,
+      "peak_allocated_gb": 15.427921408,
+      "free_gb_min": 0.744357888
+    },
+    {
+      "scenario": "cap-8192",
+      "execution": "static-cap",
+      "depth": 7680,
+      "capacity": 8192,
+      "scan": "scan=8192",
+      "steps": 511,
+      "mean_bytes": 15298349448,
+      "kv_bytes": 536936448,
+      "sol_tok_s": 62.75186766148185,
+      "model_tok_s": 11.782884944244904,
+      "system_tok_s": 11.608886829514955,
+      "model_pct_sol": 0.1877694701902464,
+      "system_pct_sol": 0.18499667439604645,
+      "model_logical_gb_s": 180.25869138263653,
+      "system_logical_gb_s": 177.59680742020458,
+      "peak_allocated_gb": 15.427921408,
+      "free_gb_min": 0.513671168
+    },
+    {
+      "scenario": "graph-512-1024",
+      "execution": "graph",
+      "depth": 512,
+      "capacity": 1024,
+      "scan": "scan=1024",
+      "steps": 511,
+      "mean_bytes": 14828587400,
+      "kv_bytes": 67174400,
+      "sol_tok_s": 64.73981466366783,
+      "model_tok_s": 31.408065399290653,
+      "system_tok_s": 31.37681587368031,
+      "model_pct_sol": 0.48514296128989304,
+      "system_pct_sol": 0.4846602672047665,
+      "model_logical_gb_s": 465.7372428382974,
+      "system_logical_gb_s": 465.27385651657585,
+      "peak_allocated_gb": 14.822409216,
+      "free_gb_min": 1.170079744
+    },
+    {
+      "scenario": "graph-512-8192",
+      "execution": "graph",
+      "depth": 512,
+      "capacity": 8192,
+      "scan": "scan=8192",
+      "steps": 511,
+      "mean_bytes": 15298349448,
+      "kv_bytes": 536936448,
+      "sol_tok_s": 62.75186766148185,
+      "model_tok_s": 22.711590980801525,
+      "system_tok_s": 22.695301040901516,
+      "model_pct_sol": 0.36192693265036124,
+      "system_pct_sol": 0.36166733974090576,
+      "model_logical_gb_s": 347.4498553443468,
+      "system_logical_gb_s": 347.20064615126955,
+      "peak_allocated_gb": 15.292171264,
+      "free_gb_min": 0.519962624
+    },
+    {
+      "scenario": "graph-8192",
+      "execution": "graph",
+      "depth": 7680,
+      "capacity": 8192,
+      "scan": "scan=8192",
+      "steps": 511,
+      "mean_bytes": 15298349448,
+      "kv_bytes": 536936448,
+      "sol_tok_s": 62.75186766148185,
+      "model_tok_s": 22.52785727558133,
+      "system_tok_s": 22.512765426044762,
+      "model_pct_sol": 0.3589989926213671,
+      "system_pct_sol": 0.35875849221717226,
+      "model_logical_gb_s": 344.6390329165124,
+      "system_logical_gb_s": 344.40815252848535,
+      "peak_allocated_gb": 15.292171264,
+      "free_gb_min": 0.121503744
+    }
+  ],
+  "provenance": {
+    "created_at": "2026-10-21T18:25:29.297032+08:00",
+    "git": {
+      "commit": "524cc28a39b17c93bb3dfa935345851b8351a1ee",
+      "dirty": true,
+      "status": [
+        "M Makefile",
+        " M docs/decisions.md",
+        " M runner/__init__.py",
+        " M runner/env.py",
+        "?? bench/e2e/decode.py",
+        "?? bench/micro/attn_length_effect.py",
+        "?? bench/workloads/m3-p0/",
+        "?? results/m3/",
+        "?? runner/model/decode_runner.py",
+        "?? runner/model/graph_runner.py",
+        "?? runner/model/padded_reference.py",
+        "?? runner/model/snapshots.py",
+        "?? runner/model/static_cache.py",
+        "?? runner/report.py",
+        "?? scripts/m3_check.py",
+        "?? scripts/m3_fixtures.py",
+        "?? scripts/m3_memory.py",
+        "?? scripts/m3_profile.py",
+        "?? scripts/m3_profile.sh",
+        "?? scripts/m3_profile_stats.py",
+        "?? scripts/m3_sol.py"
+      ],
+      "diff_sha256": "45741d1aada93f0146494279b5ab4a302b4ccbf75f0ac33211fe17b6e8e3c0a6",
+      "diff_bytes": 5125
+    },
+    "environment": {
+      "python": "3.12.15",
+      "platform": "Linux-5.19.0-41-generic-x86_64-with-glibc2.35",
+      "torch": "2.14.1+cu130",
+      "transformers": "5.20.2",
+      "flashinfer": "0.7.2",
+      "cuda": "13.0",
+      "gpu_name": "NVIDIA GeForce RTX 5080",
+      "gpu_total_mib": 16303.0,
+      "driver": "580.105.08",
+      "clock_sm_mhz": 2730.0,
+      "clock_max_mhz": 3090.0,
+      "temperature_c": 41.0,
+      "power_w": 51.04
+    },
+    "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+    "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+    "argv": [
+      "scripts/m3_sol.py",
+      "--bench",
+      "results/m3/20261021T163844-m3-bench/bench.json"
+    ],
+    "cwd": "/home/xzq/workspace/qwen",
+    "sol_bandwidth_bytes": 960000000000.0
+  },
+  "expansion": {
+    "1024": {
+      "scan_length": 1024,
+      "compact_kv": 2097152,
+      "expanded_kv": 12582912,
+      "per_step_total": 872415232,
+      "extra_vs_compact": 805306368
+    },
+    "8192": {
+      "scan_length": 8192,
+      "compact_kv": 16777216,
+      "expanded_kv": 100663296,
+      "per_step_total": 6979321856,
+      "extra_vs_compact": 6442450944
+    }
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "kind": "m3-p0-fixtures",
+  "created_utc": "2026-10-21T08:23:19.461272+00:00",
+  "git_commit": "524cc28a39b17c93bb3dfa935345851b8351a1ee",
+  "checkpoint": "models/Qwen3.8-27B-NVFP4-RTX5090",
+  "checkpoint_revision": "5b7a687fc8211a5d631c8ca6a593dd37eb26ce33",
+  "reference_runner": "runner/model/eager_runner.py (M2 eager, frozen at ca1bd2e)",
+  "torch": "2.14.1+cu130",
+  "transformers": "5.20.2",
+  "python": "3.12.15",
+  "tokenizer_class": "Qwen3_5Tokenizer",
+  "chat_template_sha256": "0a20a4673d45476ed88dcb4a60b6af35ca202ae470fee6fd2bd419758aabd9ab",
+  "fixed_text": "The quick brown fox jumps over the lazy dog. ",
+  "n_gen": 512,
+  "smoke_max_new_tokens": 2048,
+  "files": {
+    "fixed_512.json": {
+      "sha256": "dfb9882f3a96e1bc24883a0c1d620e64237c7f717b71c9fbc2bc6d339adb2aad",
+      "bytes": 6559
+    },
+    "fixed_7680.json": {
+      "sha256": "86bdfae50326ba35c27d5998767c24ddaa5813335807a31c3d6f1120efe26467",
+      "bytes": 48094
+    },
+    "smoke_math.json": {
+      "sha256": "0a31a42a0b8f6fe83ab765714c9a386f436c916fd06c624056c47bf64ea9c22f",
+      "bytes": 1869
+    },
+    "smoke_code.json": {
+      "sha256": "aac36cd95153edea0bd533b697917e34e4e4718fdaf11606cb0059df2ec75838",
+      "bytes": 2980
+    },
+    "smoke_chat.json": {
+      "sha256": "02da7536c0d2bfd7a23c1123106ff6f50f92edbc38fd18b27511d2a2fe3508d0",
+      "bytes": 4111
+    }
+  }
+}

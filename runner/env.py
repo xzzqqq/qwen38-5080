@@ -22,6 +22,17 @@ def _prepend(var: str, paths: list[Path]) -> None:
     os.environ[var] = os.pathsep.join(merged)
 
 
+def configure_cuda_allocator() -> None:
+    """固定 PyTorch caching allocator 策略。
+
+    M2 记录的 8K 容量数字（load 14.458 GB、prefill peak 15.620 GB、
+    free 0.413 GB）只有开 ``expandable_segments`` 才能复现；默认 allocator
+    在 7680+128 的 prefill 会因为 segment 碎片在 softmax 处 OOM。
+    这是分配器策略，不改变任何数值；M3 的所有进程统一用它，并写进 provenance。
+    """
+    os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+
 def configure_flashinfer_env() -> None:
     cuda_home = Path(
         os.environ.get("CUDA_HOME") or Path.home() / "micromamba/envs/cuda13"

@@ -112,3 +112,43 @@
   - 把 activation quant rounding 差异直接算成 NVFP4Linear 失败。
   - 用任意 full 长度做 chunked prefill 的 bitwise reference。
   - 在 M3 性能 baseline 之前继续改 padding/GDN/conv kernel。
+
+## 2026-10-21 M3 固定 allocator、四模式验收口径与 graph 陷阱
+
+- 决定：
+  - M3 所有进程统一 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
+    （`runner/__init__.py` 里设置，可用同名环境变量覆盖）。默认 allocator 在
+    depth 7680 + chunk 128 的 prefill 会在 attention softmax 处因 segment 碎片
+    OOM；开启后 load 14.458/14.556 GB、prefill peak 15.620 GB、free 0.413 GB，
+    与 M2 关闭记录逐位一致，说明 M2 的数字也是在同等 allocator 策略下测的。
+    这是分配器策略，不改变任何数值，但会影响 peak/reserved 的观测值。
+  - 对拍 gate 只看**同 shape** 的三组：eager→static-exact、padded DynamicCache
+    reference→static-cap、static-cap→graph，全部要求 bitwise。
+    `unpadded→padded`（eager→static-cap / eager→padded-ref）只报 attention
+    长度效应和首处分叉，不作门槛。
+  - attention 长度效应单独用 `bench/micro/attn_length_effect.py` 隔离：同一个
+    attention op，K/V 长度 513 vs 补到 1024（mask 后有效 key 相同），BF16 输出
+    最大差 9.77e-4（中位 0.22 ulp，只有 0.5% 元素变化），两者与 float64 参考的
+    距离相同（3.87e-3）。所以它是 FP reduction 顺序，不是实现错误。
+  - free-running greedy（三条 smoke）**不要求**与冻结 eager trace bitwise 一致：
+    sub-ulp 的注意力差异经过 64 层 BF16 残差和 401 个 W4A4 GEMM 会被放大，
+    在 logits 上到 O(1)。smoke 的 gate 是「EOS + 长度合理 + 内容合理」，
+    与 trace 的差异只作 diagnostic，并记录首处分叉的 top-2 margin。
+    逐 step bitwise 由 graph-1024/8192 的 16 步检查负责。
+  - `GraphDecodeStep` 必须显式把 static cache 作为 `past_key_values` 传进
+    `model(...)`。漏传时 transformers 会自己建一个 `DynamicCache`，graph replay
+    写进 graph-private pool，外部 cache 长度不变、KV 槽不变，但 logits 看起来
+    “在变”，很难发现。已加运行时 guard：warmup 必须让 static cache 前进
+    `warmup_iters`，否则直接报错；check 里另有「replay 写入 static KV 槽」gate。
+  - M3 同时报模型速度和系统速度：模型速度用冻结 trace + 逐步 CUDA events
+    （不含 host/sampling），系统速度是真实贪心闭环墙钟。
+- 理由：8K 的余量只有 0.413 GB，allocator 策略直接决定能不能跑；bitwise 只在
+  同 shape 有意义，跨 shape 的差异不能当回归依据（validation §6）。graph 的
+  cache 传参错误会静默走另一条路径，必须用结构性 gate 拦住。
+- 被否决：
+  - 只用默认 allocator：8K prefill 直接 OOM，且与 M2 记录不可比。
+  - 用 `torch.compile(mode="reduce-overhead")` 代替手写 CUDA Graph：会把
+    Inductor 融合、kernel 选择和 graph 收益混在一起（M3 要单独观察 graph）。
+  - 把 free-running greedy trace 当 gate：数值上不可达，只会掩盖真正的问题。
+  - 用 nsys 2023.4（CUDA 12.4 自带）采集：它没有 Blackwell 的 GPU target info，
+    报告里没有 CUDA kernel data；改用 `/opt/nvidia/nsight-systems-cli/2026.2.1`。
