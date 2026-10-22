@@ -135,6 +135,12 @@ def check_bench_dir(c: Checker) -> None:
     if data is None:
         return
     c.expect(bool(data.get("complete")), "bench.json complete!=true（可能是中断的运行）")
+    prov = c.load("provenance.json") or {}
+    # schema 2 起，每个场景必须记录 run_config / environment_fingerprint，
+    # 否则 --resume 无法判断能否复用（旧结果没有这两个字段，只提示不失败）。
+    requires_run_config = bool((prov.get("run_config") or {}).get("schema"))
+    if not requires_run_config:
+        c.notes.append("早于 run_config schema 2：未校验 resume 指纹（run_config / 环境）")
     results = data.get("results") or []
     c.expect(bool(results), "bench.json 没有 results")
     for res in results:
@@ -177,6 +183,23 @@ def check_bench_dir(c: Checker) -> None:
             (summary.get("peak_allocated_gb") or 0) > 0,
             f"{name}: peak_allocated_gb 缺失",
         )
+        if requires_run_config:
+            cfg = res.get("run_config") or {}
+            c.expect(bool(cfg), f"{name}: 缺 run_config（--resume 无法确认配置）")
+            for key in ("steps", "repeats", "chunk_size", "graph_warmup", "fixtures_sha256"):
+                c.expect(key in cfg, f"{name}: run_config 缺 {key}")
+            c.expect(
+                int(cfg.get("steps", -1)) == steps,
+                f"{name}: run_config.steps {cfg.get('steps')} != {steps}",
+            )
+            c.expect(
+                int(cfg.get("repeats", -1)) == repeats,
+                f"{name}: run_config.repeats {cfg.get('repeats')} != {repeats}",
+            )
+            c.expect(
+                bool(res.get("environment_fingerprint")),
+                f"{name}: 缺 environment_fingerprint",
+            )
 
 
 def check_memory_dir(c: Checker) -> None:
@@ -312,6 +335,8 @@ def main() -> int:
         print(f"[{status}] {path}")
         for failure in c.failures:
             print(f"   - {failure}")
+        for note in c.notes:
+            print(f"   · {note}")
         bad += bool(c.failures)
     checked = len(paths) - legacy
     print(f"\n{checked - bad + (legacy if args.strict else 0)}/{checked} 个当前 run dir 通过；"

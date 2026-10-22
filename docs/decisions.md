@@ -194,6 +194,8 @@
   2. **迭代期只重跑受影响的场景**：用 `--only <scenario>`，未改代码路径的场景
      沿用旧结果。但同一张表里必须逐场景标注 commit/provenance，不能把不同
      commit 的数字混报成一次结果；里程碑关闭仍必须全量。
+     （2026-10-22 更新：`--resume` 现在自己核对源码 + 运行配置 + 环境指纹，
+     见下一条决定。）
   3. **开发期一律用 `make m3-quick`**（单场景 `--only` + `--repeats 1 --steps 32`），
      产物写 `.tmp/m3-quick/`，不进 `results/`；只有全量结果进
      `results/m3/<run-id>-*/` 并带 provenance。
@@ -248,3 +250,26 @@
 - 被否决：
   - 现在就上 64 步 warmup：省 16 分钟换一个冷样本和一处 plan 偏差，不划算。
   - 现在就做自适应重复：改 schema 的收益远低于在 Phase 2 和 microbench 流程一起做。
+
+## 2026-10-22 `--resume` 必须核对运行配置与环境指纹
+
+- 决定：bench 的 `--resume` 复用条件从"源码一致"扩展为**三者都一致**：
+  1. **源码**：commit、dirty 状态、`source_manifest.patch_sha256`；
+  2. **运行配置**：`steps`、`repeats`（`--repeats-non-graph` 生效后的值）、
+     `chunk_size`、`graph_warmup`、fixtures manifest 的内容 hash；
+  3. **环境指纹**：python / torch / transformers / FlashInfer / CUDA / GPU / driver。
+  每个 `result.json` 记录 `run_config` 与 `environment_fingerprint`；目录级在
+  `provenance.json` 记录整个矩阵的 `run_config`。任一不一致就重跑该场景并打印
+  差异；矩阵配置变了则写新目录，不覆盖旧记录。旧结果没有这两个字段时**不复用**
+  （无法确认就不复用）。
+- 理由：之前只比源码，换 `--steps` / `--repeats` / `--chunk-size` / fixtures 后
+  `--resume` 会静默跳过旧场景，同一个 `bench.json` 里混进不同协议，中位数和
+  %SOL 都无法解释；driver/torch/FlashInfer 版本变化同理。源码一致只保证"代码
+  一样"，不保证"实验一样"。
+- 被否决：
+  - 只比 `steps`/`repeats`：漏掉 `chunk_size`、`graph_warmup` 和 fixtures 内容，
+    而这些都会改变数值或计时；
+  - 只比配置不比环境：换驱动/库版本后的数字不可与之前合并；
+  - 对旧结果"尽力复用"：无法确认配置时复用等于引入不可见的混合口径。
+- 相关：2026-10-21 "bench 迭代成本" 那条的第 2 点（迭代期只重跑受影响场景）
+  现在由这三层指纹自动判定，不再依赖人工记录。

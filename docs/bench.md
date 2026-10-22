@@ -72,7 +72,7 @@ kernel 后这几个常数要更新（`EST_*`），它们只影响 `--list` 的�
 | `--graph-warmup` | 3 | capture 前 side-stream warmup 次数，必须 ≥1 |
 | `--fixtures` | `bench/workloads/m3-p0` | 启动时校验 manifest 里的 sha256 |
 | `--out` | 自动 `results/m3/<ts>-m3-bench` | 指定后不会再自动换新目录（resume 时建议显式给出同一个） |
-| `--resume` | off | 见 §7 |
+| `--resume` | off | 只有源码、运行配置、环境指纹三者都一致才复用；见 §7 |
 | `--tag` | `m3-bench` | 自动目录的后缀 |
 | `--worker` | — | 内部参数（driver 调子进程），不要手写 |
 
@@ -105,9 +105,16 @@ results/m3/<run-id>-m3-bench/
 
 ## 7. 失败与恢复
 
-- **被中断**：同一 `--out`（或直接 `--resume` 用最近的 `*-m3-bench`）重跑；
-  只补没有 `ok` 结果、或源码 hash（commit + dirty + patch）与当前不一致的场景。
-- **最近目录来自别的源码**：`--resume` 不会覆盖它，会新建一个目录并打印提示。
+- **被中断**：同一 `--out`（或直接 `--resume` 用最近的 `*-m3-bench`）重跑。
+  复用条件（三者都一致）：
+  1. **源码**：commit + dirty 状态 + patch sha256；
+  2. **运行配置**：`steps`、`repeats`（含 `--repeats-non-graph` 生效后的值）、
+     `chunk_size`、`graph_warmup`、fixtures manifest 的内容 hash；
+  3. **环境指纹**：python / torch / transformers / FlashInfer / CUDA / GPU / driver。
+  任何一项变了就重跑对应场景，并打印差异（例如 `运行配置不同（steps: 8 -> 16）`）。
+- **最近目录来自别的源码或矩阵配置**：`--resume` 不会覆盖它，会新建目录并打印原因。
+- 每个 `result.json` 里的 `run_config` 和 `environment_fingerprint` 就是这两层指纹；
+  旧结果没有这两个字段时不能复用（会被判为不可确认）。
 - **单个场景 OOM**：先看是不是 `graph-8192`（8K + graph pool 只剩 ~0.12 GB），
   再看 `docs/plans/m3.md` §5.2 的排查顺序；不要擅自改 KV dtype 或把 embedding 搬上 GPU。
 - **graph capture 之后长度不对**：看 `docs/decisions.md` 2026-10-21 那条（`past_key_values`

@@ -32,8 +32,10 @@ sampling / D2H）。每个场景先完整 warmup 一次，再测 `--repeats` 次
     # 4) 整个里程碑关闭（check/memory/bench/profile/sol，~135 min）
     scripts/m3_close.sh
 
-被中断的 run 用 `--resume` 续跑：只补没有 ok 结果、或源码 hash 与当前不一致的场景；
-最近目录来自别的 commit 时会自动改写到一个新目录，不覆盖旧记录。
+被中断的 run 用 `--resume` 续跑。可复用的条件是**三者都一致**：源码（commit +
+dirty + patch hash）、运行配置（steps、repeats、chunk_size、graph_warmup、fixtures
+内容 hash）、环境指纹（torch/transformers/FlashInfer/driver/GPU）。任何一项变了就
+重跑该场景；整个矩阵的配置变了会改写到一个新目录，不覆盖旧记录。
 
 产物：`results/m3/<run-id>-m3-bench/`（`bench.json`、`summary.md`、`provenance.json`、
 `source_manifest.json`、每场景 `result.json`）。跑完用 `make check-results` 校验契约。
@@ -163,17 +165,102 @@ def measure_once(runner: DecodeRunner, prompt, trace: list[int], steps: int) -> 
     }
 
 
-def same_source(result: dict) -> bool:
-    """resume 时判断旧结果是否由同一份源码产生。"""
-    prev = (result.get("provenance") or {}).get("git") or {}
-    manifest = (result.get("provenance") or {}).get("source_manifest") or {}
-    current = reporting.git_state(ROOT)
-    current_manifest = reporting.source_manifest(ROOT)
-    return (
-        prev.get("commit") == current.get("commit")
-        and prev.get("dirty") == current.get("dirty")
-        and manifest.get("patch_sha256") == current_manifest.get("patch_sha256")
+def fixtures_sha256(fixtures: dict) -> str:
+    """fixtures 内容指纹：prompt / trace / manifest 变了就不能复用旧结果。"""
+    return reporting._sha256_text(
+        json.dumps(fixtures["manifest"], sort_keys=True, separators=(",", ":"))
     )
+
+
+ENV_KEYS = (
+    "python",
+    "torch",
+    "transformers",
+    "flashinfer",
+    "cuda",
+    "gpu_name",
+    "gpu_total_mib",
+    "driver",
+)
+
+
+def env_fingerprint() -> dict:
+    """影响数值/性能的环境字段；换 driver/torch/GPU 后不能复用旧结果。"""
+    env = reporting.environment()
+    return {key: env.get(key) for key in ENV_KEYS}
+
+
+def effective_steps(fixtures: dict, depth: int, requested: int) -> int:
+    """实际计时步数：不能超过 fixture trace 的长度（最后一个 token 不再 forward）。"""
+    trace = fixtures["files"][f"fixed_{depth}.json"]["trace"]
+    return int(min(requested, len(trace) - 1))
+
+
+def effective_repeats(spec: dict, args) -> int:
+    """某个场景实际使用的重复次数（--repeats-non-graph 只作用于非 graph）。"""
+    repeats = int(args.repeats)
+    if (
+        args.repeats_non_graph is not None
+        and args.repeats_non_graph > 0
+        and spec["execution"] != "graph"
+    ):
+        repeats = int(args.repeats_non_graph)
+    return repeats
+
+
+def scenario_run_config(
+    name: str, spec: dict, steps: int, repeats: int, args, fixtures_sha: str
+) -> dict:
+    """一个场景的完整运行配置；resume 必须逐字段一致。"""
+    return {
+        "schema": 2,
+        "scenario": name,
+        "execution": spec["execution"],
+        "depth": int(spec["depth"]),
+        "capacity": spec["capacity"],
+        "steps": int(steps),
+        "repeats": int(repeats),
+        "chunk_size": int(args.chunk_size),
+        "graph_warmup": int(args.graph_warmup),
+        "fixtures_sha256": fixtures_sha,
+    }
+
+
+def resume_mismatch(prev: dict, run_config: dict, env_fp: dict) -> str:
+    """返回不能复用某个场景的原因；空字符串表示可以复用。"""
+    prov = prev.get("provenance") or {}
+    prev_git = prov.get("git") or {}
+    current_git = reporting.git_state(ROOT)
+    current_manifest = reporting.source_manifest(ROOT)
+    if prev_git.get("commit") != current_git.get("commit"):
+        return f"commit {str(prev_git.get('commit'))[:8]} -> {str(current_git.get('commit'))[:8]}"
+    if prev_git.get("dirty") != current_git.get("dirty"):
+        return "dirty 状态不同"
+    if (prov.get("source_manifest") or {}).get("patch_sha256") != current_manifest.get(
+        "patch_sha256"
+    ):
+        return "源码 patch 不同"
+    prev_cfg = prev.get("run_config")
+    if not prev_cfg:
+        return "旧结果没有 run_config，无法确认配置"
+    diffs = [
+        f"{key}: {prev_cfg.get(key)} -> {run_config.get(key)}"
+        for key in run_config
+        if prev_cfg.get(key) != run_config.get(key)
+    ]
+    if diffs:
+        return "运行配置不同（" + "; ".join(diffs) + "）"
+    prev_env = prev.get("environment_fingerprint") or {}
+    if not prev_env:
+        return "旧结果没有环境指纹"
+    env_diffs = [
+        f"{key}: {prev_env.get(key)} -> {env_fp.get(key)}"
+        for key in env_fp
+        if prev_env.get(key) != env_fp.get(key)
+    ]
+    if env_diffs:
+        return "环境不同（" + "; ".join(env_diffs) + "）"
+    return ""
 
 
 def latest_bench_dir() -> Path | None:
@@ -181,24 +268,44 @@ def latest_bench_dir() -> Path | None:
     return dirs[-1] if dirs else None
 
 
-def dir_source_matches(path: Path) -> bool:
-    """run dir 的 provenance 是否属于当前源码（用于决定能否 resume 进去）。"""
+def dir_config_matches(path: Path, matrix_config: dict, env_fp: dict) -> str:
+    """run dir 是否可以用当前源码+配置续写；返回不能用的原因。"""
     prov_path = path / "provenance.json"
     if not prov_path.exists():
-        return False
+        return "缺 provenance.json"
     try:
         prov = json.loads(prov_path.read_text())
-    except Exception:
-        return False
-    prev = prov.get("git") or {}
-    prev_manifest = prov.get("source_manifest") or {}
-    current = reporting.git_state(ROOT)
-    current_manifest = reporting.source_manifest(ROOT)
-    return (
-        prev.get("commit") == current.get("commit")
-        and prev.get("dirty") == current.get("dirty")
-        and prev_manifest.get("patch_sha256") == current_manifest.get("patch_sha256")
-    )
+    except Exception as exc:  # noqa: BLE001
+        return f"provenance 解析失败: {exc}"
+    prev_git = prov.get("git") or {}
+    current_git = reporting.git_state(ROOT)
+    if prev_git.get("commit") != current_git.get("commit"):
+        return f"commit {str(prev_git.get('commit'))[:8]} -> {str(current_git.get('commit'))[:8]}"
+    if prev_git.get("dirty") != current_git.get("dirty"):
+        return "dirty 状态不同"
+    if (prov.get("source_manifest") or {}).get("patch_sha256") != reporting.source_manifest(
+        ROOT
+    ).get("patch_sha256"):
+        return "源码 patch 不同"
+    prev_cfg = prov.get("run_config") or {}
+    if not prev_cfg:
+        return "旧目录没有 run_config"
+    diffs = [
+        f"{key}: {prev_cfg.get(key)} -> {matrix_config.get(key)}"
+        for key in matrix_config
+        if prev_cfg.get(key) != matrix_config.get(key)
+    ]
+    if diffs:
+        return "运行配置不同（" + "; ".join(diffs) + "）"
+    prev_env = prov.get("environment_fingerprint") or {}
+    env_diffs = [
+        f"{key}: {prev_env.get(key)} -> {env_fp.get(key)}"
+        for key in env_fp
+        if prev_env.get(key) != env_fp.get(key)
+    ]
+    if env_diffs:
+        return "环境不同（" + "; ".join(env_diffs) + "）"
+    return ""
 
 
 def run_scenario(name: str, spec: dict, fixtures: dict, args, repeats: int) -> dict:
@@ -219,17 +326,22 @@ def run_scenario(name: str, spec: dict, fixtures: dict, args, repeats: int) -> d
         graph_warmup=args.graph_warmup,
     )
     harness = runner.prepare()
-    steps = min(args.steps, len(full_trace) - 1)
+    steps = effective_steps(fixtures, depth, args.steps)
     if spec["execution"] != "eager":
         if depth + steps > capacity:
             raise ValueError(f"{name}: depth {depth} + {steps} > capacity {capacity}")
         runner.require_capacity(0)
     trace = full_trace
 
+    fixtures_sha = fixtures_sha256(fixtures)
+    env_fp = env_fingerprint()
+    run_config = scenario_run_config(name, spec, steps, repeats, args, fixtures_sha)
     result: dict = {
         "scenario": name,
         "spec": spec,
         "steps": steps,
+        "run_config": run_config,
+        "environment_fingerprint": env_fp,
         "load": load_info,
         "harness": harness,
         "fixture": {
@@ -295,13 +407,7 @@ def run_worker(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
     fixtures = load_fixtures(Path(args.fixtures))
     spec = SCENARIOS[args.worker]
-    repeats = args.repeats
-    if (
-        args.repeats_non_graph is not None
-        and args.repeats_non_graph > 0
-        and spec["execution"] != "graph"
-    ):
-        repeats = args.repeats_non_graph
+    repeats = effective_repeats(spec, args)
     try:
         result = run_scenario(args.worker, spec, fixtures, args, repeats)
         result["ok"] = True
@@ -427,8 +533,8 @@ def main() -> int:
     parser.add_argument(
         "--resume",
         action="store_true",
-        help="续跑：复用 --out（或最新 *-m3-bench）里 ok 且源码 hash 一致的场景；"
-        "最近目录来自别的 commit 时改写新目录",
+        help="续跑：只复用源码/运行配置/环境指纹都一致的场景；"
+        "源码或运行配置变了会重跑，矩阵配置变了会改写新目录",
     )
     parser.add_argument(
         "--steps",
@@ -468,19 +574,41 @@ def main() -> int:
         return run_worker(args)
 
     scenarios = selected  # 上面已经校验过 --only
+    fixtures = load_fixtures(Path(args.fixtures))
+    fixtures_sha = fixtures_sha256(fixtures)
+    env_fp = env_fingerprint()
+    matrix_config = {
+        "schema": 2,
+        "scenarios": scenarios,
+        "steps": int(args.steps),
+        "repeats": int(args.repeats),
+        "repeats_non_graph": args.repeats_non_graph,
+        "chunk_size": int(args.chunk_size),
+        "graph_warmup": int(args.graph_warmup),
+        "fixtures_sha256": fixtures_sha,
+    }
 
     if args.out:
         out_dir = Path(args.out)
+        if args.resume:
+            note = dir_config_matches(out_dir, matrix_config, env_fp)
+            if note:
+                print(
+                    f"resume: 目录 {out_dir.name} 与本轮配置不一致（{note}），"
+                    "受影响场景会重跑",
+                    flush=True,
+                )
     elif args.resume and latest_bench_dir() is not None:
         candidate = latest_bench_dir()
-        if dir_source_matches(candidate):
+        reason = dir_config_matches(candidate, matrix_config, env_fp)
+        if not reason:
             out_dir = candidate
             print(f"resume: 复用最近的 run dir {out_dir}", flush=True)
         else:
-            # 最近的 dir 来自另一份源码：不能往里写，否则会覆盖掉那次记录。
+            # 源码或运行配置与当前不一致：不能往里写，否则会覆盖掉那次记录。
             out_dir = reporting.make_run_dir(ROOT, "bench", args.tag)
             print(
-                f"resume: 最近目录 {candidate.name} 的源码与当前不一致，"
+                f"resume: 最近目录 {candidate.name} 不可复用（{reason}），"
                 f"改写到新目录 {out_dir.name}",
                 flush=True,
             )
@@ -493,10 +621,13 @@ def main() -> int:
         {
             "scenarios": scenarios,
             "repeats": args.repeats,
+            "repeats_non_graph": args.repeats_non_graph,
             "steps": args.steps,
             "chunk_size": args.chunk_size,
             "graph_warmup": args.graph_warmup,
             "fixtures": str(args.fixtures),
+            "run_config": matrix_config,
+            "environment_fingerprint": env_fp,
         },
         out_dir=out_dir,
     )
@@ -506,16 +637,28 @@ def main() -> int:
         sub = out_dir / name
         if args.resume:
             previous = sub / "result.json"
+            eff_steps = effective_steps(fixtures, SCENARIOS[name]["depth"], args.steps)
+            run_config = scenario_run_config(
+                name,
+                SCENARIOS[name],
+                eff_steps,
+                effective_repeats(SCENARIOS[name], args),
+                args,
+                fixtures_sha,
+            )
             if previous.exists():
                 try:
                     prev = json.loads(previous.read_text())
-                except Exception:
-                    prev = {}
-                if prev.get("ok") and same_source(prev):
-                    print(f"\n=== {name}: resume 跳过（已有 ok 结果，源码一致）", flush=True)
+                except Exception as exc:  # noqa: BLE001
+                    prev = {"ok": False, "error": f"解析失败: {exc}"}
+                reason = "旧结果 ok=false" if not prev.get("ok") else resume_mismatch(
+                    prev, run_config, env_fp
+                )
+                if not reason:
+                    print(f"\n=== {name}: resume 跳过（源码/配置/环境一致）", flush=True)
                     results.append(prev)
                     continue
-                print(f"\n=== {name}: resume 重跑（旧结果无效或源码不同）", flush=True)
+                print(f"\n=== {name}: resume 重跑（{reason}）", flush=True)
         cmd = [
             sys.executable,
             str(Path(__file__).resolve()),
