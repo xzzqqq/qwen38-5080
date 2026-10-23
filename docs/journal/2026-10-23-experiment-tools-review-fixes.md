@@ -2,6 +2,7 @@
 
 - 日期：2026-10-23
 - 审查版本：`ed52250`
+- 修复提交：`cd95142`
 - 对应：[使用说明](../experiments.md)、[实现记录](2026-10-23-experiment-tools.md)
 - checkpoint revision `5b7a687fc8211a5d631c8ca6a593dd37eb26ce33`
 
@@ -75,4 +76,4 @@ GPU 回到 0 MiB。
   fault injection 覆盖；真实 GPU 上验证的是“外部 CUDA 进程 → halt”。
 - 外部进程检查是轮询 + 10 s 宽限，不是内核级互斥；检查与启动步骤之间仍有极小窗口。
 - 成功 job 的 worktree 删除后，事后复查无法重算 fixtures manifest hash。
-- 修复尚未提交；待确认后提交并 push。
+- 修复提交为 `cd95142`（已 push）。

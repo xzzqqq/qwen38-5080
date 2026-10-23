@@ -246,7 +246,8 @@ ps -o pid,pgid,cmd -p <record.pid>
 
 ## 10. 已验证（2026-10-23）
 
-- 实现提交：`cd16e2f`（`feat: add a queued GPU experiment runner`）。
+- 实现提交：`cd16e2f`（`feat: add a queued GPU experiment runner`）；审查修复提交：
+  `cd95142`（`fix: harden experiment runner review findings`）。
 - CPU：`pytest tests/experiment -q` → **68 passed**，覆盖 spec §7 的九类场景
   （并发 FIFO/不重叠、改动 worktree、check 失败/缺产物、旧配置、超时/取消、
   重启、通知、重复查询、纯 bench/profile）。
