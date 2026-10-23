@@ -47,3 +47,28 @@ N 与 P 直接决定能否在 BF16 口径达到 19.92 ms；O 决定 FP8 验收�
 - 集成 commit **`43b0b73a5bab608a926e203cb54a2f5f891de164`**（branch `exp/phase2-integration`）
 - 8K：**20.509 ms / 48.76 tok/s / 77.6% SOL（BF16 KV）**，163/163 gate，free 0.423 GB
 - 距 80%：BF16 口径差 **0.59 ms**；FP8 验收口径差 **0.94 ms**，且 FP8 无 e2e 证据。
+
+## 追加：P 修复后成功（job-000056-4e8de313，commit `01e3ff8`）
+
+- **根因不是 eager 逻辑，是 load 阶段 OOM**：`install_decode_pairs` 的 `torch.cat` 在
+  `dict(model.named_buffers())` 仍存活时不释放旧 buffer，128 对累计 +1.5 GiB；
+  且 caching allocator 无法用两半 44.5 MiB 的 segment 拼出 89 MiB。
+  op 级每个 case 只装单 shape，所以 222/222 全绿而 eager 从未执行 —— 「op 全绿 ≠ 接线正确」
+  的又一个具体形态。
+- 修复：loader 装载时在 **CPU cat + 一次 H2D** 构造共享合并 buffer（零额外峰值），
+  删除 `named_buffers()` 滞留引用；`DecodePair` 四种执行方式共用同一逻辑、不探测 capture；
+  order/ptr/error/disabled/seq_len 全部回退计数、不抛异常。
+- **守门测试**：`tests/model/test_patch_wiring_cpu.py` 29 个纯 CPU case（四模式调用序列、
+  前置条件回退、三条历史 bug 回归），`pytest tests` → 121 passed / 12 skipped。
+- 结果：op 222/222、check **139/139**（numeric-512 115/115、graph-1024 24/24）；
+  bench **graph-8192 20.324 ms / 49.13 tok/s**、graph-512-1024 **19.794 ms / 50.44**，
+  vs L+K（20.493 / 19.951）**−0.169 / −0.157 ms**；8K free 0.438 GB。
+- 8K %SOL（BF16）= 49.13 / 62.75 = **78.3%**；距 80%（19.92 ms）差 **0.40 ms**，
+  距 FP8 验收口径（19.57 ms）差 **0.75 ms**。
+- **本轮因此有一个被采纳的候选（P）**，此前「本轮无提升」的结论已由本 job 推翻。
+
+## 待办（上下文预算耗尽，留给下一次）
+
+1. 把 `exp/phase2-gemvtail`（`01e3ff8`）合入集成分支，跑 **511×5 正式测量 + 8K 显存**；
+2. FP8 收尾（判据简化到 op+bench，只用相对判据 + 逐位 roundtrip）；
+3. 剩余 0.40 ms：GEMV 尾部（gate/up 34816 档的 tile）、graph 间隙、残差 add。
