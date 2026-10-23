@@ -115,3 +115,19 @@ ShapeStableLinear 的 a/b GEMM。Explorer 用 `graph-7680/kern_sum.csv` 拆开�
   （M>1 bitwise、decode 接线、finite、coverage）不变。**这不是把 bitwise gate
   降级**：prefill 逐位不变、四个执行方式的 decode 走同一路径，`numeric-512` 的
   两组 bitwise gate 仍是硬判据。
+
+## 任务 G 的 gate 口径修正（记录，供审查）
+
+第一次提交的 op gate 用 `nrmse ≤1e-3 / cosine ≥0.99999 / max_rel ≤5e-3` 判
+「M=1 matvec vs M=128 padded GEMM」，实测 nrmse 3.77e-3–4.29e-3、cosine
+0.9999912、max_rel 7.6e-3。修正后（commit `ff0c87b`）：
+- **硬 gate**：`nrmse ≤5e-3` **且** `cand_vs_fp64_nrmse ≤ 1.05 × ref_vs_fp64_nrmse`
+  （实测 ratio 0.62–0.75，候选更准）；
+- `cosine` / `max_rel` 降为 diagnostic（值仍写进产物）——理由是它们与 nrmse 同源，
+  且 max_rel 7.6e-3 正好等于 absmax 元素的 1 个 bf16 ulp、cosine 只差 1.7e-6；
+- `padded-path-bitwise-unchanged`（9/9）、`decode-patch-coverage`（96/0/0）、finite、
+  `coverage:*` 全部保留为硬 gate。
+
+判定：这不是把 bitwise gate 降级 —— prefill（M>1）逐位不变，decode 的四个执行方式
+走同一条新路径，`numeric-512` 的 `eager→static-exact` / `padded-ref→static-cap`
+仍是硬 bitwise。若 check 挂，直接判负。
