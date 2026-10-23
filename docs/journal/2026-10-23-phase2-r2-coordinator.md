@@ -97,3 +97,21 @@ ShapeStableLinear 的 a/b GEMM。Explorer 用 `graph-7680/kern_sum.csv` 拆开�
 融合短 kernel 之后仍占约 1.1 ms（bmm + softmax + transpose/copy），是下一轮的一个
 可选项。教训：profile 的 kernel 名被模板参数截断后会把多个 GEMM 合成一类，
 **按名字聚合必须同时看 count 与逐实例均值**，不能只看总和。
+
+## 任务 G 第一次提交（job-000031-1356864c）：gate 规格错，允许一次修正
+
+- 失败项：`numeric:a/b:M=1:scale*`（nrmse 0.0038 / cosine 0.9999942 / max_rel 0.0076）
+  与 microbench 的 `numeric:config-*`。
+- **判定：候选更准，gate 阈值本身错**。同一份 op.json 里
+  `ref_vs_fp64_nrmse = 0.0033/0.0030`、`cand_vs_fp64_nrmse = 0.0022/0.0021` —— M=1
+  matvec 到 fp64 的距离比 padded 路径更小；`cand vs padded` 的 max_abs = 0.015625
+  = 2^-6 正好是幅度 2 处的 1 个 bf16 ulp。而脚本里设的 `nrmse ≤1e-3`
+  **比 reference 自身到 fp64 的 3.3e-3 还紧**，任何实现都过不了。
+- 已成立：`padded-path-bitwise-unchanged` 8/8（M>1 逐位不变）、
+  `decode-patch-coverage` 96/0/0；microbench 7.87 → **1.62 µs/call（4.87×）**，
+  96 次/步预计省 **0.60 ms**。
+- 处理：允许一次「gate 规格修正」重投 —— 判据改为
+  `nrmse ≤5e-3` **且** `cand_vs_fp64 ≤ 1.05 × ref_vs_fp64`，其余硬 gate
+  （M>1 bitwise、decode 接线、finite、coverage）不变。**这不是把 bitwise gate
+  降级**：prefill 逐位不变、四个执行方式的 decode 走同一路径，`numeric-512` 的
+  两组 bitwise gate 仍是硬判据。
