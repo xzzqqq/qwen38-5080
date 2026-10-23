@@ -6,9 +6,14 @@
 - 候选：``runner/ops/nvfp4/gemv.py`` + ``gemv_kernel.cu``，直接消费 FlashInfer
   ``nvfp4_quantize`` 的 ``a_fp4``/``a_sf`` 和 checkpoint 的 ``weight_packed`` 与
   **128x4 swizzled** ``weight_scale``（不生成 unsquizzled 副本、不 repack）；
-- reference：用 ``runner.ops.nvfp4.reference`` 的 primitive 解**同一份量化后的 A**
-  和 checkpoint W（``unpack_e2m1`` / ``e2m1_to_float`` / ``unswizzle_scale_128x4``），
-  FP32 matmul，再乘 ``alpha = input_scale * weight_scale_2``；
+- reference（gate 用，两条互相交叉验证）：
+  1) **同一份量化后的 A**：解 FlashInfer 的 ``a_fp4``/``a_sf`` + checkpoint W 的
+     128x4 swizzled scale，FP32 matmul，再乘 ``alpha = input_scale * weight_scale_2``；
+  2) **M2 冻结语义**：``quantize_activation_reference`` 重新量化同一个 x 得到 a_deq，
+     W 用 checkpoint 的**线性** scale（不经过 swizzle）与 ``weight_scale_2``；
+     两条 reference 的一致性本身就是 layout/dtype 口径的 gate。
+  注意 block scale 必须按 **UE4M3 数值**解释：``uint8`` view 再 ``.float()`` 会拿到
+  整数字节值（0x38 → 56.0 而不是 1.0），2026-10-23 的失败就是这个问题；
 - 容差在实现前冻结（[decisions](../decisions.md) M2 NVFP4）：
   ``nrmse <= 5e-3``、``cosine >= 0.99999``、``max_rel <= 1e-2``、输出 finite；
 - 布局单独验：``layout_probe`` case 用两个合成权重（期望值从字节约定手算，不经过
@@ -83,6 +88,7 @@ from runner.ops.nvfp4.reference import (  # noqa: E402
     e2m1_to_float,
     error_metrics,
     pack_e2m1,
+    quantize_activation_reference,
     swizzle_scale_128x4,
     unpack_e2m1,
     unswizzle_scale_128x4,
@@ -138,19 +144,30 @@ def timed(fn, warmup: int, iters: int) -> float:
 
 
 def _u8(t: torch.Tensor) -> torch.Tensor:
+    """packed FP4 数据：只关心字节。"""
     return t if t.dtype == torch.uint8 else t.view(torch.uint8)
+
+
+def _scale_f8(t: torch.Tensor) -> torch.Tensor:
+    """1 字节 block scale：按 UE4M3 解释（**不能** view 成 uint8 再 .float()，
+    那会拿到整数字节值而不是 E4M3 的数值）。"""
+    if t.dtype == torch.float8_e4m3fn:
+        return t
+    if t.element_size() != 1:
+        raise TypeError(f"block scale 必须是 1 字节 dtype，得到 {t.dtype}")
+    return t.view(torch.float8_e4m3fn)
 
 
 def dequant_activation(a_fp4: torch.Tensor, a_sf: torch.Tensor, k: int) -> torch.Tensor:
     """用 frozen reference 的 primitive 解 FlashInfer 的 activation 量化结果。"""
     codes = unpack_e2m1(_u8(a_fp4).reshape(-1))
     values = e2m1_to_float(codes)
-    sf = unswizzle_scale_128x4(_u8(a_sf), 128, k // 16)[0].float()
+    sf = unswizzle_scale_128x4(_scale_f8(a_sf), 128, k // 16)[0].float()
     return values * sf.repeat_interleave(16)
 
 
 def dequant_weight_scale(wsf_swizzled: torch.Tensor, n: int, k: int) -> torch.Tensor:
-    return unswizzle_scale_128x4(_u8(wsf_swizzled), n, k // 16).float()
+    return unswizzle_scale_128x4(_scale_f8(wsf_swizzled), n, k // 16).float()
 
 
 def reference_out(
@@ -298,14 +315,15 @@ def load_instances(
     limit = int(MAX_CASE_WEIGHT_GB * 1e9 // per_instance)
     used = prefixes[: max(1, min(len(prefixes), limit))]
     out = []
-    for prefix in used:
+    for index, prefix in enumerate(used):
+        scale_linear = reader.get(prefix + "weight_scale", device="cuda").contiguous()
         out.append(
             {
                 "name": prefix,
                 "weight": reader.get(prefix + "weight", device="cuda"),
-                "scale": swizzle_scale_128x4(
-                    reader.get(prefix + "weight_scale", device="cuda").contiguous()
-                ),
+                "scale": swizzle_scale_128x4(scale_linear),
+                # 只有第一个实例保留线性 scale：给 M2 冻结路径做交叉验证。
+                "scale_linear": scale_linear if index == 0 else None,
                 "scale_2": reader.get(prefix + "weight_scale_2", device="cuda"),
                 "input_scale": reader.get(prefix + "input_scale", device="cuda"),
             }
@@ -341,16 +359,46 @@ def run_shape(
     a_fp4, a_sf = quantize_activation(x, first_tensors["input_scale"])
 
     # reference 只对第一个实例算（同 shape 走同一份 kernel 代码路径）。
-    wsf_linear = dequant_weight_scale(first_tensors["scale"], n, k)
+    #
+    # 主 reference（gate 用）：解**同一份量化后的 A**（FlashInfer 的 a_fp4/a_sf）
+    #   + checkpoint W 的 128x4 swizzled scale，两条都走 reference.py 的 primitive。
+    # 交叉验证 reference（gate 用）：M2 冻结语义 —— 用 reference quantizer 重新量化
+    #   同一个 x 得到 a_deq，W 用 checkpoint 的**线性** scale（不经过 swizzle），
+    #   这样两条路径只要有一条把 layout/dtype 解释错就会对不上。
+    alpha = (first_tensors["input_scale"] * first_tensors["scale_2"]).reshape(1).float()
     a_scaled = dequant_activation(a_fp4, a_sf, k)
-    ref = reference_out(
-        a_scaled,
-        first_tensors["weight"],
-        wsf_linear,
-        (first_tensors["input_scale"] * first_tensors["scale_2"]).reshape(1).float(),
+    sf_linear_swizzled = dequant_weight_scale(first_tensors["scale"], n, k)
+    ref = reference_out(a_scaled, first_tensors["weight"], sf_linear_swizzled, alpha)
+    del sf_linear_swizzled
+
+    a_ref_packed, a_ref_sf, a_ref_deq = quantize_activation_reference(
+        x, first_tensors["input_scale"]
     )
-    del wsf_linear, a_scaled
+    sf_linear_ckpt = _scale_f8(first_tensors["scale_linear"]).float()
+    ref_frozen = reference_out(
+        a_ref_deq.reshape(-1),
+        first_tensors["weight"],
+        sf_linear_ckpt,
+        first_tensors["scale_2"].reshape(1).float(),
+    )
+    del sf_linear_ckpt
     torch.cuda.empty_cache()
+
+    cross = error_metrics(ref, ref_frozen)
+    a_ref_deq_flat = a_ref_deq.reshape(-1)
+    a_code_mismatch = int(
+        (
+            unpack_e2m1(_u8(a_fp4).reshape(-1))
+            != unpack_e2m1(_u8(a_ref_packed).reshape(-1))
+        ).sum()
+    )
+    a_sf_mismatch = int(
+        (_u8(a_sf) != swizzle_scale_128x4(a_ref_sf).view(torch.uint8)).sum()
+    )
+    a_decoded_rel = float(
+        (a_scaled - a_ref_deq_flat).abs().max()
+        / a_ref_deq_flat.abs().max().clamp_min(1e-12)
+    )
 
     holders = [
         Nvfp4GemvWeights(
@@ -391,9 +439,11 @@ def run_shape(
             holder.forward(a_fp4, a_sf, out=out, k_split=split)
 
     measured: dict[int, dict[str, float]] = {}
+    per_split_out: dict[int, torch.Tensor] = {}
     for split in SPLIT_SWEEP:
         out.fill_(float("nan"))
         holders[0].forward(a_fp4, a_sf, out=out, k_split=split)
+        per_split_out[split] = out.reshape(-1).clone()
         metrics = error_metrics(out.reshape(-1), ref)
         ms = timed(lambda split=split: sweep(split), args.warmup, args.iters)
         measured[split] = {
@@ -403,6 +453,22 @@ def run_shape(
             "max_rel": float(metrics["max_rel"]),
             "finite": float(bool(metrics["finite"])),
         }
+
+    case.gate(
+        "reference: 两条 A 反量化路径一致（nrmse <= 1e-2）",
+        bool(cross["finite"]) and float(cross["nrmse"]) <= 1e-2,
+        {
+            "nrmse": float(cross["nrmse"]),
+            "cosine": float(cross["cosine"]),
+            "a_code_mismatch": a_code_mismatch,
+            "a_sf_mismatch": a_sf_mismatch,
+            "a_decoded_rel_maxdiff": a_decoded_rel,
+            "paths": (
+                "same-quantized-A (a_fp4/a_sf + swizzled W scale) vs "
+                "M2 frozen (reference quantizer + checkpoint linear W scale)"
+            ),
+        },
+    )
 
     picked = measured[policy]
     detail = {
@@ -455,6 +521,9 @@ def run_shape(
 
     out_mm = call_mm_fp4_one(holders[0])
     metrics_mm = error_metrics(out_mm.reshape(-1), ref)
+    out.fill_(float("nan"))
+    holders[0].forward(a_fp4, a_sf, out=out, k_split=policy)
+    vs_mm = error_metrics(out.reshape(-1), out_mm.reshape(-1))
     ms_mm = timed(mm_fp4_sweep, args.warmup, args.iters)
     # 单实例 L2-hot 数字只作 diagnostic（不可与模型 696 GB/s 比较）。
     gemv_hot = timed(
@@ -477,6 +546,13 @@ def run_shape(
     case.metric("gemv_cosine", picked["cosine"])
     case.metric("gemv_max_rel", picked["max_rel"])
     case.metric("mm_fp4_nrmse", float(metrics_mm["nrmse"]))
+    case.metric("mm_fp4_cosine", float(metrics_mm["cosine"]))
+    case.metric("cand_vs_mm_fp4_nrmse", float(vs_mm["nrmse"]))
+    case.metric("cand_vs_mm_fp4_cosine", float(vs_mm["cosine"]))
+    case.metric("ref_cross_nrmse", float(cross["nrmse"]))
+    case.metric("a_code_mismatch", float(a_code_mismatch))
+    case.metric("a_sf_mismatch", float(a_sf_mismatch))
+    case.metric("a_decoded_rel_maxdiff", a_decoded_rel)
     case.metric("aggregate_gb", aggregate_bytes / 1e9)
     case.metric("l2_multiple", aggregate_bytes / max(1, l2_bytes))
     case.metric("gemv_ms_1inst_hot", gemv_hot)
@@ -489,6 +565,53 @@ def run_shape(
             f"gemv_agg_gbs_k_split_{split}",
             aggregate_bytes / (item["agg_ms"] * 1e-3) / 1e9,
         )
+    # 全部 k_split 档必须给出同一个结果（只差 fp32 求和顺序；用 bf16 量级判据）。
+    ref_absmax = float(ref.abs().max().clamp_min(1e-12))
+    split_agreement: dict[int, float] = {}
+    for split, values in per_split_out.items():
+        if split == SPLIT_SWEEP[0]:
+            continue
+        split_agreement[split] = float(
+            (values.float() - per_split_out[SPLIT_SWEEP[0]].float()).abs().max()
+        )
+    case.gate(
+        "numeric: 各 k_split 档结果一致（只差 fp32 求和顺序）",
+        all(value <= 1e-2 * ref_absmax for value in split_agreement.values()),
+        {
+            "baseline_k_split": SPLIT_SWEEP[0],
+            "max_abs_diff": split_agreement,
+            "threshold_abs": 1e-2 * ref_absmax,
+        },
+    )
+    for split, value in split_agreement.items():
+        case.metric(f"k_split_maxdiff_vs_{SPLIT_SWEEP[0]}_k_split_{split}", value)
+
+    mm_ok = (
+        bool(metrics_mm["finite"])
+        and metrics_mm["nrmse"] <= TOL["nrmse"]
+        and metrics_mm["cosine"] >= TOL["cosine"]
+        and metrics_mm["max_rel"] <= TOL["max_rel"]
+    )
+    case.gate(
+        "baseline: mm_fp4 与 reference 在冻结容差内（reference 自检）",
+        bool(mm_ok),
+        {
+            key: float(metrics_mm[key])
+            for key in ("nrmse", "cosine", "max_rel")
+        }
+        | {"tol": TOL, "expected_nrmse": 1.6e-3},
+    )
+    case.gate(
+        "baseline: 候选与 mm_fp4 输出一致（同一份 A/W）",
+        bool(vs_mm["finite"])
+        and float(vs_mm["nrmse"]) <= 1e-3
+        and float(vs_mm["cosine"]) >= 0.9999,
+        {
+            "nrmse": float(vs_mm["nrmse"]),
+            "cosine": float(vs_mm["cosine"]),
+            "max_rel": float(vs_mm["max_rel"]),
+        },
+    )
     case.diag(
         "diagnostic: 工作集 >= 4x L2（聚合 GB/s 才干净）",
         l2_clean,
@@ -516,6 +639,9 @@ def run_shape(
         + "".join(
             f" ks{split}={item['agg_ms']:.3f}" for split, item in measured.items()
         )
+        + f" | ref_cross={float(cross['nrmse']):.2e} "
+        f"cand_vs_mm={float(vs_mm['nrmse']):.2e} "
+        f"a_codes_mismatch={a_code_mismatch} a_sf_mismatch={a_sf_mismatch}"
         + f" | 1inst hot: gemv={gemv_hot:.4f} mm_fp4={mm_hot:.4f} ms",
         flush=True,
     )
@@ -578,6 +704,11 @@ def main(argv: list[str] | None = None) -> int:
             "accum": "fp32",
             "split_k": "grid.y + kernel 内 counter/threadfence 归约，每层 1 个 launch",
             "tolerance": TOL,
+            "reference": (
+                "gate: dequant 同一份量化后的 A（a_fp4/a_sf）+ checkpoint W 的 128x4 "
+                "swizzled scale；cross-check: M2 冻结路径（reference quantizer + 线性 "
+                "W scale）。block scale 一律按 UE4M3 数值解释"
+            ),
             "baseline": "FlashInfer mm_fp4 backend=cutlass, M=1",
             "timing": (
                 "aggregate over all real instances per shape (working set >> L2), "
