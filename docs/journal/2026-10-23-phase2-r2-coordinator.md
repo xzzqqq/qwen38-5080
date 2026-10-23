@@ -131,3 +131,24 @@ ShapeStableLinear 的 a/b GEMM。Explorer 用 `graph-7680/kern_sum.csv` 拆开�
 判定：这不是把 bitwise gate 降级 —— prefill（M>1）逐位不变，decode 的四个执行方式
 走同一条新路径，`numeric-512` 的 `eager→static-exact` / `padded-ref→static-cap`
 仍是硬 bitwise。若 check 挂，直接判负。
+
+## 任务 F 第一次提交（job-000032-08b17afa）：cutlass 基线缺失，但 backend 级数据有效
+
+- 失败项：`coverage: backend cutlass 可用性或不可用原因已记录`（`produced_configs = 0`）
+  与 `wiring: cutlass 默认 tactic 与显式 tactic 逐位一致`（`bitwise_equal_tactics = []`）。
+  即：私有 tactic  traversal 把 cutlass 默认路径也打断了，**唯一缺失的是 baseline**，
+  所以 `proposed_table` 全填 cute-dsl 是没有基准的假象。
+- 有效的部分（每 case 工作集 1.0–1.4 GB，L2-free，graph replay）：
+
+| case | cutlass（C 的历史值） | b12x | **cute-dsl** | cudnn |
+|---|---|---|---|---|
+| in_proj_qkv | 793 | 850.6 | **870.2** | 803.4 |
+| in_proj_z | — | 804.5 | **836.4** | 729.3 |
+| q_proj | — | 796.0 | **843.3** | 655.4 |
+
+- 所有 backend 的 numeric gate 全过（nrmse ≈1.64e-3），且 **backend 之间逐位一致**
+  （`nrmse = 0.0 / cosine = 1.0`）——换 backend 不改变数值语义，接入风险低。
+- 若整步也按这个比例，潜在收益是 **−1.3 ~ −2.6 ms**，比 F 自己保守估计的
+  −0.3 ~ −1.0 好；但要等修好 cutlass 基线、拿到同 job 内的加权对照才能确认。
+- 处理：允许一次修复重投，要求 (a) cutlass 基线必须走官方 `mm_fp4(backend="cutlass")`
+  入口，(b) 私有 tactic 路径放 try/except，确认不可达就删掉子实验、收敛为 backend 级。
