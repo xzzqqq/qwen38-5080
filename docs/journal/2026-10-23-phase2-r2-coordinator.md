@@ -290,3 +290,39 @@ graph replay 计时，cutlass 基线走官方入口：
 - 5 次重复的离散度很小（8K model tok/s std ≈ 0.03，见 bench summary）。
 - 显存：8K peak allocated 15.294 GB（第 1 轮 15.293），free **0.335 GB**（第 1 轮 0.329）。
 - 相对 M3 baseline：44.38 → 24.10 ms（−45.7%），系统 22.52 → 41.45 tok/s（+84%）。
+
+## 任务 H 采纳（job-000040-baee7dc7，commit `8b21db4`）
+
+| 指标 | baseline job-000029 | H | 变化 |
+|---|---|---|---|
+| graph-8192 step p50 | 27.781 ms | **25.404 ms** | **−2.377 ms（−8.6%）** |
+| graph-8192 系统 | 35.99 tok/s | **39.32** | +9.3% |
+| graph-512-1024 step p50 | 26.779 ms | **24.411 ms** | −2.368 ms（−8.8%） |
+| graph-512-1024 系统 | 37.29 tok/s | **40.91** | +9.7% |
+
+- op 260/260、check 139/139；`load.norm_quant` 计数 `fused_norms=2560`（128×20）、
+  `fused_consumers=5440`（272×20）、`unconsumed=0`、`fallbacks` 只有 prefill 的
+  `seq_len!=1`。
+- −2.38 ms 比预估（−0.5~−1.2）大一倍：quantize 401 + norm reduce 210 + norm 内部
+  elementwise（约 1024）+ 每步 401 个 alpha/reciprocal 标量 kernel 一起消失（≈1570 launch）。
+- 三次失败：① 1 字节差异来自 `F.rms_norm` 用 `[1,K]` 而模型用 `[1,1,5120]`（参考实现
+  不同，已降 diagnostic，决定性参考改为 `Qwen3_5RMSNorm.forward` + `nvfp4_quantize`）；
+  ② eager 路径 `a_fp4/a_sf length must match gs_list`（3 槽 scratch 整个传给 2 消费者
+  kernel）；③ 修好后通过。
+
+### 集成时发现的组合交互（已修）
+
+H 的 `_pending_quantized` 快路径直接调 `self._mm(pending[0], pending[1])`，而 `_mm` 用
+`self.backend`（cutlass）→ **绕过 F 的 decode backend 选型**。融合路径覆盖 272 个消费者，
+若不处理，合并后这些 GEMV 会退回 cutlass（760 GB/s），白丢约 1.5–2 ms。
+合并时把两条路径统一到 `_gemm(a_fp4, a_sf, m)`：`pending` 传 `m=1` 走选型、普通路径传
+`x.shape[0]`。**这是本轮唯一一处「单项都过、组合会互相抵消」的问题**，也说明 plan §3 要求的
+组合 gate 是必要的。
+
+## 第 2 轮最终确认（job-000041-d2baf18e）
+
+- 集成 commit **`89ff69f`** = A + D + G + I + F + H。
+- 步骤：`check numeric-512,graph-1024,graph-8192` + `bench 三个 graph 场景 511×5` +
+  `memory graph-8192 511`，timeout 3600。
+- 预期：8K 约 24.10 − 2.38 +（组合交互修复后应保留 F 的收益）≈ **23.0–23.4 ms**，
+  系统约 42.8–43.5 tok/s，%SOL 约 68–69%。
