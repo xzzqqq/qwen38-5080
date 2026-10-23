@@ -247,10 +247,16 @@ check/bench 两步没跑。这条路**不重跑 op**：证据已经在产物里�
   而 E 的 job-000024 已把差异证明到 bitwise（gate_proj 的 divisor=827.1，byte_diff
   10/2560，`a_code_mismatch=13` 正是它）→ **gate 规格错，不是候选错**。本轮
   不再重测（B 已用掉「一次正确性修复后重测」）。
-- 性能（同口径、真实实例聚合、60% 字节）：gemv 12.88 ms / 8.64 GB = 670 GB/s，
-  mm_fp4 13.00 ms = 665 GB/s，**1.01×**；gate_proj 0.83×、lm_head 0.95×、
-  down_proj 0.97×。**不接入**，但 kernel 能原地吃 128x4 swizzled scale、且与
-  cutlass 逐位一致，可作为下一轮 norm+quant 融合的基础。
+- 性能（同口径、真实实例聚合）——**按 B 复核后的正确口径**：把 L2 被抬高的
+  k_proj 排除后，4 个 L2-clean shape（8.548 GB）是 **0.93×**
+  （候选 12.283 ms = 695.9 GB/s，mm_fp4 11.438 ms = 747.3 GB/s）；
+  含 k_proj 才是 1.008×。分 shape：in_proj_qkv 1.069×、gate_proj **0.825×**、
+  lm_head 0.953×、down_proj 0.970×。**不接入**。
+- **对下一轮最重要的推论**：mm_fp4 在同口径聚合下能到 747 GB/s（14.399 GB → 19.3 ms），
+  而模型里整步 GEMV 是 696 GB/s（20.7 ms），所以「换 GEMV kernel」在这一项上的**上限
+  只有约 1.4 ms/step（整步 3.2%）**。下一轮不该再投自写 GEMV，应该做 per-shape
+  tactic 选型（cutlass / b12x / cudnn）去拿这 1.4 ms，并把主要精力放到 norm+quant
+  融合与剩余的 GDN/其它 kernel 上。
 
 ## 集成与确认（job-000027）
 
@@ -262,4 +268,85 @@ check/bench 两步没跑。这条路**不重跑 op**：证据已经在产物里�
      —— 补上 A 单独验证时缺的 `eager→static-exact` 与 `padded-ref→static-cap`
      bitwise（只在 `numeric-*` 里），外加 8K 场景；
   2. `bench`：三个 graph 场景 × 511 步 × 5 次（正式口径）。
-- 之后单独提交 `m3_memory --only graph-8192 --steps 511` 做 8K 显存检查。
+- 结果（`job-000027-cf8ecb65`，**succeeded**，834 s，correctness=passed）：
+
+| 场景（511 步 × 5 次） | M3 baseline | 集成 | 变化 | 系统 tok/s | %SOL |
+|---|---|---|---|---|---|
+| graph-512-1024 | 31.84 ms | **26.80 ms** | −5.04 ms | 31.38 → **37.27** | 48.5% → **57.5%** |
+| graph-512-8192 | 44.04 ms | **27.84 ms** | −16.20 ms | 22.70 → **35.89** | 35.0% → **57.2%** |
+| graph-8192 | 44.38 ms | **27.83 ms** | −16.55 ms | 22.52 → **35.89** | 35.9% → **57.2%** |
+
+- gate：**163/163 全过**（numeric-512 115、graph-1024 24、graph-8192 24）。numeric-512
+  的 115 项里包含 A 单独验证时缺的 `eager→static-exact` 与 `padded-ref→static-cap`
+  bitwise，这次是在组合后跑的。失败项全是 M3 已归类的 diagnostic（不同 KV 长度导致的
+  attention FP reduction 差异、free-running argmax 分叉），不是 gate。
+- 离散度：8K 模型 tok/s 的 5 次 std = 0.0067（0.02%），远小于本轮收益。
+- 8K free 0.119 → **0.329 GB**，峰值 allocated 15.293 GB（baseline 15.292）。
+- 注意 512-1024 只省 5.04 ms（不是 16.5）：attention 的收益与 depth 相关，GDN 的
+  3.6 ms 与 depth 无关 —— 两者可加性与预期一致。
+
+- 之后单独提交 `m3_memory --only graph-8192 --steps 511` + `m3_profile --steps 8`
+  做 8K 显存检查与集成后时间线（`job-000028-8c07209f`）。
+
+### 8K 显存与集成后时间线（job-000028-8c07209f，succeeded，410 s）
+
+- `m3_memory --only graph-8192 --steps 511`：10 个 stage 全过；load peak 14.458 GB、
+  **max peak allocated 15.723 GB / reserved 15.848 GB、min free 0.329 GB**；
+  两个生命周期之间 allocated/reserved 增量 **0**、KV ptr 稳定（27402731520）、
+  reset 后 logits 逐位一致。与 baseline（15.722 / 15.859 / 0.119）比：峰值持平，
+  free 变好 0.21 GB。
+- `m3_profile --steps 8`（graph-7680 是 8K 的代表 case）：每步 **6013 个 kernel /
+  26.49 ms kernel 时间 / 28.35 ms 墙钟**（bench 的正式值是 27.83 ms）。逐 kernel 聚合：
+
+| ms/step | 次数/step | kernel |
+|---|---|---|
+| **19.299** | 401 | `cutlass::device_kernel`（FlashInfer mm_fp4） |
+| 2.275 | 3156 | `at::native::vectorized_elementwise_kernel` |
+| **1.529** | 128 | `cutlass::Kernel2`（wmma bf16 gemm 32x32，ShapeStableLinear a/b） |
+| 1.001 | 610 | `unrolled_elementwise`（direct_copy） |
+| 0.730 | 633 | `elementwise_kernel` |
+| 0.527 | 401 | `tensorrt_llm::quantize_with_block_size` |
+| 0.406 | 274 | `at::native::`（截断，同类 elementwise） |
+| 0.314 | 210 | `reduce_kernel`（RMSNorm） |
+| 0.263 | 48 | `_gdn_decode_kernel`（融合 GDN，48 次 = 48 层） |
+| 0.086 | 96 | `cublasLt::splitKreduce` |
+
+**这是本轮最重要的修正**：8K 的 27.8 ms 里
+- mm_fp4 **19.30 ms = 747 GB/s**（14.399 GB），已经等于 B 在 L2-free 聚合扫描下测到的
+  mm_fp4 效率（747 GB/s）。所以「模型内只有 696 GB/s、换 kernel 能拿 1.4 ms」的旧推断
+  **不成立**：那 696 GB/s 是 M3 profile 里含 attention/repeat_kv 的旧口径。
+  换 GEMV kernel 的真实上限只能来自「超过 747 GB/s 的部分」，不是白捡的 1.4 ms。
+- 剩下的 **7.19 ms** 全是小 kernel：elementwise 4.41（4673 次，平均 0.94 µs）、
+  ShapeStableLinear a/b 1.53（128 次，12 µs/次）、quantize 0.53、norm reduce 0.31、
+  fused GDN 0.26、splitKreduce 0.09。**92% 的 kernel <5 µs，kernel 数量本身是瓶颈。**
+- graph 墙钟与 kernel 时间只差 1.3–1.9 ms，CPU 提交已不是问题。
+
+## 第 2 轮方向（基于上面的 profile，而非猜测）
+
+| 优先级 | 方向 | 证据 | 目标 |
+|---|---|---|---|
+| 1 | ShapeStableLinear 的 **M=1 decode 路径**（现在按 M=128 padding 跑 wmma） | 1.529 ms / 128 次 / 12 µs | −1.0 ~ −1.3 ms |
+| 2 | **norm + activation quant 融合**（用 E 冻结的 R2 契约，bitwise） | quantize 0.53 + reduce 0.31 + 部分 elementwise | −0.8 ~ −1.2 ms |
+| 3 | **per-shape mm_fp4 tactic/backend 选型**（cutlass / b12x / cudnn） | 19.30 ms = 747 GB/s，峰值 960 | −1.0 ~ −2.5 ms |
+| 4 | **GDN conv step + z-gate/norm 融合** | elementwise 4.41 ms 的大头在 48 层 GDN | −0.5 ~ −1.0 ms |
+
+- 80% SOL 需要 19.5 ms：GEMV 至少要 17 ms 级，其余全部 ≤2.5 ms。按上表全做成
+  大约 22–24 ms（40–43 tok/s，64–69% SOL），仍不到 80%，但方向明确。
+- 不做的事：不再自写 GEMV kernel（B/C 两条线都是 0.93×/0.84×）；不再调 attention
+  （已降到 ~1 ms 且与 depth 脱钩）。
+
+## 本轮结论
+
+- 采纳两个候选：A（紧凑 GQA decode attention）+ D（GDN recurrent decode 融合），
+  集成 commit `9e35873a01c0769fbed302a9f0b32a222e3ffcd1`（branch
+  `exp/phase2-integration`）。
+- 正式口径（511×5）3 个 graph 场景：**26.80 / 27.84 / 27.83 ms**，
+  系统 **37.27 / 35.89 / 35.89 tok/s**，%SOL **57.5 / 57.2 / 57.2**
+  （M3 baseline 31.38 / 22.70 / 22.52，48.5 / 35.0 / 35.9）。
+- 8K：峰值 15.723 GB、free 0.329 GB、生命周期无增长、确定性通过。
+- 否决：C（tensor-core GEMV，加权 0.84×；v2 的 numeric gate 是脚本回归，不改变
+  性能判定）；B（SIMT GEMV，L2-clean 0.93×，但 kernel 正确性已立住，作为融合基础）。
+- E：activation quant 规则确定为 R2（bitwise 复现 977,408 blocks），可冻结给融合 kernel。
+- 未达成项：80% SOL 远未达到（57.2%）；FP8 KV 未接入；重跑 full `m3-check`
+  （5 场景 227 gate）与 `m3_sol` 字节账未做（本轮用 3 个场景 163 gate + M3 的
+  B_mean 口径计算 %SOL）。
