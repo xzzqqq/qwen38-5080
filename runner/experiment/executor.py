@@ -745,19 +745,24 @@ def _sha256_file(path: Path) -> str | None:
 def compute_correctness(
     step_records: list[dict[str, Any]], request: schema.Request | None
 ) -> str:
-    """只有**请求里的全部 check** 都执行且通过才能算 passed。
+    """只有**请求里的全部 correctness 步骤**都执行且通过才能算 passed。
 
     只看已执行记录会把“第一个 check 通过、后面的 check 根本没跑”误判成 passed；
     这里必须用 request 的步骤集合做覆盖判断。
+
+    ``op`` 也是 correctness 步骤：``validate_op`` 只有 gate 全通过才返回
+    ``correctness=passed``。2026-10-23 前这里只认 ``check``，导致只有 op 步骤的
+    job 永远显示 not_checked，和 plan §5 把算子 gate 当 gate 的口径不一致。
     """
-    checks = [record for record in step_records if record.get("kind") == "check"]
+    gate_kinds = ("check", "op")
+    checks = [record for record in step_records if record.get("kind") in gate_kinds]
     for record in checks:
         validation = record.get("validation") or {}
         if validation.get("correctness") == "failed":
             return "failed"
     if request is None:
         return "not_checked"
-    requested = {step.index for step in request.steps if step.kind == "check"}
+    requested = {step.index for step in request.steps if step.kind in gate_kinds}
     passed = {
         record.get("index")
         for record in checks
@@ -777,13 +782,22 @@ def merge_metrics(step_records: list[dict[str, Any]]) -> dict[str, Any]:
         "gate_failures": [],
         "diagnostics_failed": [],
     }
+    op: dict[str, Any] = {
+        "cases": [],
+        "gates_total": 0,
+        "gates_passed": 0,
+        "gate_failures": [],
+        "diagnostics_failed": [],
+        "candidate": None,
+    }
     has_check = False
+    has_op = False
     for record in step_records:
         validation = record.get("validation") or {}
         kind = record["kind"]
-        # check 即使 gate 失败，产物里的 gate 计数/失败项也是有意义的结果；
+        # check/op 即使 gate 失败，产物里的 gate 计数/失败项也是有意义的结果；
         # bench/memory/profile 的失败产物不完整，不并入 metrics。
-        if not validation.get("ok") and kind != "check":
+        if not validation.get("ok") and kind not in ("check", "op"):
             continue
         data = validation.get("metrics") or {}
         if kind == "check":
@@ -795,10 +809,21 @@ def merge_metrics(step_records: list[dict[str, Any]]) -> dict[str, Any]:
             check["diagnostics_failed"].extend(data.get("diagnostics_failed") or [])
             check["fixtures_sha256"] = data.get("fixtures_sha256")
             check["steps"] = data.get("steps")
+        elif kind == "op":
+            has_op = True
+            op["cases"].extend(data.get("cases") or [])
+            op["gates_total"] += int(data.get("gates_total") or 0)
+            op["gates_passed"] += int(data.get("gates_passed") or 0)
+            op["gate_failures"].extend(data.get("gate_failures") or [])
+            op["diagnostics_failed"].extend(data.get("diagnostics_failed") or [])
+            op["candidate"] = data.get("candidate") or op["candidate"]
+            op["steps"] = data.get("steps")
         else:
             metrics.setdefault(kind, []).extend(data.get("scenarios") or [])
     if has_check:
         metrics["check"] = check
+    if has_op:
+        metrics["op"] = op
     return metrics
 
 

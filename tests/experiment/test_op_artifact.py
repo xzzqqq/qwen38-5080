@@ -230,3 +230,58 @@ def test_op_untracked_source_is_still_rejected(tmp_path: Path) -> None:
     (out / "op.json").write_text(json.dumps(payload), encoding="utf-8")
     with pytest.raises(artifacts.ArtifactError, match="untracked 源码"):
         artifacts.validate_op(_expectation(out))
+
+
+# ---------------------------------------------------------- executor 聚合
+def test_op_step_counts_as_correctness_gate() -> None:
+    """只有 op 步骤的 job 也要能判成 passed，且 op 指标要进 summary.metrics。"""
+    from runner.experiment import executor as exp
+
+    request = schema.Request(
+        raw={},
+        session_id="s",
+        commit_requested=COMMIT,
+        commit=COMMIT,
+        timeout_s=60.0,
+        steps=(
+            schema.ResolvedStep(
+                index=0,
+                kind="op",
+                argv=("scripts/phase2_gdn_check.py",),
+                result="{output}/op/op.json",
+                script="scripts/phase2_gdn_check.py",
+                flags={},
+                scenarios=None,
+            ),
+        ),
+        sha256="x",
+    )
+    record = {
+        "index": 0,
+        "kind": "op",
+        "validation": {
+            "ok": True,
+            "correctness": "passed",
+            "metrics": {
+                "candidate": {"name": "cand", "format": "bf16-kv"},
+                "cases": [{"case": "c1", "gates": 2, "gates_passed": 2}],
+                "gates_total": 2,
+                "gates_passed": 2,
+                "gate_failures": [],
+                "diagnostics_failed": [],
+            },
+        },
+    }
+    assert exp.compute_correctness([record], request) == "passed"
+    metrics = exp.merge_metrics([record])
+    assert metrics["op"]["gates_total"] == 2
+    assert metrics["op"]["candidate"]["name"] == "cand"
+    assert [case["case"] for case in metrics["op"]["cases"]] == ["c1"]
+
+    # op gate 失败要判 failed，而不是 not_checked
+    failed = {
+        "index": 0,
+        "kind": "op",
+        "validation": {"ok": False, "correctness": "failed", "metrics": {}},
+    }
+    assert exp.compute_correctness([failed], request) == "failed"
