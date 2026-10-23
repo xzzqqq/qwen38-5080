@@ -234,16 +234,20 @@ def _fallback_reason(
         return "no-initial-state"
     if kwargs.get("cu_seqlens") is not None:
         return "cu-seqlens"
+    device_reason = _device_reason(query, key, value, g, beta, initial_state)
+    if device_reason is not None:
+        return device_reason
+    return _shape_plan(query, key, value, initial_state, _STATE["ratio"])
+
+
+def _device_reason(query, key, value, g, beta, initial_state) -> str | None:
+    """设备/dtype/contiguity：这些不满足就不能进 kernel。"""
     if not initial_state.is_cuda:
         return "state-not-cuda"
     if initial_state.dtype is not torch.float32:
         return "state-dtype"
-    if initial_state.dim() != 4 or initial_state.shape[0] != 1:
-        return "state-shape"
     if not initial_state.is_contiguous():
         return "state-not-contiguous"
-    if query.dim() != 4 or query.shape[0] != 1 or query.shape[1] != 1:
-        return "not-single-token"
     for name, tensor in (("query", query), ("key", key), ("value", value)):
         if tensor.dtype is not torch.bfloat16:
             return f"{name}-dtype"
@@ -253,23 +257,53 @@ def _fallback_reason(
         return "g-dtype"
     if beta.dtype not in (torch.bfloat16, torch.float32):
         return "beta-dtype"
-    ratio = _STATE["ratio"]
-    if query.shape[-2] * ratio != initial_state.shape[1]:
-        return "head-count"
-    if query.shape[-1] != initial_state.shape[2]:
-        return "head-k-dim"
-    if value.shape[-2] != initial_state.shape[1]:
+    return None
+
+
+def _shape_plan(query, key, value, initial_state, ratio: int) -> str | None:
+    """形状/head 映射检查（与设备无关，可在 CPU 上单测）。
+
+    真实调用点传进来的是 ``repeat_interleave`` **之后**的 ``[1, 1, 48, 128]``
+    （q/k 已经扩到 48 个 head），所以这里按 ``head == num_v_heads`` 判断，
+    kernel 侧再用 ``[:, :, ::ratio, :]`` 取回 ``num_v_heads // ratio`` 个 k head。
+    同时兼容 repeat 之前的 ``[1, 1, 16, 128]``（``head * ratio == num_v_heads``）。
+    """
+    if initial_state.dim() != 4 or initial_state.shape[0] != 1:
+        return "state-shape"
+    if query.dim() != 4 or query.shape[0] != 1 or query.shape[1] != 1:
+        return "not-single-token"
+    if key.shape != query.shape:
+        return "qk-shape-mismatch"
+    v_heads = int(initial_state.shape[1])
+    if int(value.shape[-2]) != v_heads:
         return "value-head-count"
-    if value.shape[-1] != initial_state.shape[3]:
+    if _qk_view(query, v_heads, ratio) is None:
+        return "head-count"
+    if _qk_view(key, v_heads, ratio) is None:
+        return "head-count"
+    if int(query.shape[-1]) != int(initial_state.shape[2]):
+        return "head-k-dim"
+    if int(value.shape[-1]) != int(initial_state.shape[3]):
         return "head-v-dim"
+    return None
+
+
+def _qk_view(tensor: torch.Tensor, v_heads: int, ratio: int) -> torch.Tensor | None:
+    """q/k -> k-head 个 head 的 view：repeat 之后取 ``::ratio``，之前原样返回。"""
+    heads = int(tensor.shape[-2])
+    if heads == v_heads and ratio >= 1:
+        return tensor[:, :, ::ratio, :]
+    if heads * ratio == v_heads:
+        return tensor
     return None
 
 
 def _decode(query, key, value, g, beta, initial_state) -> torch.Tensor:
     """q/k 取 repeat_interleave 之后的 strided view，state 原地更新。"""
     ratio = _STATE["ratio"]
-    q = query[:, :, ::ratio, :] if ratio > 1 else query
-    k = key[:, :, ::ratio, :] if ratio > 1 else key
+    v_heads = int(initial_state.shape[1])
+    q = _qk_view(query, v_heads, ratio)
+    k = _qk_view(key, v_heads, ratio)
     return gdn_decode_step(
         q,
         k,
