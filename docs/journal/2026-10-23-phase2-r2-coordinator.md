@@ -83,3 +83,17 @@ commit `9e35873`，32 步 × 1 次，结果
 - 判断：in-place 写回 `x` 的错误很可能来自模型里 `mixed_qkv` 是 `transpose(1,2)` 的
   非连续 view；建议直接放弃 in-place、默认用 96 个 20 KB 的 out 槽（总计 960 KB）。
   已请 Explorer 修一版重投（第二次也是最后一次）。
+
+## 口径修正（任务 G 指出）：`cutlass::Kernel2` 1.529 ms 不是单一来源
+
+我在第 2 轮依据里把 `cutlass::Kernel2`（128 次/setp、1.529 ms）整体当成了
+ShapeStableLinear 的 a/b GEMM。Explorer 用 `graph-7680/kern_sum.csv` 拆开：
+- a/b（`32x32_128x2_tn`）**96 次 × 4.14 µs = 0.397 ms**，外加紧随其后的
+  `fill` + `torch.cat` pad kernel 约 0.25 ms → 合计约 **0.65 ms**；
+- 另外 32 次是 16 层 full attention 的 QK（`128x2_nn` 50.7 µs）与 PV
+  （`64x1_tn` 20 µs）bmm，约 1.13 ms，**不属于任务 G**。
+
+所以 G 的目标从 −1.1~−1.3 ms 修正为 **−0.4 ~ −0.6 ms**；同时这说明 attention 在
+融合短 kernel 之后仍占约 1.1 ms（bmm + softmax + transpose/copy），是下一轮的一个
+可选项。教训：profile 的 kernel 名被模板参数截断后会把多个 GEMM 合成一类，
+**按名字聚合必须同时看 count 与逐实例均值**，不能只看总和。
