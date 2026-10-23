@@ -33,7 +33,12 @@ from runner.model.host_embedding import HostEmbedding  # noqa: E402
 from runner.model.norm_quant_patch import install_from_env as install_norm_quant  # noqa: E402
 from runner.ops.attention import install as install_compact_attention  # noqa: E402
 from runner.ops.bf16.stable_linear import ShapeStableLinear  # noqa: E402
-from runner.ops.nvfp4.linear import NVFP4Linear, decode_backend_info  # noqa: E402
+from runner.ops.nvfp4.linear import (  # noqa: E402
+    NVFP4Linear,
+    build_decode_pair_from_checkpoint,
+    decode_backend_info,
+    decode_pair_specs,
+)
 
 from .checkpoint import CheckpointReader
 
@@ -107,25 +112,94 @@ def load_nvfp4_text_model(
         if row["is_nvfp4_weight"]
         and (row["name"].startswith(TEXT_PREFIX) or row["name"].startswith(LM_HEAD_PREFIX))
     ]
+
+    def _quant_parts(prefix: str) -> dict[str, torch.Tensor]:
+        """一个量化模块的 4 个 checkpoint 张量（留在 CPU，交给配对/装载逻辑）。"""
+        return {
+            name: reader.get(f"{prefix}.{name}", "cpu")
+            for name in ("weight", "weight_scale", "weight_scale_2", "input_scale")
+        }
+
+    # 1a) M=1 合并调用（DecodePair）：**先**在 CPU 上把两半拼好、一次 H2D，再把合并
+    #     buffer 的切片交给两个模块。顺序很重要：如果先分别装载再 ``torch.cat``，
+    #     峰值是「两半 + 合并」= 2 倍，而 15.47 GiB 卡装载完 14.4 GB 权重后只剩
+    #     ~1.7 GiB，且两半释放的 44.5 MiB segment 拼不出 89 MiB 的新分配 ——
+    #     job-000055 的 eager 就是在 load 阶段这样 OOM 的（op 级不建整模型所以全绿）。
+    #     同时注意：这里不能持有 ``dict(model.named_buffers())`` 之类的引用，否则
+    #     旧 buffer 不会释放，合并又变回 2 倍峰值。
+    pair_specs = decode_pair_specs(
+        row["name"][: -len(".weight")] for row in quant_rows
+    )
+    decode_pairs: dict[str, Any] = {
+        "pairs": 0,
+        "skipped": 0,
+        "kinds": {},
+        "reasons": {},
+        "strategy": "load-time merge (CPU cat -> one H2D, zero extra peak)",
+    }
+    paired_prefixes: set[str] = set()
+
+    def _pair_skip(reason: str) -> None:
+        decode_pairs["skipped"] += 1
+        reasons = decode_pairs["reasons"]
+        reasons[reason] = reasons.get(reason, 0) + 1
+
+    for leader_prefix, follower_prefix in pair_specs.items():
+        leader_path = map_checkpoint_name(leader_prefix)
+        follower_path = map_checkpoint_name(follower_prefix)
+        if leader_path is None or follower_path is None:
+            _pair_skip("unmapped")
+            continue
+        built = build_decode_pair_from_checkpoint(
+            _quant_parts(leader_prefix),
+            _quant_parts(follower_prefix),
+            device=device,
+            backend="cutlass",
+        )
+        if built is None:
+            # 前置条件不满足（scalar 不一致 / N 不是 128 的倍数 / dtype …）：
+            # 两半照常分别装载，M=1 走各自的共享路径，不影响 prefill 与数值语义。
+            _pair_skip("precondition")
+            continue
+        leader_module, follower_module = built
+        _set_module(model, leader_path, leader_module)
+        _set_module(model, follower_path, follower_module)
+        for prefix in (leader_prefix, follower_prefix):
+            handled.update(
+                {
+                    prefix + ".weight",
+                    prefix + ".weight_scale",
+                    prefix + ".weight_scale_2",
+                    prefix + ".input_scale",
+                }
+            )
+            paired_prefixes.add(prefix)
+        quantized += 2
+        if leader_module._decode_pair is None:
+            _pair_skip("attach")
+            continue
+        decode_pairs["pairs"] += 1
+        key = f"{leader_prefix.rpartition('.')[2]}+{follower_prefix.rpartition('.')[2]}"
+        decode_pairs["kinds"][key] = decode_pairs["kinds"].get(key, 0) + 1
+
     for row in quant_rows:
         ckpt_name = row["name"]
         if not ckpt_name.endswith(".weight"):
             raise ValueError(f"unexpected quantized tensor: {ckpt_name}")
         prefix = ckpt_name[: -len(".weight")]
+        if prefix in paired_prefixes:
+            continue
         model_path = (
             "model.lm_head" if prefix == "lm_head" else map_checkpoint_name(prefix)
         )
         if model_path is None:
             raise ValueError(f"cannot map quantized module: {prefix}")
-        weight = reader.get(prefix + ".weight", "cpu").to(device)
-        scale = reader.get(prefix + ".weight_scale", "cpu").to(device)
-        scale2 = reader.get(prefix + ".weight_scale_2", "cpu").to(device)
-        input_scale = reader.get(prefix + ".input_scale", "cpu").to(device)
+        parts = _quant_parts(prefix)
         module = NVFP4Linear(
-            weight,
-            scale,
-            scale2,
-            input_scale,
+            parts["weight"].to(device),
+            parts["weight_scale"].to(device),
+            parts["weight_scale_2"].to(device),
+            parts["input_scale"].to(device),
             backend="cutlass",
         )
         _set_module(model, model_path, module)
@@ -172,6 +246,9 @@ def load_nvfp4_text_model(
         else:
             setattr(parent, attr, tensor)
         loaded_high_precision += 1
+    # 这两个 dict 只为上面的查找而建；显式释放，避免把「已经被替换掉的旧 buffer」
+    # 或后续 install 期间产生的临时引用留到 load 结束（job-000055 的 2 倍峰值教训）。
+    del params, buffers
 
     # 5) a/b 决定 GDN 的 gate；固定 block_m 让单段/分段 prefill 走同一 GEMM shape。
     wrapped_stable = 0
@@ -187,6 +264,27 @@ def load_nvfp4_text_model(
             )
             wrapped_stable += 1
     reader.close()
+
+    # 6) M=1 合并调用（DecodePair）已经在 1a) 里随装载完成：k/v、gate/up、
+    #    qkv/z 各自共享一块合并 buffer 与一个 persistent out。这里只做校验，
+    #    保证「模型建好之后、graph capture 之前」配对确实生效（capture/replay
+    #    依赖 pair.out 地址固定）。``install_decode_pairs`` 仍留给「模型已建好」
+    #    的调用方，但它的 torch.cat 兜底路径会多一份峰值，生产 loader 不再使用。
+    _modules_without_pair = 0
+    for layer in model.model.layers:
+        for holder_name, leader_name, follower_name in (
+            ("self_attn", "k_proj", "v_proj"),
+            ("mlp", "gate_proj", "up_proj"),
+            ("linear_attn", "in_proj_qkv", "in_proj_z"),
+        ):
+            holder = getattr(layer, holder_name, None)
+            if holder is None:
+                continue
+            for name in (leader_name, follower_name):
+                module = getattr(holder, name, None)
+                if module is not None and module._decode_pair is None:
+                    _modules_without_pair += 1
+    decode_pairs["modules_without_pair"] = _modules_without_pair
 
     meta_params = [n for n, p in model.named_parameters() if p.device.type == "meta"]
     meta_buffers = [n for n, b in model.named_buffers() if b.device.type == "meta"]
@@ -223,6 +321,8 @@ def load_nvfp4_text_model(
         # Phase 2 任务 F：M=1 decode 的 (N,K)->backend 静态表与依据。counters 是
         # 同一个 dict 的引用，产物最后序列化时能看到整个运行期间的调用计数。
         "nvfp4_decode": decode_backend_info(),
+        # 第 4 轮：M=1 的合并调用（DecodePair）配对计数。
+        "nvfp4_decode_pairs": decode_pairs,
         # Phase 2 任务 H：norm+quant 融合的接线计数（fused_norms / fallbacks）。
         "norm_quant": norm_quant_info,
     }
