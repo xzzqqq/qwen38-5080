@@ -105,7 +105,17 @@ SCENARIOS = (
     "up_proj",
     "down_proj",
     "lm_head",
+    # 第 4 轮：M=1 合并调用（两半共享同一个 hidden_states，合成一次 N=N1+N2）。
+    "merged_kv",
+    "merged_gateup",
+    "merged_qkvz",
 )
+
+MERGES: dict[str, tuple[str, str, int]] = {
+    "merged_kv": (".self_attn.k_proj.", ".self_attn.v_proj.", 16),
+    "merged_gateup": (".mlp.gate_proj.", ".mlp.up_proj.", 64),
+    "merged_qkvz": (".linear_attn.in_proj_qkv.", ".linear_attn.in_proj_z.", 48),
+}
 
 # case -> (checkpoint tensor 名后缀（base 名，含结尾的 '.'）, 期望实例数)
 #
@@ -264,14 +274,24 @@ def check_shapes() -> int:
     extra = sorted(set(groups) - set(SCENARIOS))
     if extra:
         problems.append(f"SHAPES 有、SCENARIOS 没有的 case: {extra}")
-    missing = sorted(set(SCENARIOS) - set(groups))
+    missing = sorted(set(SCENARIOS) - set(groups) - set(MERGES))
     if missing:
-        problems.append(f"SCENARIOS 有、checkpoint 没有的 case: {missing}")
+        problems.append(f"SCENARIOS 有、checkpoint 没有的 shape case: {missing}")
+    # 合并 case：两半都在清单里、对数符合预期
+    for name, (leader, follower, expected) in MERGES.items():
+        count = sum(1 for n in items if n["name"].endswith(leader))
+        count_b = sum(1 for n in items if n["name"].endswith(follower))
+        if count != expected or count_b != expected:
+            problems.append(
+                f"{name}: leader={count} follower={count_b} != {expected}"
+            )
 
     print(
         f"NVFP4 Linear: {summary['total_instances']} 个, "
         f"{summary['total_bytes'] / 1e9:.4f} GB"
     )
+    for name, (leader, follower, expected) in MERGES.items():
+        print(f"  {name}: {leader} + {follower} x{expected}")
     for case in SCENARIOS:
         group = groups.get(case)
         if group is None:
@@ -917,6 +937,301 @@ def _run_case(reader, case_name: str, report, args, backends: Backends) -> dict:
     return result
 
 
+def _time_fn(fn, warmup: int, iters: int):
+    """CUDA graph replay 计时一个无参调用（只算 GPU 时间）。"""
+    import torch
+
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(2):
+            fn()
+    torch.cuda.current_stream().wait_stream(side)
+    torch.cuda.synchronize()
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph, stream=side):
+        fn()
+    torch.cuda.synchronize()
+    for _ in range(warmup):
+        graph.replay()
+    torch.cuda.synchronize()
+    starts = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+    ends = [torch.cuda.Event(enable_timing=True) for _ in range(iters)]
+    for start, end in zip(starts, ends):
+        start.record()
+        graph.replay()
+        end.record()
+    torch.cuda.synchronize()
+    samples = [start.elapsed_time(end) for start, end in zip(starts, ends)]
+    del graph, side
+    return statistics.median(samples)
+
+
+def _run_merge_case(reader, case_name: str, report, args, backends: Backends) -> dict:
+    """M=1 合并调用：一次 N=N1+N2 的 mm_fp4 vs 同一批权重的两次分开调用。
+
+    gate：合并输出与分开调用**逐位一致**（同一份量化后的 A + 同一份 W），
+    以及 vs「同一份 A + checkpoint W dequant」的 FP32 matmul 在 M2 冻结容差内。
+    """
+    import torch
+    from flashinfer import SfLayout, mm_fp4, nvfp4_quantize
+    from runner.ops.nvfp4.bytes import weight_bytes
+    from runner.ops.nvfp4.reference import error_metrics, swizzle_scale_128x4
+
+    leader_suffix, follower_suffix, expected = MERGES[case_name]
+    leader_prefixes = find_instances(reader, (leader_suffix,))
+    if len(leader_prefixes) != expected:
+        raise RuntimeError(
+            f"{case_name}: checkpoint 里找到 {len(leader_prefixes)} 对，期望 {expected}"
+        )
+
+    l2_bytes = int(torch.cuda.get_device_properties(0).L2_cache_size)
+    first = leader_prefixes[0]
+    first_w = reader.get(first + "weight", device="cuda")
+    n1, k_half = (int(x) for x in first_w.shape)
+    k = 2 * k_half
+    first_b = reader.get(
+        first[: -len(leader_suffix)] + follower_suffix + "weight", device="cuda"
+    )
+    n2 = int(first_b.shape[0])
+    del first_w, first_b
+
+    per_pair_bytes = weight_bytes(k, n1) + weight_bytes(k, n2)
+    aggregate_bytes = per_pair_bytes * expected
+    copies = max(
+        1,
+        min(
+            args.max_copies,
+            int(math.ceil(L2_TARGET_MULTIPLE * l2_bytes / max(1, aggregate_bytes))),
+        ),
+    )
+
+    pairs: list[dict] = []
+    alpha0 = None
+    for index, prefix in enumerate(leader_prefixes):
+        follower_prefix = prefix[: -len(leader_suffix)] + follower_suffix
+        w_a = reader.get(prefix + "weight", device="cuda")
+        w_b = reader.get(follower_prefix + "weight", device="cuda")
+        lin_a = reader.get(prefix + "weight_scale", device="cuda")
+        lin_b = reader.get(follower_prefix + "weight_scale", device="cuda")
+        in_a = reader.get(prefix + "input_scale", device="cuda").reshape(1).float()
+        in_b = reader.get(follower_prefix + "input_scale", device="cuda").reshape(1).float()
+        w2_a = reader.get(prefix + "weight_scale_2", device="cuda").reshape(1).float()
+        w2_b = reader.get(follower_prefix + "weight_scale_2", device="cuda").reshape(1).float()
+        same_scalars = bool(
+            torch.equal(in_a, in_b) and torch.equal(w2_a, w2_b)
+        )
+        if not same_scalars:
+            raise RuntimeError(f"{case_name}: {prefix} 两半 scalar 不一致，不能合并")
+        alpha = (in_a * w2_a).reshape(1).float()
+        if index == 0:
+            alpha0 = alpha
+            # 拼接后统一 swizzle == 两个已 swizzle 的拼接（N 都是 128 的倍数）。
+            sw_cat = torch.cat(
+                [swizzle_scale_128x4(lin_a), swizzle_scale_128x4(lin_b)], dim=0
+            )
+            sw_merged0 = swizzle_scale_128x4(torch.cat([lin_a, lin_b], dim=0))
+            if not torch.equal(sw_cat, sw_merged0):
+                raise RuntimeError(f"{case_name}: scale 拼接与 swizzle 不可交换")
+            del sw_cat, sw_merged0
+        merged_w = torch.cat([w_a, w_b], dim=0)
+        merged_sw = swizzle_scale_128x4(torch.cat([lin_a, lin_b], dim=0))
+        del w_a, w_b, lin_a, lin_b
+        copies_list = [(merged_w, merged_sw)]
+        for _ in range(copies - 1):
+            copies_list.append((merged_w.clone(), merged_sw.clone()))
+        pairs.append({"copies": copies_list, "alpha": alpha})
+    torch.cuda.empty_cache()
+    working_set = aggregate_bytes * copies
+    l2_multiple = working_set / max(1, l2_bytes)
+
+    # 同一份量化后的 A（第一个 pair 的 input_scale；两半相同）。
+    gen = torch.Generator(device="cuda")
+    gen.manual_seed(20261023)
+    x = torch.randn(1, k, device="cuda", dtype=torch.bfloat16, generator=gen) * 0.5
+    a_fp4, a_sf = nvfp4_quantize(
+        x,
+        (1.0 / reader.get(first + "input_scale", device="cuda")).reshape(1),
+        sfLayout=SfLayout.layout_128x4,
+        do_shuffle=False,
+        backend="cuda",
+    )
+    from runner.ops.nvfp4.linear import DECODE_BACKEND_TABLE
+
+    if (n1 + n2, k) not in DECODE_BACKEND_TABLE:
+        raise RuntimeError(f"{case_name}: 合并 shape {(n1 + n2, k)} 不在 decode 表里")
+    backend = DECODE_BACKEND_TABLE[(n1 + n2, k)]
+
+    def call(w, sw):
+        return mm_fp4(
+            a_fp4,
+            w.T,
+            a_sf,
+            sw.T,
+            alpha0,
+            torch.bfloat16,
+            None,
+            block_size=16,
+            use_8x4_sf_layout=False,
+            backend=backend,
+            use_nvfp4=True,
+        )
+
+    def baseline_sweep():
+        for pair in pairs:
+            for merged_w, merged_sw in pair["copies"]:
+                call(merged_w[:n1], merged_sw[:n1])
+                call(merged_w[n1:], merged_sw[n1:])
+
+    def merged_sweep():
+        for pair in pairs:
+            for merged_w, merged_sw in pair["copies"]:
+                call(merged_w, merged_sw)
+
+    w0, sw0 = pairs[0]["copies"][0]
+    out_a = call(w0[:n1], sw0[:n1])
+    out_b = call(w0[n1:], sw0[n1:])
+    out_m = call(w0, sw0)
+    torch.cuda.synchronize()
+    bitwise = bool(
+        torch.equal(out_a, out_m[:, :n1]) and torch.equal(out_b, out_m[:, n1:])
+    )
+
+    # reference：同一份 A + checkpoint W 的 128x4 swizzled scale 反量化。
+    a_scaled = dequant_activation(a_fp4, a_sf, k)
+    wsf_a = dequant_weight_scale(sw0[:n1], n1, k)
+    wsf_b = dequant_weight_scale(sw0[n1:], n2, k)
+    ref_a = reference_out(a_scaled, w0[:n1], wsf_a, alpha0)
+    ref_b = reference_out(a_scaled, w0[n1:], wsf_b, alpha0)
+    ref = torch.cat([ref_a, ref_b])
+    del wsf_a, wsf_b, ref_a, ref_b
+    metrics = error_metrics(out_m.reshape(-1), ref)
+
+    baseline_ms = _time_fn(baseline_sweep, args.warmup, args.iters)
+    merged_ms = _time_fn(merged_sweep, args.warmup, args.iters)
+    real_baseline = baseline_ms / copies
+    real_merged = merged_ms / copies
+
+    case = report.case(
+        case_name,
+        kind="merged",
+        leader=leader_suffix,
+        follower=follower_suffix,
+        n_leader=n1,
+        n_follower=n2,
+        n_merged=n1 + n2,
+        k=k,
+        pairs=expected,
+        copies=copies,
+        per_pair_bytes=per_pair_bytes,
+        aggregate_weight_bytes=aggregate_bytes,
+        working_set_gb=working_set / 1e9,
+        l2_mib=l2_bytes / 1024**2,
+        l2_multiple=l2_multiple,
+        backend=backend,
+        timing="per-case CUDA graph replay (all pairs x copies), CUDA event median",
+        note=(
+            "baseline = 每对两次 mm_fp4（与模型现状同 shape）；merged = 一次 "
+            "N=N1+N2 的 mm_fp4。两者用同一份 A/W/A、同一个 event 边界；"
+            "copies>1 时已除以 copies 还原真实对数"
+        ),
+    )
+
+    case.gate(
+        "coverage: 合并对数 == checkpoint 清单",
+        len(leader_prefixes) == expected,
+        {"pairs": len(leader_prefixes), "expected": expected},
+    )
+    case.gate(
+        "coverage: 合并 shape 在 decode 静态表里（可经官方入口复现）",
+        backend != "cutlass",
+        {"shape": f"{n1 + n2}x{k}", "backend": backend},
+    )
+    case.gate(
+        "coverage: 工作集 >= 4x L2（必要时已用多副本）",
+        l2_multiple >= L2_TARGET_MULTIPLE,
+        {"l2_multiple": l2_multiple, "copies": copies, "working_set_gb": working_set / 1e9},
+    )
+    case.gate(
+        "numeric: 合并输出与分开两次调用逐位一致（同一份 A/W）",
+        bitwise,
+        {
+            "bitwise": bitwise,
+            "max_abs_left": float((out_a.float() - out_m[:, :n1].float()).abs().max()),
+            "max_abs_right": float((out_b.float() - out_m[:, n1:].float()).abs().max()),
+            "vs": "mm_fp4(N1) + mm_fp4(N2) vs mm_fp4(N1+N2)",
+        },
+    )
+    numeric_ok = (
+        bool(metrics["finite"])
+        and float(metrics["nrmse"]) <= TOL["nrmse"]
+        and float(metrics["cosine"]) >= TOL["cosine"]
+        and float(metrics["max_rel"]) <= TOL["max_rel"]
+    )
+    case.gate(
+        "numeric: 合并输出 vs FP32 dequant reference（M2 冻结容差）",
+        numeric_ok,
+        {
+            "nrmse": float(metrics["nrmse"]),
+            "cosine": float(metrics["cosine"]),
+            "max_rel": float(metrics["max_rel"]),
+            "finite": bool(metrics["finite"]),
+            "tol": TOL,
+        },
+    )
+
+    baseline_gbs = aggregate_bytes / (real_baseline * 1e-3) / 1e9
+    merged_gbs = aggregate_bytes / (real_merged * 1e-3) / 1e9
+    for name, value in (
+        ("baseline_agg_ms", real_baseline),
+        ("merged_agg_ms", real_merged),
+        ("baseline_gbs", baseline_gbs),
+        ("merged_gbs", merged_gbs),
+        ("speedup", real_baseline / real_merged),
+        ("saves_ms", real_baseline - real_merged),
+        ("bitwise", float(bitwise)),
+        ("nrmse", float(metrics["nrmse"])),
+        ("cosine", float(metrics["cosine"])),
+        ("max_rel", float(metrics["max_rel"])),
+        ("pairs", float(expected)),
+        ("aggregate_gb", aggregate_bytes / 1e9),
+        ("l2_multiple", l2_multiple),
+    ):
+        _safe_metric(case, name, value)
+
+    print(
+        f"{case_name}: {expected} pairs N={n1}+{n2} K={k} copies={copies} "
+        f"baseline={real_baseline:.3f} ms ({baseline_gbs:.1f} GB/s) "
+        f"merged={real_merged:.3f} ms ({merged_gbs:.1f} GB/s) "
+        f"speedup={real_baseline / real_merged:.3f} saves={real_baseline - real_merged:.3f} ms "
+        f"bitwise={bitwise} nrmse={float(metrics['nrmse']):.2e}",
+        flush=True,
+    )
+
+    result = {
+        "merge": True,
+        "case": case_name,
+        "n": n1 + n2,
+        "k": k,
+        "n_leader": n1,
+        "n_follower": n2,
+        "pairs": expected,
+        "aggregate_bytes": aggregate_bytes,
+        "baseline_ms": real_baseline,
+        "merged_ms": real_merged,
+        "baseline_gbs": baseline_gbs,
+        "merged_gbs": merged_gbs,
+        "saves_ms": real_baseline - real_merged,
+        "speedup": real_baseline / real_merged,
+        "bitwise": bitwise,
+        "copies": copies,
+        "l2_multiple": l2_multiple,
+    }
+    del pairs, out_a, out_b, out_m
+    torch.cuda.empty_cache()
+    return result
+
+
 # ------------------------------------------------------------------ CLI
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -1029,6 +1344,11 @@ def main(argv: list[str] | None = None) -> int:
                 "scale 反量化后的 FP32 matmul；容差为 M2 冻结值"
             ),
             "bytes_model": "packed weight + block scale + 2 fp32 scalars（不含 A/out）",
+            "merged_pairs": (
+                "第 4 轮：M=1 把 k/v、gate/up、in_proj_qkv/z 各合成一次 "
+                "N=N1+N2 的 mm_fp4（两半共享 hidden_states 且 scalar 逐位相同），"
+                "merged_* case 报 合并前后 agg ms/GB/s + 逐位一致 gate"
+            ),
             "integration": (
                 "本 commit 不接主线：静态表要由本 job 的 per-shape 结果决定；"
                 "如果 best_integrable 相比 cutlass 有 >=0.4 ms 收益，下一步把 "
@@ -1055,7 +1375,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         for case in cases:
             print(f"=== {case} ===", flush=True)
-            results.append(_run_case(reader, case, report, args, backends))
+            if case in MERGES:
+                results.append(_run_merge_case(reader, case, report, args, backends))
+            else:
+                results.append(_run_case(reader, case, report, args, backends))
             ran.append(case)
             torch.cuda.empty_cache()
             _write_partial(report, results, Path(args.out))
@@ -1063,19 +1386,24 @@ def main(argv: list[str] | None = None) -> int:
         reader.close()
 
     # 整步加权估计（按真实实例数；14.399 GB = 401 个 Linear 的 weight+scale）。
-    total_bytes = sum(row["aggregate_bytes"] for row in results)
-    total_instances = sum(row["instances"] for row in results)
+    # 合并 case（merged_*）有自己的一份字节账，不能混进 14.399 GB 的整步聚合。
+    shape_results = [row for row in results if not row.get("merge")]
+    merge_results = [row for row in results if row.get("merge")]
+    total_bytes = sum(row["aggregate_bytes"] for row in shape_results)
+    total_instances = sum(row["instances"] for row in shape_results)
     baseline_ms = sum(
-        row["baseline_ms"] for row in results if row["baseline_ms"] is not None
+        row["baseline_ms"] for row in shape_results if row["baseline_ms"] is not None
     )
-    baseline_complete = all(row["baseline_ms"] is not None for row in results)
-    integrable_ms = sum(row["best_integrable"]["agg_ms"] for row in results)
-    any_ms = sum(row["best_any"]["agg_ms"] for row in results)
+    baseline_complete = all(row["baseline_ms"] is not None for row in shape_results)
+    integrable_ms = sum(row["best_integrable"]["agg_ms"] for row in shape_results)
+    any_ms = sum(row["best_any"]["agg_ms"] for row in shape_results)
+    merge_saves_ms = sum(row["saves_ms"] for row in merge_results)
+    merged_step_ms = integrable_ms - merge_saves_ms
 
     table: dict[str, str] = {}
     reasons: dict[str, str] = {}
     by_shape: dict[tuple[int, int], list[dict]] = {}
-    for row in results:
+    for row in shape_results:
         by_shape.setdefault((row["n"], row["k"]), []).append(row)
     for (n, k), rows in sorted(by_shape.items()):
         best = min(rows, key=lambda row: row["best_integrable"]["agg_ms"])[
@@ -1113,7 +1441,12 @@ def main(argv: list[str] | None = None) -> int:
         f"{total_bytes / (any_ms * 1e-3) / 1e9:.1f} GB/s "
         f"(saves {baseline_ms - any_ms:.3f} ms)"
     )
-    for row in results:
+    if merge_results:
+        print(
+            f"merged pairs: saves {merge_saves_ms:.3f} ms "
+            f"(cutlass default -> cute-dsl + merge: {merged_step_ms:.3f} ms)"
+        )
+    for row in shape_results:
         print(
             f"  {row['case']:12s} {row['n']:6d}x{row['k']:5d} inst={row['instances']:3d} "
             f"cutlass={row['baseline_ms']:.3f} "
@@ -1121,8 +1454,17 @@ def main(argv: list[str] | None = None) -> int:
             f"({row['best_integrable']['family']}) "
             f"any={row['best_any']['agg_ms']:.3f}({row['best_any']['name']})"
         )
+    for row in merge_results:
+        print(
+            f"  {row['case']:12s} {row['n']:6d}x{row['k']:5d} pairs={row['pairs']:3d} "
+            f"baseline={row['baseline_ms']:.3f} merged={row['merged_ms']:.3f} "
+            f"({row['baseline_gbs']:.1f} -> {row['merged_gbs']:.1f} GB/s) "
+            f"bitwise={row['bitwise']}"
+        )
 
     missing = [case for case in SCENARIOS if case not in ran]
+    shape_missing = [case for case in SCENARIOS if case not in ran and case not in MERGES]
+    merge_missing = [case for case in MERGES if case not in ran]
     baseline_gbs = (
         total_bytes / (baseline_ms * 1e-3) / 1e9
         if baseline_complete and baseline_ms > 0
@@ -1144,9 +1486,15 @@ def main(argv: list[str] | None = None) -> int:
             },
         )
         case.gate(
-            "coverage: 必测 shape 清单齐全（401 个 NVFP4 Linear / 11 个 case）",
+            "coverage: 必测清单齐全（401 个 NVFP4 Linear / 11 个 shape case + 3 个 merged case）",
             not missing and len(results) == len(SCENARIOS),
-            {"scenarios": list(SCENARIOS), "ran": ran, "missing": missing},
+            {
+                "scenarios": list(SCENARIOS),
+                "ran": ran,
+                "missing": missing,
+                "shape_missing": shape_missing,
+                "merge_missing": merge_missing,
+            },
         )
         case.gate(
             "coverage: 该 case 属于冻结算例清单",
@@ -1160,10 +1508,16 @@ def main(argv: list[str] | None = None) -> int:
                 "scenarios": list(SCENARIOS),
                 "ran": ran,
                 "missing": missing,
+                "shape_missing": shape_missing,
+                "merge_missing": merge_missing,
                 "expected_instances": sum(v[1] for v in SHAPES.values()),
                 "measured_instances": total_instances,
                 "expected_weight_gb": PROFILE_TOTAL_GB,
                 "measured_weight_gb": total_bytes / 1e9,
+                "merged_pairs": {
+                    row["case"]: {"pairs": row["pairs"], "bitwise": row["bitwise"]}
+                    for row in merge_results
+                },
             },
             "aggregate": {
                 "total_gb": total_bytes / 1e9,
@@ -1207,8 +1561,11 @@ def main(argv: list[str] | None = None) -> int:
                         "available_configs": len(row["rows"]),
                         "unavailable": row["unavailable"],
                     }
-                    for row in results
+                    for row in shape_results
                 ],
+                "merged_pairs": merge_results,
+                "merged_saves_ms": merge_saves_ms,
+                "merged_step_ms": merged_step_ms,
             },
             "backend_errors": backends.errors,
             "configs": {

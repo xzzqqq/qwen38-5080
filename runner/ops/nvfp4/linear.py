@@ -59,6 +59,11 @@ DECODE_BACKEND_TABLE: dict[tuple[int, int], str] = {
     (17408, 5120): "cute-dsl",   # gate_proj / up_proj x128
     (5120, 17408): "cute-dsl",   # down_proj x64
     (248320, 5120): "cute-dsl",  # lm_head x1
+    # M=1 decode 的合并调用（DecodePair）：两半共享同一 hidden_states + input_scale，
+    # 合成一次 N=N1+N2 的 mm_fp4（128 列 tile 的 CTA 数翻倍，少一次 launch）。
+    (2048, 5120): "cute-dsl",    # k_proj + v_proj（16 层）
+    (16384, 5120): "cute-dsl",   # in_proj_qkv + in_proj_z（48 层）
+    (34816, 5120): "cute-dsl",   # gate_proj + up_proj（64 层）
 }
 
 # 进程内的运行计数：给 check/bench 产物提供「JIT 编译只发生一次」的证据。
@@ -66,6 +71,8 @@ _DECODE_STATS: dict[str, Any] = {
     "calls": {},          # backend -> M=1 调用次数
     "first_call_ms": {},  # "NxK" -> 首次调用 wall ms（含 JIT 编译）
     "selected": {},       # "NxK" -> 实际使用的 backend
+    "merged_calls": {},   # "N1+N2xK" -> 合并调用次数
+    "merge_fallbacks": 0,
     "fallbacks": 0,
 }
 _DECODE_BACKEND_DISABLED: set[str] = set()
@@ -98,9 +105,222 @@ def decode_backend_stats() -> dict[str, Any]:
         "calls": dict(_DECODE_STATS["calls"]),
         "first_call_ms": dict(_DECODE_STATS["first_call_ms"]),
         "selected": dict(_DECODE_STATS["selected"]),
+        "merged_calls": dict(_DECODE_STATS["merged_calls"]),
+        "merge_fallbacks": int(_DECODE_STATS["merge_fallbacks"]),
         "fallbacks": int(_DECODE_STATS["fallbacks"]),
         "disabled": sorted(_DECODE_BACKEND_DISABLED),
     }
+
+
+class DecodePair:
+    """把两个共享同一 ``hidden_states`` 的 NVFP4Linear 合并成一次 M=1 mm_fp4。
+
+    为什么安全（2026-10-23 的 checkpoint 事实，见 journal）：
+    - 三对模块（k/v、gate/up、in_proj_qkv/in_proj_z）在同一层里**共享同一个
+      hidden_states**，且 pair 内 ``input_scale`` 与 ``weight_scale_2`` **逐位相同**
+      （k/v 16/16、gate/up 64/64、qkv/z 48/48），所以两边量化出的 A 与 alpha 完全一致；
+    - 合并权重 = 两半的 ``weight_packed`` 沿 N 拼接，scale = 两半线性 scale 拼接后
+      统一 swizzle（N 都是 128 的倍数，拼接与 swizzle 可交换；op 里有逐字节 gate）；
+    - 每个输出行只依赖自己那行权重，K 方向归约顺序与单调用相同，所以**逐位一致**。
+
+    数据流（M=1）：
+        leader: [a_fp4, a_sf] + W[N1+N2, K/2] + swizzled SF -> out[1, N1+N2]
+                -> 返回 out[:, :N1]，把 out[:, N1:] 留给 follower
+        follower: 校验 (x.data_ptr, numel) 后直接返回 out[:, N1:]（不再 launch）
+
+    leader 用自己（=follower）的 ``input_scale`` 量化 A；若 norm+quant 融合已经给了
+    ``_pending_quantized``，直接用那一份。follower 的 pending 槽位会被消费掉，
+    保证 ``norm_quant_patch`` 的 ``unconsumed`` 计数保持 0。
+
+    失败（合并 kernel 抛错）时整对永久禁用并回退到各自路径，不静默算错。
+    """
+
+    __slots__ = (
+        "leader",
+        "follower",
+        "weight_packed",
+        "weight_scale_swizzled",
+        "alpha",
+        "out_dtype",
+        "n_leader",
+        "n_follower",
+        "backend",
+        "out",
+        "armed",
+        "x_ptr",
+        "x_numel",
+        "disabled",
+    )
+
+    def __init__(
+        self,
+        leader: "NVFP4Linear",
+        follower: "NVFP4Linear",
+        weight_packed: torch.Tensor,
+        weight_scale_swizzled: torch.Tensor,
+    ) -> None:
+        self.leader = leader
+        self.follower = follower
+        self.weight_packed = weight_packed
+        self.weight_scale_swizzled = weight_scale_swizzled
+        self.alpha = leader.alpha
+        self.out_dtype = leader.out_dtype
+        self.n_leader = leader.out_features
+        self.n_follower = follower.out_features
+        self.backend = decode_backend_for(
+            self.n_leader + self.n_follower, leader.in_features
+        )
+        self.out = torch.empty(
+            (1, self.n_leader + self.n_follower),
+            dtype=self.out_dtype,
+            device=leader.weight_packed.device,
+        )
+        self.armed = False
+        self.x_ptr = 0
+        self.x_numel = 0
+        self.disabled = False
+
+    # ------------------------------------------------------------------ 调用
+    def forward(self, module, x, pending):
+        """返回本模块的 [1, N] 输出；``None`` 表示走普通路径。"""
+        if self.disabled:
+            return None
+        if module is self.follower:
+            if x.numel() != x.shape[-1]:
+                return None
+            if (
+                self.armed
+                and self.x_ptr == x.data_ptr()
+                and self.x_numel == x.numel()
+            ):
+                self.armed = False
+                return self.out[:, self.n_leader :]
+            _DECODE_STATS["merge_fallbacks"] += 1
+            return None
+
+        # leader：只处理单 token decode（M==1）。
+        if x.numel() != x.shape[-1] or x.shape[-1] != self.leader.in_features:
+            return None
+        self.armed = False
+        if pending is not None:
+            a_fp4, a_sf = pending
+        else:
+            xx = x.reshape(-1, self.leader.in_features)
+            if not xx.is_contiguous():
+                xx = xx.contiguous()
+            if xx.dtype != torch.bfloat16:
+                xx = xx.to(torch.bfloat16)
+            a_fp4, a_sf = nvfp4_quantize(
+                xx,
+                (1.0 / self.leader.input_scale).reshape(1),
+                sfLayout=SfLayout.layout_128x4,
+                do_shuffle=False,
+                backend="cuda",
+            )
+        try:
+            out = mm_fp4(
+                a_fp4,
+                self.weight_packed.T,
+                a_sf,
+                self.weight_scale_swizzled.T,
+                self.alpha,
+                self.out_dtype,
+                self.out,
+                block_size=16,
+                use_8x4_sf_layout=False,
+                backend=self.backend,
+                use_nvfp4=True,
+            )
+        except Exception as exc:  # noqa: BLE001 - 整对永久回退，不静默算错
+            self.disabled = True
+            _DECODE_STATS["merge_fallbacks"] += 1
+            warnings.warn(
+                f"DecodePair {self.n_leader}+{self.n_follower} "
+                f"(K={self.leader.in_features}) 合并失败，回退分开调用：{exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return None
+        self.x_ptr = x.data_ptr()
+        self.x_numel = x.numel()
+        self.armed = True
+        label = f"{self.n_leader}+{self.n_follower}x{self.leader.in_features}"
+        _DECODE_STATS["merged_calls"][label] = (
+            _DECODE_STATS["merged_calls"].get(label, 0) + 1
+        )
+        return out[:, : self.n_leader]
+
+
+def attach_decode_pair(leader: "NVFP4Linear", follower: "NVFP4Linear") -> bool:
+    """把 leader/follower 合成一个 ``DecodePair``（M=1 生效；prefill 不变）。
+
+    条件不满足返回 False（不报错）：同 in_features / 无 bias / 两个 scalar 逐位相同 /
+    N 都是 128 的倍数（保证 scale 拼接 == 拼接后 swizzle）。成功时两半的
+    ``weight_packed`` / ``weight_scale_swizzled`` 变成同一块 buffer 的视图，
+    稳态显存不增加（拼接的瞬时峰值是每对一份）。
+    """
+    if not isinstance(leader, NVFP4Linear) or not isinstance(follower, NVFP4Linear):
+        return False
+    if leader is follower or leader.in_features != follower.in_features:
+        return False
+    if leader.bias is not None or follower.bias is not None:
+        return False
+    if leader.out_dtype != follower.out_dtype:
+        return False
+    if not torch.equal(leader.input_scale, follower.input_scale):
+        return False
+    if not torch.equal(leader.weight_scale_2, follower.weight_scale_2):
+        return False
+    n1, n2 = leader.out_features, follower.out_features
+    if n1 % 128 or n2 % 128:
+        return False
+    if leader.weight_scale_swizzled.shape[0] != n1:
+        return False
+    if follower.weight_scale_swizzled.shape[0] != n2:
+        return False
+    weight = torch.cat([leader.weight_packed, follower.weight_packed], dim=0)
+    scale = torch.cat(
+        [leader.weight_scale_swizzled, follower.weight_scale_swizzled], dim=0
+    )
+    pair = DecodePair(leader, follower, weight, scale)
+    leader.weight_packed = weight[:n1]
+    leader.weight_scale_swizzled = scale[:n1]
+    follower.weight_packed = weight[n1:]
+    follower.weight_scale_swizzled = scale[n1:]
+    leader._decode_pair = pair
+    follower._decode_pair = pair
+    return True
+
+
+def install_decode_pairs(model: nn.Module) -> dict[str, Any]:
+    """遍历 decoder layers，把三对共享 hidden_states 的 Linear 配成 DecodePair。
+
+    返回计数（写进 load info / harness）；配不上的对跳过（``skipped``），
+    不影响原有 per-module 路径。
+    """
+    stats: dict[str, Any] = {"pairs": 0, "skipped": 0, "kinds": {}}
+    layers = getattr(getattr(model, "model", model), "layers", None)
+    if layers is None:
+        return stats
+    specs = (
+        ("self_attn", "k_proj", "v_proj"),
+        ("mlp", "gate_proj", "up_proj"),
+        ("linear_attn", "in_proj_qkv", "in_proj_z"),
+    )
+    for layer in layers:
+        for holder_name, leader_name, follower_name in specs:
+            holder = getattr(layer, holder_name, None)
+            if holder is None:
+                continue
+            leader = getattr(holder, leader_name, None)
+            follower = getattr(holder, follower_name, None)
+            if attach_decode_pair(leader, follower):
+                stats["pairs"] += 1
+                key = f"{leader_name}+{follower_name}"
+                stats["kinds"][key] = stats["kinds"].get(key, 0) + 1
+            else:
+                stats["skipped"] += 1
+    return stats
 
 
 class NVFP4Linear(nn.Module):
@@ -170,6 +390,8 @@ class NVFP4Linear(nn.Module):
         # 融合路径的单次槽位：``norm_quant_patch`` 在调用 mixer 之前填入
         # (a_fp4, a_sf)，``forward`` 取走并清空；平时恒为 None。
         self._pending_quantized: tuple[torch.Tensor, torch.Tensor] | None = None
+        # M=1 合并调用的 pair（loader 里 ``attach_decode_pair`` 设置）；prefill 不用。
+        self._decode_pair: DecodePair | None = None
 
     # ------------------------------------------------------------------ 内核
     def _mm(
@@ -258,6 +480,13 @@ class NVFP4Linear(nn.Module):
             raise ValueError(
                 f"x must be [..., {self.in_features}], got {tuple(x.shape)}"
             )
+        # M=1 的合并调用（k/v、gate/up、in_proj_qkv/z）：一次 mm_fp4 出两半。
+        # 返回 None 表示这一半走普通路径（prefill / pair 未命中 / 合并失败）。
+        if self._decode_pair is not None:
+            paired = self._decode_pair.forward(self, x, pending)
+            if paired is not None:
+                return self._finish(paired, x.shape)
+
         if pending is not None:
             # 输入已经由融合 kernel 量化过（同一 norm 输出的每个消费者各有一份）。
             # 融合路径只在 decode（M==1）生效，所以这里同样要按 decode 选型挑 backend。

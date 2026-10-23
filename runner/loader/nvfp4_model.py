@@ -33,7 +33,11 @@ from runner.model.host_embedding import HostEmbedding  # noqa: E402
 from runner.model.norm_quant_patch import install_from_env as install_norm_quant  # noqa: E402
 from runner.ops.attention import install as install_compact_attention  # noqa: E402
 from runner.ops.bf16.stable_linear import ShapeStableLinear  # noqa: E402
-from runner.ops.nvfp4.linear import NVFP4Linear, decode_backend_info  # noqa: E402
+from runner.ops.nvfp4.linear import (  # noqa: E402
+    NVFP4Linear,
+    decode_backend_info,
+    install_decode_pairs,
+)
 
 from .checkpoint import CheckpointReader
 
@@ -188,6 +192,10 @@ def load_nvfp4_text_model(
             wrapped_stable += 1
     reader.close()
 
+    # 6) M=1 合并调用：k/v、gate/up、in_proj_qkv/in_proj_z 各合成一次 mm_fp4。
+    #    必须在所有模块建好之后、graph capture 之前（pair 的 out 缓冲在这里分配）。
+    decode_pairs = install_decode_pairs(model)
+
     meta_params = [n for n, p in model.named_parameters() if p.device.type == "meta"]
     meta_buffers = [n for n, b in model.named_buffers() if b.device.type == "meta"]
     if meta_params or meta_buffers:
@@ -223,6 +231,8 @@ def load_nvfp4_text_model(
         # Phase 2 任务 F：M=1 decode 的 (N,K)->backend 静态表与依据。counters 是
         # 同一个 dict 的引用，产物最后序列化时能看到整个运行期间的调用计数。
         "nvfp4_decode": decode_backend_info(),
+        # 第 4 轮：M=1 的合并调用（DecodePair）配对计数。
+        "nvfp4_decode_pairs": decode_pairs,
         # Phase 2 任务 H：norm+quant 融合的接线计数（fused_norms / fallbacks）。
         "norm_quant": norm_quant_info,
     }
