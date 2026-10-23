@@ -162,12 +162,107 @@ class NVFP4Linear(nn.Module):
             swizzle_scale_128x4(weight_scale.contiguous()),
         )
         self.register_buffer("bias", None if bias is None else bias.contiguous())
+        # alpha = input_scale * weight_scale_2 是模型常量：构造时算一次，省掉每次
+        # forward 的一个小 kernel（f32 乘法，与逐次计算结果逐位相同）。
+        self.register_buffer(
+            "alpha", (self.input_scale * self.weight_scale_2).reshape(1).float()
+        )
+        # 融合路径的单次槽位：``norm_quant_patch`` 在调用 mixer 之前填入
+        # (a_fp4, a_sf)，``forward`` 取走并清空；平时恒为 None。
+        self._pending_quantized: tuple[torch.Tensor, torch.Tensor] | None = None
+
+    # ------------------------------------------------------------------ 内核
+    def _mm(
+        self,
+        a_fp4: torch.Tensor,
+        a_sf: torch.Tensor,
+        backend: str | None = None,
+    ) -> torch.Tensor:
+        """已量化好的 A + 128x4 swizzled SF -> [M, N] BF16（不含 bias/reshape）。"""
+        return mm_fp4(
+            a_fp4,
+            self.weight_packed.T,
+            a_sf,
+            self.weight_scale_swizzled.T,
+            self.alpha,
+            self.out_dtype,
+            None,
+            block_size=16,
+            use_8x4_sf_layout=False,
+            backend=self.backend if backend is None else backend,
+            use_nvfp4=True,
+        )
+
+    def _select_backend(self, m: int) -> str:
+        """M==1（decode）按 (N,K) 查静态表；M>1（prefill）保持 self.backend。
+
+        表只对本 checkpoint 的 SM120 有效（job-000035 的 870 vs 760 GB/s 依据见
+        ``DECODE_BACKEND_TABLE``）。``decode_backend`` 显式覆盖优先，其次是查表。
+        """
+        if m != 1:
+            return self.backend
+        if self.decode_backend is not None:
+            chosen = self.decode_backend
+        elif self.backend == "cutlass":
+            chosen = decode_backend_for(self.out_features, self.in_features)
+        else:
+            chosen = self.backend
+        if chosen == self.backend or chosen in _DECODE_BACKEND_DISABLED:
+            return self.backend
+        return chosen
+
+    def _gemm(self, a_fp4: torch.Tensor, a_sf: torch.Tensor, m: int) -> torch.Tensor:
+        """量化好的 A -> [m, N]。decode 走选型 backend，失败则永久回退。"""
+        backend = self._select_backend(m)
+        if backend == self.backend:
+            return self._mm(a_fp4, a_sf)
+        label = f"{self.out_features}x{self.in_features}"
+        # 首次调用包含 JIT 编译；只在非 capture 路径计时（warmup 在 capture 之前）。
+        first = label not in _DECODE_STATS["first_call_ms"]
+        measure = bool(first) and not torch.cuda.is_current_stream_capturing()
+        if measure:
+            torch.cuda.synchronize()
+            started = time.perf_counter()
+        try:
+            out = self._mm(a_fp4, a_sf, backend)
+        except Exception as exc:  # noqa: BLE001 - 不可用则永久回退，不静默失败
+            _DECODE_BACKEND_DISABLED.add(backend)
+            _DECODE_STATS["fallbacks"] += 1
+            warnings.warn(
+                f"NVFP4Linear: decode backend {backend!r} failed on "
+                f"{label}, falling back to {self.backend!r}: {exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            backend = self.backend
+            out = self._mm(a_fp4, a_sf)
+        if measure:
+            torch.cuda.synchronize()
+            _DECODE_STATS["first_call_ms"][label] = (
+                time.perf_counter() - started
+            ) * 1e3
+        _DECODE_STATS["calls"][backend] = _DECODE_STATS["calls"].get(backend, 0) + 1
+        _DECODE_STATS["selected"][label] = backend
+        return out
+
+    def _finish(self, out: torch.Tensor, shape: torch.Size) -> torch.Tensor:
+        if self.bias is not None:
+            out = out + self.bias
+        if len(shape) != 2:
+            out = out.reshape(*shape[:-1], self.out_features)
+        return out
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        pending, self._pending_quantized = self._pending_quantized, None
         if x.ndim < 2 or x.shape[-1] != self.in_features:
             raise ValueError(
                 f"x must be [..., {self.in_features}], got {tuple(x.shape)}"
             )
+        if pending is not None:
+            # 输入已经由融合 kernel 量化过（同一 norm 输出的每个消费者各有一份）。
+            # 融合路径只在 decode（M==1）生效，所以这里同样要按 decode 选型挑 backend。
+            return self._finish(self._gemm(pending[0], pending[1], 1), x.shape)
+
         original_shape = x.shape
         x = x.reshape(-1, self.in_features)
         if not x.is_contiguous():
@@ -184,70 +279,7 @@ class NVFP4Linear(nn.Module):
             do_shuffle=False,
             backend="cuda",
         )
-        alpha = (self.input_scale * self.weight_scale_2).reshape(1).float()
-
-        def run(which: str) -> torch.Tensor:
-            return mm_fp4(
-                a_fp4,
-                self.weight_packed.T,
-                a_sf,
-                self.weight_scale_swizzled.T,
-                alpha,
-                self.out_dtype,
-                None,
-                block_size=16,
-                use_8x4_sf_layout=False,
-                backend=which,
-                use_nvfp4=True,
-            )
-
-        # M=1（decode）按 (N, K) 选 backend；M>1（prefill）保持 self.backend。
-        decode = None
-        if x.shape[0] == 1:
-            if self.decode_backend is not None:
-                chosen = self.decode_backend
-            elif self.backend == "cutlass":
-                chosen = decode_backend_for(self.out_features, self.in_features)
-            else:
-                chosen = self.backend
-            if chosen != self.backend and chosen not in _DECODE_BACKEND_DISABLED:
-                decode = chosen
-
-        if decode is None:
-            out = run(self.backend)
-        else:
-            label = f"{self.out_features}x{self.in_features}"
-            # 首次调用包含 JIT 编译；只在非 capture 路径计时（warmup 在 capture 之前）。
-            first = label not in _DECODE_STATS["first_call_ms"]
-            measure = first and not torch.cuda.is_current_stream_capturing()
-            if measure:
-                torch.cuda.synchronize()
-                started = time.perf_counter()
-            try:
-                out = run(decode)
-            except Exception as exc:  # noqa: BLE001 - 不可用则永久回退，不静默失败
-                _DECODE_BACKEND_DISABLED.add(decode)
-                _DECODE_STATS["fallbacks"] += 1
-                warnings.warn(
-                    f"NVFP4Linear: decode backend {decode!r} failed on "
-                    f"{label}, falling back to {self.backend!r}: {exc}",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
-                decode = self.backend
-                out = run(decode)
-            if measure:
-                torch.cuda.synchronize()
-                _DECODE_STATS["first_call_ms"][label] = (
-                    time.perf_counter() - started
-                ) * 1e3
-            _DECODE_STATS["calls"][decode] = _DECODE_STATS["calls"].get(decode, 0) + 1
-            _DECODE_STATS["selected"][label] = decode
-        if self.bias is not None:
-            out = out + self.bias
-        if len(original_shape) != 2:
-            out = out.reshape(*original_shape[:-1], self.out_features)
-        return out
+        return self._finish(self._gemm(a_fp4, a_sf, x.shape[0]), original_shape)
 
     def extra_repr(self) -> str:
         return (
