@@ -171,3 +171,45 @@ ShapeStableLinear 的 a/b GEMM。Explorer 用 `graph-7680/kern_sum.csv` 拆开�
 - 两个 depth 收益一致（0.70 / 0.73 ms），符合「与 depth 无关的固定开销」预期；
   比 microbench 外推的 0.60 ms 还多，因为 pad 的两个 kernel（fill + cat，2.78 µs/次）
   在真实模型里也被一并省掉了。
+
+## 任务 I 采纳（job-000034-486a8274，commit `4a16d0e`）
+
+| 指标 | baseline job-000029 | I | 变化 |
+|---|---|---|---|
+| graph-8192 step p50 | 27.781 ms | **27.514 ms** | −0.267 ms |
+| graph-8192 系统 | 35.99 tok/s | **36.30** | +0.9% |
+| graph-512-1024 step p50 | 26.779 ms | **26.550 ms** | −0.229 ms |
+| graph-512-1024 系统 | 37.29 tok/s | **37.62** | +0.9% |
+
+- op **524/524**：worst nrmse 1.29e-9（实质逐位）、`fused=96 / reference=0 / fallbacks=0`、
+  三个负对照 nrmse 1.45 / 1.25 / …（v1 的「负对照恒等」已修好）。
+- microbench 0.271 ms vs e2e 0.267/0.229 ms，局部收益完整迁移。
+- v1 失败的两个根因都是**判据 bug**：in-place 的 reference 用了调用后的 state 快照、
+  负对照拿「reference 喂同样的错输入」当参照；都不是 kernel 数学错。最终按建议放弃
+  in-place，改为 48 个固定 out 槽（0.94 MB）。
+
+## 任务 F backend sweep（job-000035-461c30c4，commit `959b667`）：cute-dsl 全胜
+
+198/198 gate 全过，11 个 case 覆盖全部 401 个 NVFP4 Linear（14.399 GB），L2-free +
+graph replay 计时，cutlass 基线走官方入口：
+
+| case | cutlass GB/s | cute-dsl GB/s | cutlass ms | cute-dsl ms |
+|---|---|---|---|---|
+| in_proj_qkv | 799.5 | 871.2 | 1.7707 | 1.6248 |
+| in_proj_z | 732.5 | 836.4 | 1.1596 | 1.0155 |
+| q_proj | 648.1 | 843.3 | 0.8736 | 0.6714 |
+| k_proj / v_proj | 164.6 | 504.8 | 0.2867×2 | 0.0935×2 |
+| o_proj | 681.6 | 828.6 | 0.4154 | 0.3417 |
+| out_proj | 684.0 | 832.2 | 1.2418 | 1.0206 |
+| gate_proj | 827.3 | 882.4 | 3.8786 | 3.6362 |
+| up_proj | 822.5 | 882.5 | 3.9011 | 3.6359 |
+| down_proj | 742.0 | 883.7 | 4.3245 | 3.6311 |
+| lm_head | 888.9 | 911.0 | 0.8045 | 0.7851 |
+| **合计** | **760** | **870** | **18.943** | **16.549** |
+
+- **cute-dsl 11/11 全胜，加权 −2.39 ms/step（−12.6%）**；`auto == b12x`（诊断），
+  cudnn 全面更慢。k/v_proj 从 164.6 涨到 504.8 GB/s（CTA 数从 8 变多的效果）。
+- 三个 backend 的输出**逐位一致**（`backend-agreement` nrmse 0.0），所以换 backend
+  不改变数值语义 —— 这让接入的 bitwise 风险很低。
+- 已派发第二个 job：只在 M==1 查静态 `(N,K)->backend` 表（全填 cute-dsl、未命中回退
+  cutlass），prefill 保持 cutlass，然后跑 `numeric-512,graph-1024` + 两个 graph 场景。
