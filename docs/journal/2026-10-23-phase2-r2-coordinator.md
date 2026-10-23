@@ -326,3 +326,14 @@ H 的 `_pending_quantized` 快路径直接调 `self._mm(pending[0], pending[1])`
   `memory graph-8192 511`，timeout 3600。
 - 预期：8K 约 24.10 − 2.38 +（组合交互修复后应保留 F 的收益）≈ **23.0–23.4 ms**，
   系统约 42.8–43.5 tok/s，%SOL 约 68–69%。
+
+### H 的收益归因（已记录到 `docs/journal/2026-10-23-phase2-normquant.md` §5.3）
+
+- graph 口径的局部收益 **−1.255 ms**（micro：两/三消费者 per-call 12.90/13.89 →
+  **3.18/3.47 µs**）；
+- 另有 **≈1.1 ms** 来自顺带删掉的 **673 个 per-call 标量 kernel**（401 个 `alpha`、
+  272 个 `1/input_scale`）—— 这是「常量预计算」在 Phase 2 的第二次兑现（第一次是 M3 的
+  `reciprocal`），也说明 **profile 里那些 <1 µs 的标量 kernel 单看微不足道、合起来是 ms 级**；
+- 合计 −2.38 ms。
+- H 的判断：可预计算的只剩 input-independent 常量（如 `-exp(A_log)`，48 个，≤0.1 ms），
+  剩下约 4000 个小 kernel 都是 input-dependent，下一轮的杠杆是**继续融合**而非预计算。
