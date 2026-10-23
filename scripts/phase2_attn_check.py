@@ -529,6 +529,18 @@ def _configure_git_provenance() -> Path:
     return excludes
 
 
+def summarize(payload: dict) -> dict:
+    """打印用摘要：``summary.cases`` 只有 gate 计数，metrics 在 ``cases`` 里。"""
+    metrics = {entry["case"]: entry["metrics"] for entry in payload["cases"]}
+    return {
+        "ok": payload["summary"]["ok"],
+        "cases": [
+            {**entry, "metrics": metrics.get(entry["case"], {})}
+            for entry in payload["summary"]["cases"]
+        ],
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
     if not torch.cuda.is_available():
@@ -585,20 +597,7 @@ def main(argv: list[str] | None = None) -> int:
             },
         }
     )
-    summary = {
-        "ok": payload["summary"]["ok"],
-        "cases": [
-            {
-                "case": entry["case"],
-                "gates": entry["gates"],
-                "gates_passed": entry["gates_passed"],
-                "gates_failed": entry["gates_failed"],
-                "metrics": entry["metrics"],
-            }
-            for entry in payload["summary"]["cases"]
-        ],
-    }
-    print(json.dumps(summary, indent=2, ensure_ascii=False))
+    print(json.dumps(summarize(payload), indent=2, ensure_ascii=False))
     print(f"output: {args.out / 'op.json'}")
     return 0 if payload["summary"]["ok"] else 1
 
