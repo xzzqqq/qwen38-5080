@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""NVFP4 M=1 GEMV 的 per-shape backend/tactic 选型（op gate + microbench）。
+"""NVFP4 M=1 GEMV 的 per-shape backend 选型（op gate + microbench）。
 
 要回答的问题
 ------------
 模型 8K decode 每步 401 次 FlashInfer ``mm_fp4`` = 19.299 ms / 14.399 GB =
 747 GB/s，而同一个 cutlass 后端在不同 shape 上的单 kernel 聚合带宽是
 61–890 GB/s（k_proj 165、down_proj 745、gate_proj 813、lm_head 890）。
-本脚本对每个真实 shape 试遍 SM120 上可用的 ``mm_fp4`` backend
-（cutlass / cudnn / b12x / cute-dsl / auto）以及能拿到的 tactic 入口
-（cutlass 的 32 档 CtaShape × swap_ab × DP/StreamK、cudnn 的 engine knob、
-b12x 的 tile/prefetch 组合），按真实实例数加权给出整步估计：
+本脚本对每个真实 shape 试遍 SM120 上**可经官方入口复现**的 ``mm_fp4``
+backend（cutlass / b12x / cute-dsl / cudnn，外加 auto 作诊断），按真实实例数
+加权给出整步估计：
 
     est_step_ms = Σ_shape (该 shape 全部真实实例的聚合 ms)
     est_gbs     = 14.399 GB / est_step_ms
@@ -18,7 +17,7 @@ b12x 的 tile/prefetch 组合），按真实实例数加权给出整步估计：
 ----
 - **同一批实例**：每个 case 扫过 checkpoint 里该 shape 的**全部**真实实例
   （401 个 NVFP4 Linear 一一对应），不是单实例重复；
-- **同一份 A/W**：所有 backend/tactic 都吃同一份 ``nvfp4_quantize`` 的
+- **同一份 A/W**：所有 backend 都吃同一份 ``nvfp4_quantize`` 的
   ``a_fp4``/``a_sf`` 和同一批 checkpoint 权重 + 128x4 swizzled scale；
 - **L2-free**：GB203 的 L2 约 64 MB。小 shape（k_proj/v_proj 各 16 × 2.6 MB）
   的真实实例工作集只有 ~42 MB，会整块住进 L2；对这些 case 复制 ``copies``
@@ -37,9 +36,12 @@ b12x 的 tile/prefetch 组合），按真实实例数加权给出整步估计：
   反量化」的 FP32 matmul 比：``nrmse ≤ 5e-3``、``cosine ≥ 0.99999``、
   ``max_rel ≤ 1e-2``；
 - 不同 backend 之间（同一份 A/W）``nrmse ≤ 1e-3``，并记录最大绝对差；
-- 接线自检：``mm_fp4(backend="cutlass")`` 的默认 tactic 必须与某一档显式
-  cutlass tactic 逐位相同（预期是 tactic 21 = CtaShape128x128x128/noSwap/DP），
-  同时验证「直接调 cutlass module」的调用方式。
+
+tactic 级（cutlass 的 CtaShape/swap_ab/StreamK、b12x 的 tile/prefetch、
+cudnn 的 engine knob）只能经私有 ``TunableRunner`` / module 到达；官方
+``mm_fp4(backend=...)`` 没有 tactic 参数，``linear.py`` 无法复现。因此本脚本
+收敛到 **backend 级**（2026-10-23 第 2 次提交：cutlass 的私有 tactic 遍历把
+默认路径一起打断了，tactic 子实验已删除）。
 
 计时口径的两个已知坑（第 1 轮 B/C 两条线踩过）
 ----------------------------------------------
@@ -133,22 +135,6 @@ AGREE_NRMSE = 1.0e-3
 # profile 的整步参照（集成后 graph-7680 8 步，job-000028）。
 PROFILE_STEP_MS = 19.299
 PROFILE_TOTAL_GB = 14.399
-
-# cutlass SM120 的 tactic 表顺序（fp4_gemm_cutlass_sm120.cu 的 getConfigs）：
-# 8 个 tile × {swap_ab true/false} × {DP, StreamK}。tactic=-1 等价于
-# 128x128x128 + swap_ab=false + DP，即 index 21（接线自检用）。
-CUTLASS_TILES = (
-    "128x32x64",
-    "128x32x128",
-    "128x64x64",
-    "128x64x128",
-    "128x128x64",
-    "128x128x128",
-    "256x128x64",
-    "128x256x64",
-)
-CUTLASS_DEFAULT_TACTIC = 21
-# 如果实现/枚举顺序变了，接线自检会失败；枚举顺序以 C++ getConfigs 为准。
 
 # 计时单元的工作集目标：≥4×L2（GB203 L2 ≈ 64 MB）。
 L2_TARGET_MULTIPLE = 4.0
@@ -371,99 +357,33 @@ def find_instances(reader, suffixes: tuple[str, ...]) -> list[str]:
 
 
 class BackendConfig:
-    """一个候选 (backend, tactic)。
+    """一个候选 backend（当前只保留官方入口 ``mm_fp4(backend=family)``）。
 
-    mode:
-      - ``mm``: 走官方入口 ``mm_fp4(backend=family)``，tactic 为后端默认；
-      - ``cutlass_tactic``: 直接调 cutlass module 的 ``fp4_gemm(..., tactic)``；
-      - ``runner_tactic``: 调对应后端的 TunableRunner（cudnn/b12x）。
+    tactic 级已被移除：它只能经私有 TunableRunner/module 到达，无法在
+    ``linear.py`` 里用官方入口复现（见模块 docstring）。
     """
 
-    __slots__ = ("name", "family", "mode", "tactic", "integrable")
+    __slots__ = ("name", "family", "mode", "integrable")
 
     def __init__(self, name: str, family: str, mode: str, tactic=None, *, integrable: bool):
         self.name = name
         self.family = family
         self.mode = mode
-        self.tactic = tactic
         self.integrable = bool(integrable)
 
     def __repr__(self) -> str:  # pragma: no cover - 只用于打印
-        return f"<{self.name} {self.mode} tactic={self.tactic}>"
-
-
-def cutlass_tactic_label(index: int) -> str:
-    tile = CUTLASS_TILES[index // 4] if index // 4 < len(CUTLASS_TILES) else "?"
-    swap = "swapAB" if index % 4 in (0, 2) else "noSwap"
-    sched = "streamK" if index % 4 in (2, 3) else "DP"
-    return f"{tile}/{swap}/{sched}"
+        return f"<{self.name} {self.mode}>"
 
 
 class Backends:
-    """惰性构造各 backend 的 runner / module（首次使用时才 JIT）。"""
+    """记录各 backend 的不可用原因（写进产物 diagnostic）。
+
+    backend 的构造 / JIT / 首次调用都在 ``_measure`` 里通过官方入口
+    ``mm_fp4`` 惰性发生；这里只保留错误表，不再直接碰私有 runner。
+    """
 
     def __init__(self):
-        self._cutlass = None
-        self._cudnn = None
-        self._b12x = None
-        self._cute = None
-        self._workspace = None
         self.errors: dict[str, str] = {}
-
-    def workspace(self):
-        import torch
-        from flashinfer.gemm.gemm_base import DEFAULT_WORKSPACE_SIZE
-
-        if self._workspace is None:
-            self._workspace = torch.empty(
-                DEFAULT_WORKSPACE_SIZE, dtype=torch.uint8, device="cuda"
-            )
-        return self._workspace
-
-    def get(self, family: str):
-        import torch
-
-        if family in self.errors:
-            return None
-        try:
-            if family == "cutlass":
-                if self._cutlass is None:
-                    from flashinfer.gemm.gemm_base import (
-                        get_gemm_sm120_module_cutlass_fp4,
-                    )
-
-                    self._cutlass = get_gemm_sm120_module_cutlass_fp4()
-                return self._cutlass
-            if family == "cudnn":
-                if self._cudnn is None:
-                    from flashinfer.gemm.gemm_base import (
-                        _MM_FP4_TUNING_CONFIG_128x4,
-                        _cudnn_gemm_fp4_runner,
-                    )
-
-                    self._cudnn = _cudnn_gemm_fp4_runner(_MM_FP4_TUNING_CONFIG_128x4)
-                return self._cudnn
-            if family == "b12x":
-                if self._b12x is None:
-                    from flashinfer.gemm.gemm_base import _b12x_gemm_fp4_runner
-
-                    self._b12x = _b12x_gemm_fp4_runner(12, 0, True, torch.bfloat16, True)
-                return self._b12x
-            if family == "cute-dsl":
-                if self._cute is None:
-                    from flashinfer.gemm.gemm_base import _cute_dsl_gemm_fp4_runner
-
-                    self._cute = _cute_dsl_gemm_fp4_runner(
-                        12, 0, True, torch.bfloat16, True
-                    )
-                return self._cute
-        except Exception as exc:  # noqa: BLE001 - 记录不可用原因，不中断
-            self.errors[family] = f"{type(exc).__name__}: {exc}"
-            return None
-        raise ValueError(f"unknown backend family: {family}")
-
-    def available(self, family: str) -> bool:
-        return self.get(family) is not None
 
 
 class CaseContext:
@@ -480,9 +400,7 @@ class CaseContext:
         "aggregate_bytes",
         "l2_bytes",
         "a_fp4",
-        "a_u8",
         "a_sf",
-        "a_sf_u8",
         "ref",
         "out",
         "out_num",
@@ -576,9 +494,7 @@ def _load_case(reader, case: str, l2_bytes: int, max_copies: int) -> CaseContext
     ctx.aggregate_bytes = aggregate_bytes
     ctx.l2_bytes = l2_bytes
     ctx.a_fp4 = a_fp4
-    ctx.a_u8 = a_fp4.view(torch.uint8)
     ctx.a_sf = a_sf
-    ctx.a_sf_u8 = a_sf.view(torch.uint8)
     ctx.ref = ref
     ctx.out = torch.empty((1, n), dtype=torch.bfloat16, device="cuda")
     ctx.out_num = torch.empty((1, n), dtype=torch.bfloat16, device="cuda")
@@ -586,26 +502,8 @@ def _load_case(reader, case: str, l2_bytes: int, max_copies: int) -> CaseContext
     return ctx
 
 
-def _runner_inputs(ctx: CaseContext, instance, out, backends: Backends) -> list:
-    import torch
-
-    weight, scale = instance["replicas"][0]
-    return [
-        ctx.a_fp4,
-        weight.T,
-        ctx.a_sf,
-        scale.T,
-        instance["alpha"],
-        torch.bfloat16,
-        out,
-        16,
-        True,
-        backends.workspace(),
-    ]
-
-
-def _make_call(config: BackendConfig, ctx: CaseContext, backends: Backends):
-    """把 (backend, tactic) 变成一个 ``call(weight, scale, alpha, out)``。"""
+def _make_call(config: BackendConfig, ctx: CaseContext):
+    """把 backend 变成一个 ``call(weight, scale, alpha, out)``。"""
     import torch
     from flashinfer import mm_fp4
 
@@ -625,50 +523,6 @@ def _make_call(config: BackendConfig, ctx: CaseContext, backends: Backends):
                 use_8x4_sf_layout=False,
                 backend=backend,
                 use_nvfp4=True,
-            )
-
-        return call
-
-    if config.mode == "cutlass_tactic":
-        module = backends.get("cutlass")
-        workspace = backends.workspace()
-        tactic = config.tactic
-
-        def call(weight, scale, alpha, out):
-            module.fp4_gemm(
-                ctx.a_u8,
-                weight,
-                ctx.a_sf_u8,
-                _u8(scale),
-                alpha,
-                out,
-                workspace,
-                tactic,
-            )
-
-        return call
-
-    if config.mode == "runner_tactic":
-        runner = backends.get(config.family)
-        tactic = config.tactic
-        workspace = backends.workspace()
-        out_dtype = torch.bfloat16
-
-        def call(weight, scale, alpha, out):
-            runner(
-                inputs=[
-                    ctx.a_fp4,
-                    weight.T,
-                    ctx.a_sf,
-                    scale.T,
-                    alpha,
-                    out_dtype,
-                    out,
-                    16,
-                    True,
-                    workspace,
-                ],
-                tactic=tactic,
             )
 
         return call
@@ -731,46 +585,8 @@ def _time_graph(ctx: CaseContext, call, warmup: int, iters: int):
     return statistics.median(samples), "graph"
 
 
-def _cutlass_configs(backends: Backends, args) -> list[BackendConfig]:
-    configs = [BackendConfig("cutlass:default", "cutlass", "mm", None, integrable=True)]
-    if "cutlass" in args.scan_tactics and backends.available("cutlass"):
-        module = backends.get("cutlass")
-        total = int(module.fp4_gemm_tactic_num())
-        for index in range(total):
-            configs.append(
-                BackendConfig(
-                    f"cutlass:t{index}({cutlass_tactic_label(index)})",
-                    "cutlass",
-                    "cutlass_tactic",
-                    index,
-                    integrable=False,
-                )
-            )
-    return configs
-
-
 def _mm_default(family: str, integrable: bool = True) -> BackendConfig:
     return BackendConfig(f"{family}:default", family, "mm", None, integrable=integrable)
-
-
-def _runner_tactic_configs(family: str, ctx: CaseContext, backends: Backends, cap: int):
-    runner = backends.get(family)
-    if runner is None:
-        return []
-    inputs = _runner_inputs(ctx, ctx.instance0, ctx.out, backends)
-    try:
-        tactics = list(runner.get_valid_tactics(inputs, None))
-    except Exception as exc:  # noqa: BLE001
-        backends.errors[family] = f"get_valid_tactics: {type(exc).__name__}: {exc}"
-        return []
-    configs = []
-    for index, tactic in enumerate(tactics[:cap]):
-        configs.append(
-            BackendConfig(
-                f"{family}:t{index}", family, "runner_tactic", tactic, integrable=False
-            )
-        )
-    return configs
 
 
 def _measure(
@@ -786,7 +602,7 @@ def _measure(
     from runner.ops.nvfp4.reference import error_metrics
 
     try:
-        call = _make_call(config, ctx, backends)
+        call = _make_call(config, ctx)
     except Exception as exc:  # noqa: BLE001
         backends.errors.setdefault(config.name, f"{type(exc).__name__}: {exc}")
         return None
@@ -830,7 +646,6 @@ def _measure(
         "name": config.name,
         "family": config.family,
         "mode": config.mode,
-        "tactic": str(config.tactic),
         "integrable": config.integrable,
         "timing_mode": timing_mode,
         "agg_ms": agg_ms,
@@ -941,33 +756,15 @@ def _run_case(reader, case_name: str, report, args, backends: Backends) -> dict:
     rows: list[dict] = []
     unavailable: dict[str, str] = {}
 
-    # 分阶段构造（惰性）：cutlass 先测量（建立基线），cudnn/b12x 的 tactic
-    # 枚举可能触发 JIT/图构建，放在后面；某个阶段构造失败不影响已有数据。
+    # 只保留官方入口 backend：cutlass 是基线，必须先测（建立 agreement 基准）；
+    # 其余 backend 的构造/编译失败只记 unavailable，不影响已有数据。
     stages: list[tuple[str, object]] = [
-        ("cutlass", lambda: _cutlass_configs(backends, args)),
+        ("cutlass", lambda: [_mm_default("cutlass")]),
         ("b12x", lambda: [_mm_default("b12x")]),
         ("cute-dsl", lambda: [_mm_default("cute-dsl")]),
         ("cudnn", lambda: [_mm_default("cudnn")]),
         ("auto", lambda: [_mm_default("auto", integrable=False)]),
     ]
-    if "b12x" in args.scan_tactics:
-        stages.append(
-            (
-                "b12x-tactics",
-                lambda: _runner_tactic_configs(
-                    "b12x", ctx, backends, args.b12x_tactics
-                ),
-            )
-        )
-    if "cudnn" in args.scan_tactics:
-        stages.append(
-            (
-                "cudnn-tactics",
-                lambda: _runner_tactic_configs(
-                    "cudnn", ctx, backends, args.cudnn_tactics
-                ),
-            )
-        )
 
     for stage_name, build in stages:
         try:
@@ -1014,37 +811,6 @@ def _run_case(reader, case_name: str, report, args, backends: Backends) -> dict:
         _numeric_gate(report_case, best_any)
         _agreement_gate(report_case, best_any, base_name)
         gated.add(best_any["name"])
-
-    # 接线自检：默认 cutlass tactic 必须与某档显式 tactic 逐位相同。
-    cutlass_tactic_rows = [
-        row
-        for row in rows
-        if row["mode"] == "cutlass_tactic" and row["agree_max_abs"] == 0.0
-    ]
-    tactic21 = next(
-        (row for row in rows if row["name"].startswith(f"cutlass:t{CUTLASS_DEFAULT_TACTIC}(")),
-        None,
-    )
-    report_case.gate(
-        "wiring: cutlass 默认 tactic 与显式 tactic 逐位一致（直调 module 接线自检）",
-        bool(cutlass_tactic_rows),
-        {
-            "bitwise_equal_tactics": [row["name"] for row in cutlass_tactic_rows],
-            "expected_default": f"t{CUTLASS_DEFAULT_TACTIC}"
-            f"({cutlass_tactic_label(CUTLASS_DEFAULT_TACTIC)})",
-            "tactic21_agree_max_abs": None
-            if tactic21 is None
-            else tactic21["agree_max_abs"],
-            "tactic21_agg_ms": None if tactic21 is None else tactic21["agg_ms"],
-            "note": "逐位相同才算接线正确；ms 只作诊断",
-        },
-    )
-    if tactic21 is not None and base_row is not None:
-        _safe_metric(
-            report_case,
-            "tactic21_vs_default_agg_ms_diff",
-            abs(tactic21["agg_ms"] - base_row["agg_ms"]),
-        )
 
     report_case.diag(
         "diagnostic: 工作集 >= 4x L2（聚合 GB/s 才干净）",
@@ -1169,17 +935,6 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="小 shape 的多副本上限（把工作集补到 >=4x L2）",
     )
     parser.add_argument(
-        "--scan-tactics",
-        default="cutlass,cudnn,b12x",
-        help="要扫描 tactic 的后端（逗号分隔；cutlass 无编译成本，cudnn/b12x 有 JIT）",
-    )
-    parser.add_argument(
-        "--cudnn-tactics", type=int, default=8, help="cudnn engine knob 最多试几个"
-    )
-    parser.add_argument(
-        "--b12x-tactics", type=int, default=3, help="b12x tile/prefetch tactic 最多试几个"
-    )
-    parser.add_argument(
         "--check-shapes",
         action="store_true",
         help="纯 CPU：只校验 checkpoint 清单与 SCENARIOS/SHAPES 一致",
@@ -1230,9 +985,6 @@ def main(argv: list[str] | None = None) -> int:
         return check_shapes()
     if not args.out:
         raise SystemExit("--out 是必填参数（写 op.json）")
-    args.scan_tactics = tuple(
-        item.strip() for item in args.scan_tactics.split(",") if item.strip()
-    )
 
     import torch
     from flashinfer import mm_fp4, nvfp4_quantize  # noqa: F401 - 提前触发 JIT 导入
@@ -1253,18 +1005,19 @@ def main(argv: list[str] | None = None) -> int:
         candidate_extra={
             "backend_candidates": ["cutlass", "cudnn", "b12x", "cute-dsl", "auto"],
             "baseline": (
-                "FlashInfer mm_fp4 backend=cutlass（tactic=-1 = CtaShape128x128x128/"
-                "noSwap/DP，与显式 cutlass:t21 接线自检）"
+                "FlashInfer mm_fp4 backend=cutlass（与模型当前 forward 完全同一条 "
+                "官方入口，tactic=-1 = CtaShape128x128x128/noSwap/DP）"
             ),
             "backend_availability": (
                 "SM120 上官方入口可用：cutlass / cudnn / b12x / cute-dsl / auto"
                 "（auto 在 SM120 上 = b12x）；trtllm 与 cutedsl_low_latency 的 "
                 "requirement 只到 SM100/103/107，不在本机可用列表"
             ),
-            "tactic_entry": (
-                "cutlass: module.fp4_gemm(..., tactic) 全量 32 档（8 tile x swap_ab x "
-                "DP/StreamK）；cudnn: TunableRunner engine knob；b12x: tile/prefetch；"
-                "cute-dsl: 小 M 专用 independent 计划（m=1 只有 1 档）"
+            "tactic_scope": (
+                "backend 级：官方 mm_fp4(backend=...) 没有 tactic 参数，"
+                "cutlass 的 CtaShape/swap_ab/StreamK、b12x 的 tile/prefetch、"
+                "cudnn 的 engine knob 都只能经私有 TunableRunner/module 到达，"
+                "linear.py 无法复现；因此 tactic 子实验已删除，只报可接入的 backend"
             ),
             "timing": (
                 "每个 case 扫全部真实实例（k/v 等小 shape 额外 copies 份不同地址副本，"
@@ -1278,8 +1031,9 @@ def main(argv: list[str] | None = None) -> int:
             "bytes_model": "packed weight + block scale + 2 fp32 scalars（不含 A/out）",
             "integration": (
                 "本 commit 不接主线：静态表要由本 job 的 per-shape 结果决定；"
-                "如果 best_integrable 有收益，下一步把 (N,K)->backend 表写死进 "
-                "runner/ops/nvfp4/linear.py（M=1 才查表，prefill 仍 cutlass）"
+                "如果 best_integrable 相比 cutlass 有 >=0.4 ms 收益，下一步把 "
+                "(N,K)->backend 表写死进 runner/ops/nvfp4/linear.py"
+                "（M=1 才查表，prefill 仍 cutlass），再跑 check+bench"
             ),
         },
         environment={},
@@ -1355,7 +1109,7 @@ def main(argv: list[str] | None = None) -> int:
         f"(saves {baseline_ms - integrable_ms:.3f} ms)"
     )
     print(
-        f"best any tactic: {any_ms:.3f} ms = "
+        f"best any backend: {any_ms:.3f} ms = "
         f"{total_bytes / (any_ms * 1e-3) / 1e9:.1f} GB/s "
         f"(saves {baseline_ms - any_ms:.3f} ms)"
     )
@@ -1426,7 +1180,7 @@ def main(argv: list[str] | None = None) -> int:
                     "saves_ms": baseline_ms - integrable_ms,
                     "table": table,
                 },
-                "best_any_tactic": {
+                "best_any_backend": {
                     "ms": any_ms,
                     "gbs": total_bytes / (any_ms * 1e-3) / 1e9,
                     "saves_ms": baseline_ms - any_ms,
@@ -1461,9 +1215,6 @@ def main(argv: list[str] | None = None) -> int:
                 "warmup": args.warmup,
                 "iters": args.iters,
                 "max_copies": args.max_copies,
-                "scan_tactics": list(args.scan_tactics),
-                "cudnn_tactics": args.cudnn_tactics,
-                "b12x_tactics": args.b12x_tactics,
                 "l2_target_multiple": L2_TARGET_MULTIPLE,
                 "tolerance": TOL,
                 "agreement_nrmse": AGREE_NRMSE,
