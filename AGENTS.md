@@ -32,16 +32,22 @@ GPU 命令都必须在 full access 下运行：bwrap 沙箱看不到 `/dev/nvidi
 | `.venv/bin/python scripts/experiment.py serve` | GPU 实验队列的唯一执行器（full access；常驻） | 常驻 |
 | `.venv/bin/python scripts/experiment.py submit --request PATH` | 提交实验 job（不等待 GPU） | < 1 秒 |
 | `.venv/bin/python scripts/experiment.py status/result/wait/cancel` | 查询、等待、取消 job（查询输出 JSON） | 查询 < 1 秒；`wait` 阻塞 |
-| `make experiment-test` | 实验工具 CPU 测试（队列/worktree/超时/产物校验） | 约 35 秒 |
+| `make experiment-test` | 实验工具 CPU 测试（队列/worktree/超时/产物校验） | 约 43 秒 |
+
+`make m3-bench` / `scripts/m3_close.sh` 只用于里程碑关闭和本机单 session 校准；
+会被引用、比较或跨 session 共享的 GPU 实验走 `scripts/experiment.py` 队列。
 
 环境检查：`nvidia-smi --query-gpu=...`、`nvidia-smi -q`、`cuda13/bin/nvcc --version`，
 结果存 `results/`。
 
 ## 约定
 
-- 多 session 的 GPU 实验（check / bench / memory / profile）经
-  `scripts/experiment.py` 队列串行执行，不直接抢占 GPU；本机自测仍用 `make verify`
-  的最小档位，但不要和其他 session 的 job 并发占卡。用法见 `docs/experiments.md`。
+- 需要 GPU 的实验（check / bench / memory / profile，且结果会被引用、比较或跨
+  session 共享）一律经 `scripts/experiment.py` 队列串行执行：`submit` 入队，GPU
+  主机上的 `serve` 消费，结果用 `result` / `wait` 读取。只有本机单 session 的开发
+  冒烟才直接用 `make verify` / `make m3-quick` 的最小档位；不要和其他 session 的
+  job 并发占卡。请求格式、产物契约和 halt 恢复见 `docs/experiments.md`，Coordinator
+  的派发流程见 `docs/optimization-workflow.md`。
 - 渐进式验证：改一点先跑 `make verify` 给出的档位（或对应 op 的单测 / 单场景
   `--only`），把 loop 做小、fail fast；里程碑关闭前才跑全量
   （`make verify-close`：check / memory / bench / profile / sol）。
