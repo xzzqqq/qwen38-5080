@@ -5,29 +5,31 @@
 pre-norm BF16 hidden，算 zero-centered RMSNorm（结果 round 回 BF16），并为该 norm 的
 每个 NVFP4 消费者各产一份 ``(a_fp4, a_sf)``（128x4 swizzled）。
 
-参考 = 模型现有的两步路径，**判定逐字节相同**（不是容差）：
+决定性参考 = **模型实际执行的那条路径**，判定逐字节相同（不是容差）：
 
-    y = F.rms_norm(x.float(), (K,), 1 + weight.float(), eps).to(bf16)
+    y = Qwen3_5RMSNorm.forward(x)          # bf16 权重，zero-centered (1 + w)，fp32 里算完再 cast
     a_fp4, a_sf = nvfp4_quantize(y, 1 / input_scale, layout_128x4, do_shuffle=False)
 
-``F.rms_norm`` 在 torch 2.14 是 composite（``input.mul(rsqrt(pow(input,2).mean(-1)+eps))
-.mul(weight)``），与 ``Qwen3_5RMSNorm.forward`` 的 eager 序列同序；本脚本用
-``reference-agreement`` gate 证明这两条参考途径逐位相同（不靠文档假设）。
+为什么不用 ``F.rms_norm`` 当 gate（上一轮 job-000036 的教训）：``aten::rms_norm`` 是
+composite，但 composite 里的幂是 ``at::pow(input, 2.0)``（double 字面量，走 CUDA 的
+``powf``），而 ``Qwen3_5RMSNorm._norm`` 写的是 ``x.pow(2)``（int 字面量）。两者在极端
+量级（例如 3e4 的离群通道）上会差 1 ulp，CPU 上测不出来。job-000036 的 24 个样本里
+``F.rms_norm`` 与模块差 1 个 bf16 字节，于是把「两个参考实现不同」误判成了候选失败。
+所以 ``F.rms_norm`` 现在只作 diagnostic，并在 ``square-semantics`` 里把
+「int pow / double pow / x*x」三者的逐位差异直接测出来存档。
 
 冻结的 gate（实现候选之前写下，不因结果调整）
 ================================================
 1. ``bitwise[...]``：融合 kernel 的 ``out_bf16``、每个消费者的 ``a_fp4`` 字节、``a_sf``
-   字节都与两步路径逐字节相同。三条都要过：
+   字节都与模块路径 + ``nvfp4_quantize`` 逐字节相同。三条都要过：
    - ``out_bf16`` 也必须逐位相同，因为 linear-attention 层的 ``in_proj_a`` /
      ``in_proj_b``（未量化）直接消费这个 BF16 张量；
    - ``a_fp4`` 覆盖 E2M1 code 与 nibble 顺序；``a_sf`` 覆盖 e4m3 scale 与 128x4
      swizzle 落点（含 padding 必须为 0）。
 2. ``mean-tree``：``x.pow(2).mean(-1)`` 的 reduction 顺序用 torch op 逐级复刻后与
-   torch 自身逐位相同。把「对 launch 配置的读法」和「Triton 实现」分开定位：
-   这条失败说明我复刻的顺序错了，而不是 kernel 写错了。
-3. ``rsqrt-approx``：inline PTX ``rsqrt.approx.f32`` 与 ``torch.rsqrt`` 在真实
-   variance 值上逐位相同。rstd 差 1 ulp 就会改变 BF16 rounding => code 变。
-4. ``reference-agreement``：``F.rms_norm`` 与 ``Qwen3_5RMSNorm`` 模块逐位相同。
+   torch 自身逐位相同。把「对 launch 配置的读法」和「Triton 实现」分开定位。
+3. ``rsqrt-approx``：inline PTX ``rsqrt.approx.f32`` 与 ``torch.rsqrt`` 在所有真实
+   variance（含 saturation 的 ~1.8e5）与 logspace(1e-6, 1e9) 的 8192 点网格上逐位相同。
 
 coverage（由 ``coverage:`` gate 证明清单齐全）
 =============================================
@@ -42,13 +44,12 @@ coverage（由 ``coverage:`` gate 证明清单齐全）
   e4m3 饱和）、真实 embedding 行、以及多种真实量级的输入（RMS 0.5 / 2 / 8 + 少量
   20x 离群通道）。
 
-microbench：分别测「norm + 2 消费者」「norm + 3 消费者」的两步路径与融合路径
-per-call ms（CUDA event 中位数；eager 提交区间 + 能 capture 时的 graph replay 区间），
-再按真实的 48/16/64 层分布折算整步节省。graph 数字更接近模型实际执行（模型跑在
-CUDA graph 里，单 kernel 成本是 GPU 侧 dispatch），eager 数字包含 CPU 提交开销，
-只作诊断。
+microbench：分别测「norm + 2 消费者」「norm + 3 消费者」的两步路径（模块 + 每消费者
+一次 ``nvfp4_quantize``）与融合路径的 per-call ms（CUDA event 中位数；eager 提交区间
++ 能 capture 时的 graph replay 区间），再按真实的 48/16/64 层分布折算整步节省。graph
+数字更接近模型实际执行（模型跑在 CUDA graph 里），eager 数字包含 CPU 提交开销，只作诊断。
 
-整份脚本在 GPU 上约 30–60 秒（checkpoint 读 128 个 norm 权重 + 401 个 scale 是毫秒级）。
+整份脚本在 GPU 上约 60–120 秒（含 Triton / FlashInfer 首次编译）。
 
 用法：
     .venv/bin/python scripts/phase2_normquant_check.py --out {output}/op
@@ -87,6 +88,7 @@ from runner.ops.nvfp4.norm_quant import (  # noqa: E402
 
 MODEL_DIR = ROOT / "models/Qwen3.8-27B-NVFP4-RTX5090"
 CKPT_PREFIX = "model.language_model."
+EPS = 1e-6
 
 # ---- 冻结的输入与采样参数（实现候选之前确定）------------------------------------
 SEED = 20261023
@@ -106,7 +108,6 @@ NUM_WARPS_SWEEP = (2, DEFAULT_NUM_WARPS, 8)
 SCENARIOS = (
     "mean-tree",
     "rsqrt-approx",
-    "reference-agreement",
     "real-layers",
     "scales-extremes",
     "distribution-edge",
@@ -115,6 +116,8 @@ SCENARIOS = (
 
 CANDIDATE_NAME = "norm-quant-fused-r2"
 CANDIDATE_FORMAT = "nvfp4-w4a4"
+
+INPUT_KINDS = ("gauss-0.5", "gauss-2", "gauss-8", "embed", "saturation", "zeros")
 
 
 # ------------------------------------------------------------------ checkpoint
@@ -174,7 +177,7 @@ def load_checkpoint() -> Checkpoint:
                 short = f"layers.{layer_index}.{suffix}"
                 norm_weights[short] = reader.get(
                     CKPT_PREFIX + short + ".weight", "cpu"
-                ).float()
+                ).to(torch.bfloat16)
         for name in reader.weight_map:
             if not name.endswith(".input_scale") or not name.startswith(CKPT_PREFIX):
                 continue
@@ -187,6 +190,172 @@ def load_checkpoint() -> Checkpoint:
         stop = EMBED_ROWS[-1] + 1
         embedding_rows = handle.get_slice(embed_name)[start:stop].float()
     return Checkpoint(layer_types, norm_weights, input_scales, embedding_rows)
+
+
+# ------------------------------------------------------------------ 参考路径
+
+
+class NormReference:
+    """模型实际执行的 ``Qwen3_5RMSNorm``（bf16 权重 + zero-centered ``1 + w``）。
+
+    权重保持 BF16（与 checkpoint / 模型一致），所以模块里的 ``1.0 + self.weight.float()``
+    与模型跑的是同一条指令序列；``w1`` 只是把同一个乘积预先算好，值逐位相同。
+    """
+
+    def __init__(self, weight_bf16: torch.Tensor, eps: float, device: torch.device) -> None:
+        from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5RMSNorm
+
+        module = Qwen3_5RMSNorm(HIDDEN, eps=float(eps))
+        module.weight = torch.nn.Parameter(
+            weight_bf16.detach().to(device).to(torch.bfloat16), requires_grad=False
+        )
+        self.module = module.to(device).eval()
+        self.eps = float(eps)
+        self.w1 = (1.0 + weight_bf16.detach().to(device).float()).contiguous()
+
+    def bf16(self, x: torch.Tensor) -> torch.Tensor:
+        with torch.no_grad():
+            return self.module(x)
+
+    def f32(self, x: torch.Tensor) -> torch.Tensor:
+        """forward 里 cast 之前的 FP32 值（同一串 op，只少了最后一次 ``type_as``）。"""
+        with torch.no_grad():
+            out = self.module._norm(x.float())
+            return out * (1.0 + self.module.weight.float())
+
+
+class NormReferences:
+    """按 norm 名缓存 ``NormReference``（128 个，每个 20 KB，代价可忽略）。"""
+
+    def __init__(self, checkpoint: Checkpoint, device: torch.device) -> None:
+        self.checkpoint = checkpoint
+        self.device = device
+        self._cache: dict[str, NormReference] = {}
+
+    def get(self, name: str) -> NormReference:
+        if name not in self._cache:
+            self._cache[name] = NormReference(
+                self.checkpoint.norm_weights[name], EPS, self.device
+            )
+        return self._cache[name]
+
+    def for_layer(self, layer_index: int, which: str) -> NormReference:
+        return self.get(norm_ref_name(layer_index, which))
+
+
+def norm_ref_name(layer_index: int, which: str) -> str:
+    return f"layers.{layer_index}.{which}_layernorm"
+
+
+def _flashinfer():
+    from flashinfer import SfLayout, nvfp4_quantize
+
+    return SfLayout, nvfp4_quantize
+
+
+def nvfp4_quantize_bytewise(
+    y_bf16: torch.Tensor, gs_list: list[float], device: torch.device
+):
+    """模型里的 ``nvfp4_quantize``（per-tensor global divisor，128x4 swizzled，不 shuffle）。"""
+    SfLayout, nvfp4_quantize = _flashinfer()
+    outputs = []
+    for gs in gs_list:
+        gs_t = torch.tensor([gs], dtype=torch.float32, device=device)
+        a_fp4, a_sf = nvfp4_quantize(
+            y_bf16.reshape(1, HIDDEN),
+            gs_t,
+            sfLayout=SfLayout.layout_128x4,
+            do_shuffle=False,
+            backend="cuda",
+        )
+        outputs.append((a_fp4, a_sf))
+    return outputs
+
+
+def reference_two_step(
+    x: torch.Tensor, norm_ref: NormReference, gs_list: list[float], device: torch.device
+):
+    """现有两步路径：``Qwen3_5RMSNorm.forward``（模块，bf16 权重）-> 每消费者一次 quantize。"""
+    y = norm_ref.bf16(x)
+    return y, nvfp4_quantize_bytewise(y, gs_list, device)
+
+
+def reference_rms_norm_function(
+    x: torch.Tensor, norm_ref: NormReference, *, flat: bool = False
+) -> torch.Tensor:
+    """``F.rms_norm``（**只作 diagnostic**）。
+
+    ``aten::rms_norm`` 的 composite 与 ``Qwen3_5RMSNorm._norm`` 是同一串 aten op
+    （dispatch trace 里唯一差别是 composite 用 in-place ``add_``、且 ``mean`` 的
+    reduce dim 写成 ``[1]`` 而不是 ``[-1]``），所以差异只可能来自**输入 shape**：
+    ``flat=True`` 传 ``[1, K]``、``flat=False`` 传模型真实的 ``[1, 1, K]``。
+    """
+    source = x.reshape(1, HIDDEN).float() if flat else x.float()
+    return torch.nn.functional.rms_norm(
+        source, (HIDDEN,), norm_ref.w1, norm_ref.eps
+    ).to(torch.bfloat16)
+
+
+def mean_shape_probe(x: torch.Tensor) -> dict:
+    """同一个 ``mean(-1)`` 在 ``[1,1,K]`` / ``[1,K]`` / ``[K]`` 三种 shape 下是否逐位相同。"""
+    xf = x.float()
+    m3 = xf.pow(2).mean(-1, keepdim=True)
+    m2 = xf.reshape(1, HIDDEN).pow(2).mean(-1, keepdim=True)
+    m1 = xf.reshape(HIDDEN).pow(2).mean(-1, keepdim=True)
+    return {
+        "mean_3d_vs_2d_diff_bytes": byte_diff(m3.reshape(-1), m2.reshape(-1)),
+        "mean_3d_vs_1d_diff_bytes": byte_diff(m3.reshape(-1), m1.reshape(-1)),
+        "mean_3d": float(m3.item()),
+    }
+
+
+def emulate_mean_tree(x: torch.Tensor) -> torch.Tensor:
+    """用 torch op 逐级复刻 ``x.pow(2).mean(-1)`` 的 reduction 顺序（bitwise gate）。"""
+    squares = x.reshape(HIDDEN).float().pow(2)
+    # 每个 PyTorch 线程 4 个 float4 累加器，步长 512 个 vec 组，第三次迭代只有前 256 组
+    lane = torch.arange(512, device=x.device)
+    acc = None
+    for j in range(4):
+        a = squares[4 * lane + j]
+        b = squares[4 * (lane + 512) + j]
+        c = torch.where(
+            lane < 256,
+            squares[(4 * (lane + 1024) + j).clamp_max(HIDDEN - 1)],
+            torch.zeros((), dtype=torch.float32, device=x.device),
+        )
+        term = (a + b) + c
+        acc = term if acc is None else acc + term
+    total = acc.reshape(512)
+    for _ in range(9):
+        total = total.reshape(2, -1).sum(dim=0)
+    factor = torch.tensor(MEAN_FACTOR, dtype=torch.float32, device=x.device)
+    return total * factor
+
+
+def rsqrt_probe(values: torch.Tensor) -> torch.Tensor:
+    """inline PTX ``rsqrt.approx.f32`` 探针（与 kernel 内用的是同一条指令）。"""
+    import triton
+    import triton.language as tl
+
+    @triton.jit
+    def _kernel(x_ptr, y_ptr, n, BLOCK: tl.constexpr):
+        offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
+        mask = offs < n
+        x = tl.load(x_ptr + offs, mask=mask, other=1.0)
+        y = tl.inline_asm_elementwise(
+            "rsqrt.approx.f32 $0, $1;",
+            "=r,r",
+            [x],
+            dtype=tl.float32,
+            is_pure=True,
+            pack=1,
+        )
+        tl.store(y_ptr + offs, y, mask=mask)
+
+    x = values.float().contiguous()
+    y = torch.empty_like(x)
+    _kernel[(triton.cdiv(x.numel(), 256),)](x, y, x.numel(), BLOCK=256)
+    return y
 
 
 # ------------------------------------------------------------------ 输入构造
@@ -239,112 +408,11 @@ def input_for(
     return x.to(device, non_blocking=False).contiguous(), kind
 
 
-# ------------------------------------------------------------------ 参考路径
-
-
-def _flashinfer():
-    from flashinfer import SfLayout, nvfp4_quantize
-
-    return SfLayout, nvfp4_quantize
-
-
-def reference_two_step(
-    x: torch.Tensor,
-    w1: torch.Tensor,
-    eps: float,
-    gs_list: list[float],
-    device: torch.device,
-) -> tuple[torch.Tensor, list[tuple[torch.Tensor, torch.Tensor]]]:
-    """现有两步路径：``F.rms_norm(f32)`` -> round 到 BF16 -> 每消费者一次 quantize。"""
-    SfLayout, nvfp4_quantize = _flashinfer()
-    xf = x.reshape(1, HIDDEN).float()
-    y = torch.nn.functional.rms_norm(xf, (HIDDEN,), w1, float(eps)).to(torch.bfloat16)
-    outputs = []
-    for gs in gs_list:
-        gs_t = torch.tensor([gs], dtype=torch.float32, device=device)
-        a_fp4, a_sf = nvfp4_quantize(
-            y,
-            gs_t,
-            sfLayout=SfLayout.layout_128x4,
-            do_shuffle=False,
-            backend="cuda",
-        )
-        outputs.append((a_fp4, a_sf))
-    return y, outputs
-
-
-def model_path_reference(
-    x: torch.Tensor, norm_weight_bf16: torch.Tensor, eps: float
-) -> torch.Tensor:
-    """模型实际执行的 ``Qwen3_5RMSNorm.forward``（zero-centered，bf16 权重）。"""
-    from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5RMSNorm
-
-    module = Qwen3_5RMSNorm(HIDDEN, eps=float(eps))
-    module.weight.data.copy_(norm_weight_bf16.to(module.weight.device))
-    module = module.to(x.device)
-    module.eval()
-    with torch.no_grad():
-        return module(x).clone()
-
-
-def emulate_mean_tree(x: torch.Tensor) -> torch.Tensor:
-    """用 torch op 逐级复刻 ``x.pow(2).mean(-1)`` 的 reduction 顺序（bitwise gate）。"""
-    squares = x.reshape(HIDDEN).float().pow(2)
-    # 每个 PyTorch 线程 4 个 float4 累加器，步长 512 个 vec 组，第三次迭代只有前 256 组
-    lane = torch.arange(512, device=x.device)
-    acc = None
-    for j in range(4):
-        a = squares[4 * lane + j]
-        b = squares[4 * (lane + 512) + j]
-        c = torch.where(
-            lane < 256,
-            squares[(4 * (lane + 1024) + j).clamp_max(HIDDEN - 1)],
-            torch.zeros((), dtype=torch.float32, device=x.device),
-        )
-        term = (a + b) + c
-        acc = term if acc is None else acc + term
-    total = acc.reshape(512)
-    for _ in range(9):
-        total = total.reshape(2, -1).sum(dim=0)
-    factor = torch.tensor(MEAN_FACTOR, dtype=torch.float32, device=x.device)
-    return total * factor
-
-
-def rsqrt_probe(values: torch.Tensor) -> torch.Tensor:
-    """inline PTX ``rsqrt.approx.f32`` 探针（与 kernel 内用的是同一条指令）。"""
-    import triton
-    import triton.language as tl
-
-    @triton.jit
-    def _kernel(x_ptr, y_ptr, n, BLOCK: tl.constexpr):
-        offs = tl.program_id(0) * BLOCK + tl.arange(0, BLOCK)
-        mask = offs < n
-        x = tl.load(x_ptr + offs, mask=mask, other=1.0)
-        y = tl.inline_asm_elementwise(
-            "rsqrt.approx.f32 $0, $1;",
-            "=r,r",
-            [x],
-            dtype=tl.float32,
-            is_pure=True,
-            pack=1,
-        )
-        tl.store(y_ptr + offs, y, mask=mask)
-
-    x = values.float().contiguous()
-    y = torch.empty_like(x)
-    _kernel[(triton.cdiv(x.numel(), 256),)](x, y, x.numel(), BLOCK=256)
-    return y
-
-
 # ------------------------------------------------------------------ 比较工具
 
 
 def byte_diff(a: torch.Tensor, b: torch.Tensor) -> int:
-    """两个 tensor 的字节差异数（按扁平字节比，rank 差异不影响）；长度不同返回 -1。
-
-    a_sf 的 rank 可能在 FlashInfer 版本间变成 ``[1, 128, 320]``，但 128x4 swizzle 的
-    语义是扁平字节布局，所以这里按字节比；shape 单独记在 gate detail 里。
-    """
+    """两个 tensor 的字节差异数（按扁平字节比，rank 差异不影响）；长度不同返回 -1。"""
     left = a.contiguous().view(torch.uint8).reshape(-1)
     right = b.contiguous().view(torch.uint8).reshape(-1)
     if left.numel() != right.numel():
@@ -362,24 +430,124 @@ def _scratch(device: torch.device, n: int):
     return out, a_fp4, a_sf
 
 
+def _bf16_bits(tensor: torch.Tensor) -> torch.Tensor:
+    return tensor.contiguous().view(torch.int16).reshape(-1).long() & 0xFFFF
+
+
+def _f32_ulp(value: float) -> float:
+    """value 处的 f32 ulp（用 nextafter 量）。"""
+    t = torch.tensor([value], dtype=torch.float32)
+    return float((torch.nextafter(t, torch.tensor([math.inf])) - t).item())
+
+
+def _bf16_midpoint_distance(value: float) -> float:
+    """value 到最近的 bf16 舍入边界（中点）的距离，单位：value 处的 f32 ulp。
+
+    < 1 说明差异只能来自「上游 rstd 差 1 ulp 把值推过 boundary」这种边界情形。
+    """
+    v = torch.tensor([value], dtype=torch.float32)
+    b = v.to(torch.bfloat16)
+    bf = b.float()
+    step = float(
+        (
+            torch.nextafter(b, torch.tensor([math.inf], dtype=torch.bfloat16)).float() - bf
+        ).item()
+    )
+    if step <= 0.0:
+        return float("inf")
+    midpoint = float(bf.item()) + (step / 2.0 if value >= float(bf.item()) else -step / 2.0)
+    ulp = _f32_ulp(value)
+    if ulp <= 0.0:
+        return float("inf")
+    return abs(value - midpoint) / ulp
+
+
+def _mismatch_detail(
+    x: torch.Tensor,
+    out: torch.Tensor,
+    y_ref: torch.Tensor,
+    norm_ref: NormReference,
+    a_fp4: list[torch.Tensor],
+    a_sf: list[torch.Tensor],
+    refs,
+    device: torch.device,
+    limit: int = 8,
+) -> dict:
+    """失败时的定位信息：哪个元素、两边 bit、到 bf16 边界的距离、两个参考各自差多少。"""
+    detail: dict = {}
+    try:
+        fused_bits = _bf16_bits(out)
+        ref_bits = _bf16_bits(y_ref)
+        diff_bits = (fused_bits != ref_bits).nonzero().flatten()
+        detail["out_bf16_mismatch_count"] = int(diff_bits.numel())
+        y_f32 = norm_ref.f32(x).reshape(-1)
+        y_function = reference_rms_norm_function(x, norm_ref)
+        variance = (
+            x.reshape(HIDDEN).float().pow(2).mean(-1, keepdim=True) + norm_ref.eps
+        )
+        probe = rsqrt_probe(variance.reshape(1))
+        torch_rsqrt = torch.rsqrt(variance.reshape(1))
+        detail["variance"] = float(variance.item())
+        detail["rsqrt_probe_bits"] = hex(int(probe.view(torch.int32)[0].item()))
+        detail["rsqrt_torch_bits"] = hex(int(torch_rsqrt.view(torch.int32)[0].item()))
+        detail["rsqrt_match"] = int(probe.view(torch.int32)[0].item()) == int(
+            torch_rsqrt.view(torch.int32)[0].item()
+        )
+        detail["function_vs_module_diff_bytes"] = byte_diff(y_function, y_ref)
+        xf = x.reshape(HIDDEN).float()
+        detail["pow_int_vs_mul"] = int((xf.pow(2) != xf * xf).sum().item())
+        detail["pow_double_vs_mul"] = int((torch.pow(xf, 2.0) != xf * xf).sum().item())
+        records = []
+        for index in diff_bits.tolist()[:limit]:
+            value = float(y_f32[index].item())
+            records.append(
+                {
+                    "index": int(index),
+                    "fused_bits": hex(int(fused_bits[index])),
+                    "ref_bits": hex(int(ref_bits[index])),
+                    "ref_f32": value,
+                    "ref_f32_hex": hex(
+                        int(y_f32[index].view(torch.int32).item()) & 0xFFFFFFFF
+                    ),
+                    "f32_ulp": _f32_ulp(value),
+                    "distance_to_bf16_midpoint_ulps": _bf16_midpoint_distance(value),
+                    "function_bits": hex(int(_bf16_bits(y_function)[index])),
+                }
+            )
+        detail["out_bf16_samples"] = records
+        for slot, (a_ref, sf_ref) in enumerate(refs):
+            a_diff = (
+                a_fp4[slot].contiguous().view(torch.uint8).reshape(-1)
+                != a_ref.contiguous().view(torch.uint8).reshape(-1)
+            ).nonzero().flatten()
+            sf_diff = (
+                a_sf[slot].contiguous().view(torch.uint8).reshape(-1)
+                != sf_ref.contiguous().view(torch.uint8).reshape(-1)
+            ).nonzero().flatten()
+            detail[f"consumer{slot}_a_fp4_indices"] = a_diff.tolist()[:limit]
+            detail[f"consumer{slot}_a_sf_indices"] = sf_diff.tolist()[:limit]
+    except Exception as exc:  # noqa: BLE001 - 诊断不能把 job 弄崩
+        detail["diagnostic_error"] = f"{type(exc).__name__}: {exc}"
+    return detail
+
+
 def run_case(
     case,
     x: torch.Tensor,
-    w1: torch.Tensor,
-    eps: float,
+    norm_ref: NormReference,
     gs_list: list[float],
     device: torch.device,
     *,
     label: str,
     num_warps: int = DEFAULT_NUM_WARPS,
 ) -> dict:
-    """一次融合 vs 两步的逐字节比较 + 每个 gate。"""
+    """一次融合 vs 模块两步路径的逐字节比较 + gate。"""
     out, a_fp4, a_sf = _scratch(device, len(gs_list))
     with torch.no_grad():
         norm_quant_fused(
-            x, w1, eps, gs_list, out, a_fp4, a_sf, num_warps=num_warps
+            x, norm_ref.w1, norm_ref.eps, gs_list, out, a_fp4, a_sf, num_warps=num_warps
         )
-        y_ref, refs = reference_two_step(x, w1, eps, gs_list, device)
+        y_ref, refs = reference_two_step(x, norm_ref, gs_list, device)
     torch.cuda.synchronize()
 
     bf16_diff = byte_diff(out, y_ref)
@@ -402,9 +570,10 @@ def run_case(
             }
         )
     case.gate(
-        f"bitwise[{label}]: out_bf16 + 每消费者 (a_fp4, a_sf) 与两步路径逐字节相同",
+        f"bitwise[{label}]: out_bf16 + 每消费者 (a_fp4, a_sf) 与模块两步路径逐字节相同",
         ok,
         {
+            "reference": "Qwen3_5RMSNorm.forward -> nvfp4_quantize",
             "out_bf16_diff_bytes": bf16_diff,
             "consumers": details,
             "codes": codes,
@@ -415,13 +584,7 @@ def run_case(
         case.diag(
             f"mismatch[{label}]",
             False,
-            {
-                "out_bf16_diff_bytes": bf16_diff,
-                "consumers": details,
-                "hint": "out_bf16 不同 => RMSNorm 算术（reduction 顺序 / rsqrt / fma）；"
-                "只有 a_sf 不同 => swizzle 落点或 e4m3 舍入；只有 a_fp4 不同 => "
-                "E2M1 cvt 或 nibble 顺序",
-            },
+            _mismatch_detail(x, out, y_ref, norm_ref, a_fp4, a_sf, refs, device),
         )
     return {"ok": ok, "bf16_diff": bf16_diff, "details": details, "codes": codes}
 
@@ -432,7 +595,7 @@ def run_case(
 def run_mean_tree(report: OpReport, checkpoint: Checkpoint, device: torch.device) -> None:
     case = report.case(
         "mean-tree",
-        reference="x.pow(2).mean(-1) 的 launch 顺序（torch op 逐级复刻）",
+        reference="x.pow(2).mean(-1) 的 launch 顺序（torch op 逐级复刻，输入是模型真实 [1,1,K]）",
         hidden=HIDDEN,
         lanes=512,
         vec=4,
@@ -447,7 +610,9 @@ def run_mean_tree(report: OpReport, checkpoint: Checkpoint, device: torch.device
         for kind in ("gauss-2", "saturation", "zeros", "embed"):
             x, _ = input_for(kind, layer_index, checkpoint, device)
             with torch.no_grad():
-                reference = x.reshape(HIDDEN).float().pow(2).mean(-1, keepdim=True)
+                # 用模型真实的 [1,1,K] shape（不是 reshape 成 1-D），这样这条 gate
+                # 直接覆盖模型实际走的 reduce launch 配置
+                reference = x.float().pow(2).mean(-1, keepdim=True)
                 emulated = emulate_mean_tree(x)
             torch.cuda.synchronize()
             diff = byte_diff(reference.reshape(-1), emulated.reshape(-1))
@@ -477,18 +642,20 @@ def run_rsqrt(report: OpReport, checkpoint: Checkpoint, device: torch.device) ->
         "rsqrt-approx",
         instruction="rsqrt.approx.f32",
         compare="torch.rsqrt",
-        sample_layers=(0, 3, 16, 32, 63),
+        sample_layers=(0, 3, 7, 16, 32, 63),
+        input_kinds=INPUT_KINDS,
+        grid="logspace(1e-6, 1e9, 8192)",
         note="rstd 差 1 ulp 会改变 BF16 rounding，从而改变 code",
     )
     values = []
     with torch.no_grad():
-        for layer_index in (0, 3, 16, 32, 63):
-            for kind in ("gauss-0.5", "gauss-2", "gauss-8", "embed"):
+        for layer_index in (0, 3, 7, 16, 32, 63):
+            for kind in INPUT_KINDS:
                 x, _ = input_for(kind, layer_index, checkpoint, device)
                 var = x.reshape(HIDDEN).float().pow(2).mean(-1, keepdim=True)
-                values.append(var + 1e-6)
-        # 再补上真实量级附近的稠密网格（覆盖 rsqrt 的近似分段）
-        grid = torch.linspace(1e-3, 30.0, 4096, device=device, dtype=torch.float32)
+                values.append(var + EPS)
+        # 对数网格覆盖 1e-6 ~ 1e9（saturation 的真实 variance ≈ 1.8e5 必须在内）
+        grid = torch.logspace(-6.0, 9.0, 8192, device=device, dtype=torch.float32)
     dense = torch.cat([item.reshape(1) for item in values] + [grid])
     probe = rsqrt_probe(dense)
     reference = torch.rsqrt(dense)
@@ -496,15 +663,26 @@ def run_rsqrt(report: OpReport, checkpoint: Checkpoint, device: torch.device) ->
     case.gate(
         "rsqrt-approx: inline rsqrt.approx.f32 与 torch.rsqrt 逐位相同",
         diff == 0,
-        {"samples": int(dense.numel()), "diff_bytes": diff},
+        {
+            "samples": int(dense.numel()),
+            "diff_bytes": diff,
+            "min": float(dense.min().item()),
+            "max": float(dense.max().item()),
+        },
     )
     case.gate(
-        "coverage: rsqrt 探针覆盖 5 层 × 4 分布的真实 variance + [1e-3, 30] 的 4096 点网格",
-        dense.numel() >= 4096 + 20,
-        {"samples": int(dense.numel()), "grid_points": 4096, "real_variance": len(values)},
+        "coverage: rsqrt 探针覆盖 6 层 × 6 种输入的真实 variance + logspace(1e-6,1e9) 8192 点",
+        dense.numel() == 8192 + len(values) and float(dense.max().item()) > 1e5,
+        {
+            "samples": int(dense.numel()),
+            "grid_points": 8192,
+            "real_variance": len(values),
+            "max_variance": float(dense.max().item()),
+        },
     )
     case.metric("rsqrt_diff_bytes", float(diff))
     case.metric("rsqrt_samples", float(dense.numel()))
+    case.metric("rsqrt_max_variance", float(dense.max().item()))
     if diff:
         case.diag(
             "mismatch",
@@ -521,80 +699,42 @@ def run_rsqrt(report: OpReport, checkpoint: Checkpoint, device: torch.device) ->
         )
 
 
-def run_reference_agreement(
-    report: OpReport, checkpoint: Checkpoint, device: torch.device
-) -> None:
-    case = report.case(
-        "reference-agreement",
-        left="F.rms_norm(f32 input, f32 weight=1+w) -> .to(bf16)",
-        right="Qwen3_5RMSNorm(x bf16)（模型实际执行）",
-        layers=(0, 7, 32, 63),
-        eps=1e-6,
-    )
-    worst = 0
-    samples = 0
-    with torch.no_grad():
-        for layer_index in (0, 7, 32, 63):
-            for kind in ("gauss-2", "embed", "saturation"):
-                x, _ = input_for(kind, layer_index, checkpoint, device)
-                for suffix in ("input_layernorm", "post_attention_layernorm"):
-                    weight = checkpoint.norm_weights[f"layers.{layer_index}.{suffix}"].to(
-                        device
-                    )
-                    w1 = (1.0 + weight.float()).contiguous()
-                    y_function = torch.nn.functional.rms_norm(
-                        x.reshape(1, HIDDEN).float(), (HIDDEN,), w1, 1e-6
-                    ).to(torch.bfloat16)
-                    y_module = model_path_reference(x, weight, 1e-6)
-                    diff = byte_diff(y_function, y_module)
-                    worst = max(worst, diff)
-                    samples += 1
-    case.gate(
-        "reference-agreement: F.rms_norm 与 Qwen3_5RMSNorm 逐位相同",
-        worst == 0,
-        {"samples": samples, "worst_diff_bytes": worst},
-    )
-    case.gate(
-        "coverage: 4 层 × 3 种输入 × 2 个 norm = 24 个参考比对",
-        samples == 24,
-        {"samples": samples, "layers": [0, 7, 32, 63]},
-    )
-    case.metric("reference_diff_bytes", float(worst))
-    case.metric("reference_samples", float(samples))
-
-
 def run_real_layers(
-    report: OpReport, checkpoint: Checkpoint, device: torch.device
+    report: OpReport,
+    checkpoint: Checkpoint,
+    norm_refs: NormReferences,
+    device: torch.device,
 ) -> None:
     names = checkpoint.norm_names()
     pre_count = sum(1 for name in names if name.endswith("input_layernorm"))
     case = report.case(
         "real-layers",
         norms=len(names),
+        reference="Qwen3_5RMSNorm.forward（模型实际执行，bf16 权重）-> nvfp4_quantize",
         sources="checkpoint 的真实 norm 权重 + 各自的真实消费者 input_scale",
         input_kind="gauss-2 + 20x 离群通道（残差流形态）",
-        eps=1e-6,
+        eps=EPS,
         consumers_per_norm="input norm: 2 (GDN) / 3 (full attention)，post norm: 2",
     )
     norms_ok = 0
     norms_bad: list[str] = []
     total_codes = 0
     consumer_counts = {2: 0, 3: 0}
+    function_diff_worst = 0
+    square_stats = {"pow_int_vs_mul": 0, "pow_double_vs_mul": 0, "samples": 0}
     with torch.no_grad():
         for name in names:
             layer_index = int(name.split(".")[1])
             pre, post = checkpoint.consumers(layer_index)
             consumers = pre if name.endswith("input_layernorm") else post
-            weight = checkpoint.norm_weights[name].to(device)
-            w1 = (1.0 + weight.float()).contiguous()
+            norm_ref = norm_refs.get(name)
             x, _ = input_for("gauss-2", layer_index, checkpoint, device)
             gs_list = [checkpoint.gs(module) for module in consumers]
             consumer_counts[len(gs_list)] = consumer_counts.get(len(gs_list), 0) + 1
             result = run_case(
                 case,
                 x,
-                w1,
-                1e-6,
+                norm_ref,
                 gs_list,
                 device,
                 label=f"{name}[{len(gs_list)} consumers]",
@@ -604,6 +744,40 @@ def run_real_layers(
                 norms_ok += 1
             else:
                 norms_bad.append(name)
+        # F.rms_norm 只作 diagnostic：逐样本记录它与模块路径的差异
+        function_records = []
+        shape_records = []
+        for layer_index in (0, 3, 7, 32, 63):
+            for kind in ("gauss-2", "embed", "saturation"):
+                x, _ = input_for(kind, layer_index, checkpoint, device)
+                xf = x.reshape(HIDDEN).float()
+                square_stats["pow_int_vs_mul"] += int((xf.pow(2) != xf * xf).sum().item())
+                square_stats["pow_double_vs_mul"] += int(
+                    (torch.pow(xf, 2.0) != xf * xf).sum().item()
+                )
+                square_stats["samples"] += 1
+                if kind == "saturation":
+                    probe = mean_shape_probe(x)
+                    shape_records.append({"layer": layer_index, "kind": kind, **probe})
+                for which in ("input", "post_attention"):
+                    norm_ref = norm_refs.for_layer(layer_index, which)
+                    module = norm_ref.bf16(x)
+                    diff_3d = byte_diff(
+                        reference_rms_norm_function(x, norm_ref, flat=False), module
+                    )
+                    diff_2d = byte_diff(
+                        reference_rms_norm_function(x, norm_ref, flat=True), module
+                    )
+                    function_diff_worst = max(function_diff_worst, diff_3d, diff_2d)
+                    function_records.append(
+                        {
+                            "layer": layer_index,
+                            "kind": kind,
+                            "norm": which,
+                            "f_rms_norm_3d_diff_bytes": diff_3d,
+                            "f_rms_norm_2d_diff_bytes": diff_2d,
+                        }
+                    )
     case.gate(
         f"coverage: 128 个真实 norm（input {pre_count} / post {len(names) - pre_count}）"
         f"× 各自消费者 ({consumer_counts.get(2, 0)} 个 2 消费者, "
@@ -625,8 +799,40 @@ def run_real_layers(
     case.metric("real_norms", float(len(names)))
     case.metric("real_norms_passed", float(norms_ok))
     case.metric("real_codes", float(total_codes))
+    case.metric("f_rms_norm_diff_bytes_worst", float(function_diff_worst))
     if norms_bad:
         case.diag("failed norms", False, {"names": norms_bad[:20], "count": len(norms_bad)})
+    case.diag(
+        "square-semantics（诊断）：int pow / double pow / x*x 的逐位差异计数",
+        True,
+        {
+            **square_stats,
+            "note": "int pow 与 x*x 逐位相同；double pow（F.rms_norm composite 里的写法）"
+            "在极端量级上会差 1 ulp —— 这是上一轮把 F.rms_norm 当 gate 时的 1 字节差异来源",
+        },
+    )
+    case.diag(
+        "F.rms_norm vs Qwen3_5RMSNorm（诊断，不参与判定）",
+        function_diff_worst == 0,
+        {
+            "worst_diff_bytes": function_diff_worst,
+            "note": "3d = 模型真实 shape [1,1,K]；2d = [1,K]。两者与模块的差若不同，"
+            "说明差异来自 mean 的 reduce 配置而不是算术序列",
+            "records": function_records,
+        },
+    )
+    case.diag(
+        "mean(-1) 的 shape 敏感性（诊断）",
+        all(
+            item["mean_3d_vs_2d_diff_bytes"] == 0 and item["mean_3d_vs_1d_diff_bytes"] == 0
+            for item in shape_records
+        ),
+        {
+            "note": "同一个 mean(-1) 在 [1,1,K] / [1,K] / [K] 上是否逐位相同；不同即"
+            "说明 TensorIterator 的 coalesce 改变了 reduce launch 配置",
+            "records": shape_records,
+        },
+    )
 
 
 def _scale_extreme_records(checkpoint: Checkpoint) -> dict:
@@ -647,13 +853,17 @@ def _scale_extreme_records(checkpoint: Checkpoint) -> dict:
 
 
 def run_scales_extremes(
-    report: OpReport, checkpoint: Checkpoint, device: torch.device
+    report: OpReport,
+    checkpoint: Checkpoint,
+    norm_refs: NormReferences,
+    device: torch.device,
 ) -> None:
     min_module, max_module = checkpoint.scale_extremes()
     min_scale = checkpoint.input_scales[min_module]
     max_scale = checkpoint.input_scales[max_module]
     case = report.case(
         "scales-extremes",
+        reference="Qwen3_5RMSNorm.forward -> nvfp4_quantize",
         min_module=min_module,
         min_input_scale=min_scale,
         min_gs=global_divisor(min_scale),
@@ -662,7 +872,7 @@ def run_scales_extremes(
         max_gs=global_divisor(max_scale),
         note="两端都不在融合消费者里（层内只有 attention/mlp 的 proj），所以单独强制覆盖",
         layers=(0, 32, 63),
-        input_kinds=("gauss-2", "embed"),
+        input_kinds=("gauss-2", "saturation", "embed"),
     )
     combos = [
         ("both-min", (min_scale, min_scale)),
@@ -673,94 +883,98 @@ def run_scales_extremes(
     ok_all = True
     ran = 0
     for layer_index in (0, 32, 63):
-        for kind in ("gauss-2", "embed"):
+        for kind in ("gauss-2", "saturation", "embed"):
             x, _ = input_for(kind, layer_index, checkpoint, device)
-            for suffix in ("input_layernorm", "post_attention_layernorm"):
-                name = f"layers.{layer_index}.{suffix}"
-                w1 = (1.0 + checkpoint.norm_weights[name].to(device).float()).contiguous()
+            for which in ("input", "post_attention"):
+                norm_ref = norm_refs.for_layer(layer_index, which)
                 for label, scales in combos:
                     gs_list = [global_divisor(scale) for scale in scales]
                     result = run_case(
                         case,
                         x,
-                        w1,
-                        1e-6,
+                        norm_ref,
                         gs_list,
                         device,
-                        label=f"{name}/{kind}/{label}",
+                        label=f"{norm_ref_name(layer_index, which)}/{kind}/{label}",
                     )
                     ok_all = ok_all and result["ok"]
                     ran += 1
     case.gate(
-        "coverage: 全局最小/最大 input_scale × 4 种组合 × 3 层 × 2 个 norm × 2 种输入 = 48 次",
-        ran == 48,
+        "coverage: 全局最小/最大 input_scale × 4 种组合 × 3 层 × 2 个 norm × 3 种输入 = 72 次",
+        ran == 72,
         {
             "runs": ran,
             "combos": [list(item) for item in combos],
             "layers": [0, 32, 63],
             "norms_per_layer": 2,
-            "inputs": ["gauss-2", "embed"],
+            "inputs": ["gauss-2", "saturation", "embed"],
         },
     )
     case.metric("scales_extremes_passed", 1.0 if ok_all else 0.0)
+    case.metric("scales_extremes_runs", float(ran))
     case.metric("min_gs", global_divisor(min_scale))
     case.metric("max_gs", global_divisor(max_scale))
 
 
 def run_distribution_edge(
-    report: OpReport, checkpoint: Checkpoint, device: torch.device
+    report: OpReport,
+    checkpoint: Checkpoint,
+    norm_refs: NormReferences,
+    device: torch.device,
 ) -> None:
     case = report.case(
         "distribution-edge",
-        kinds=("zeros", "saturation", "embed", "gauss-0.5", "gauss-2", "gauss-8"),
+        reference="Qwen3_5RMSNorm.forward -> nvfp4_quantize",
+        kinds=INPUT_KINDS,
         layers=(0, 3, 32, 63),
-        eps=1e-6,
+        eps=EPS,
         note="zeros = 全零 padding 行（amax==0 分支）；saturation = sf_pre 冲到 e4m3 448",
     )
     ok_all = True
     ran = 0
     with torch.no_grad():
         for layer_index in (0, 3, 32, 63):
-            pre, post = checkpoint.consumers(layer_index)
-            for kind in ("zeros", "saturation", "embed", "gauss-0.5", "gauss-2", "gauss-8"):
+            for kind in INPUT_KINDS:
                 x, _ = input_for(kind, layer_index, checkpoint, device)
-                for suffix, consumers in (
-                    ("input_layernorm", pre),
-                    ("post_attention_layernorm", post),
-                ):
-                    name = f"layers.{layer_index}.{suffix}"
-                    w1 = (
-                        1.0 + checkpoint.norm_weights[name].to(device).float()
-                    ).contiguous()
+                for which in ("input", "post_attention"):
+                    norm_ref = norm_refs.for_layer(layer_index, which)
+                    pre, post = checkpoint.consumers(layer_index)
+                    consumers = pre if which == "input" else post
                     gs_list = [checkpoint.gs(module) for module in consumers]
                     result = run_case(
-                        case, x, w1, 1e-6, gs_list, device, label=f"{name}/{kind}"
+                        case,
+                        x,
+                        norm_ref,
+                        gs_list,
+                        device,
+                        label=f"{norm_ref_name(layer_index, which)}/{kind}",
                     )
                     ok_all = ok_all and result["ok"]
                     ran += 1
     case.gate(
         "coverage: 4 层 × 2 个 norm × 6 种输入（zeros/saturation/embed/3 个 RMS 量级）",
         ran == 48,
-        {"samples": ran, "kinds": ["zeros", "saturation", "embed", "gauss-0.5", "gauss-2", "gauss-8"]},
+        {"samples": ran, "kinds": list(INPUT_KINDS)},
     )
     case.gate(
         "amax==0: 全零输入确实走到 sf=0 / code=0 分支",
-        _zeros_case_is_zero(checkpoint, device),
+        _zeros_case_is_zero(checkpoint, norm_refs, device),
         {"zeros_input": "x = 0 -> variance = 0 -> rstd = rsqrt(eps) -> y = 0 -> amax = 0"},
     )
     case.metric("distribution_edge_passed", 1.0 if ok_all else 0.0)
     case.metric("distribution_edge_samples", float(ran))
 
 
-def _zeros_case_is_zero(checkpoint: Checkpoint, device: torch.device) -> bool:
-    name = "layers.0.input_layernorm"
-    w1 = (1.0 + checkpoint.norm_weights[name].to(device).float()).contiguous()
+def _zeros_case_is_zero(
+    checkpoint: Checkpoint, norm_refs: NormReferences, device: torch.device
+) -> bool:
+    norm_ref = norm_refs.get("layers.0.input_layernorm")
     x = zero_input().to(device)
     out, a_fp4, a_sf = _scratch(device, 2)
     gs_list = [checkpoint.gs("layers.0.linear_attn.in_proj_qkv"),
                checkpoint.gs("layers.0.linear_attn.in_proj_z")]
     with torch.no_grad():
-        norm_quant_fused(x, w1, 1e-6, gs_list, out, a_fp4, a_sf)
+        norm_quant_fused(x, norm_ref.w1, norm_ref.eps, gs_list, out, a_fp4, a_sf)
         torch.cuda.synchronize()
     return (
         int(torch.count_nonzero(out).item()) == 0
@@ -820,33 +1034,23 @@ def graph_per_call(fn, *, warmup: int, iters: int, repeats: int) -> dict[str, fl
         return None
 
 
-def run_micro(report: OpReport, checkpoint: Checkpoint, device: torch.device) -> None:
-    from transformers.models.qwen3_5.modeling_qwen3_5 import Qwen3_5RMSNorm
-
+def run_micro(
+    report: OpReport,
+    checkpoint: Checkpoint,
+    norm_refs: NormReferences,
+    device: torch.device,
+) -> None:
     # 用第 3 层（full_attention）：input norm 有 3 个消费者（q/k/v），post norm 有 2 个
     # （gate/up），一次覆盖两种形态。
     layer_index = 3
     pre, post = checkpoint.consumers(layer_index)
     if len(pre) != 3:
         raise SystemExit(f"layer {layer_index} 不是 3 消费者的 full attention 层")
-    post_name = f"layers.{layer_index}.post_attention_layernorm"
-    weight2 = checkpoint.norm_weights[post_name].to(device)
-    w1_2 = (1.0 + weight2.float()).contiguous()
-    norm2 = Qwen3_5RMSNorm(HIDDEN, eps=1e-6)
-    norm2.weight.data.copy_(weight2)
-    norm2 = norm2.to(device)
-    norm2.eval()
-    pre_name = f"layers.{layer_index}.input_layernorm"
-    w1_3 = (
-        1.0 + checkpoint.norm_weights[pre_name].to(device).float()
-    ).contiguous()
+    norm_ref_2 = norm_refs.for_layer(layer_index, "post_attention")
+    norm_ref_3 = norm_refs.for_layer(layer_index, "input")
     x, _ = input_for("gauss-2", layer_index, checkpoint, device)
     gs2 = [checkpoint.gs(post[0]), checkpoint.gs(post[1])]
-    gs3 = [
-        checkpoint.gs(pre[0]),
-        checkpoint.gs(pre[1]),
-        checkpoint.gs(pre[2]),
-    ]
+    gs3 = [checkpoint.gs(pre[0]), checkpoint.gs(pre[1]), checkpoint.gs(pre[2])]
     out2, a2, s2 = _scratch(device, 2)
     out3, a3, s3 = _scratch(device, 3)
     SfLayout, nvfp4_quantize = _flashinfer()
@@ -854,7 +1058,7 @@ def run_micro(report: OpReport, checkpoint: Checkpoint, device: torch.device) ->
     gs3_t = [torch.tensor([g], dtype=torch.float32, device=device) for g in gs3]
 
     def two_step_2():
-        y = norm2(x)
+        y = norm_ref_2.bf16(x)
         for gs_t in gs2_t:
             nvfp4_quantize(
                 y.reshape(1, HIDDEN),
@@ -865,7 +1069,7 @@ def run_micro(report: OpReport, checkpoint: Checkpoint, device: torch.device) ->
             )
 
     def two_step_3():
-        y = norm2(x)
+        y = norm_ref_3.bf16(x)
         for gs_t in gs3_t:
             nvfp4_quantize(
                 y.reshape(1, HIDDEN),
@@ -879,17 +1083,17 @@ def run_micro(report: OpReport, checkpoint: Checkpoint, device: torch.device) ->
     for warps in NUM_WARPS_SWEEP:
         fused_times[warps] = time_per_call(
             lambda warps=warps: norm_quant_fused(
-                x, w1_2, 1e-6, gs2, out2, a2, s2, num_warps=warps
+                x, norm_ref_2.w1, norm_ref_2.eps, gs2, out2, a2, s2, num_warps=warps
             ),
             warmup=BENCH_WARMUP,
             iters=BENCH_ITERS,
         )
 
     def fused_2():
-        norm_quant_fused(x, w1_2, 1e-6, gs2, out2, a2, s2)
+        norm_quant_fused(x, norm_ref_2.w1, norm_ref_2.eps, gs2, out2, a2, s2)
 
     def fused_3():
-        norm_quant_fused(x, w1_3, 1e-6, gs3, out3, a3, s3)
+        norm_quant_fused(x, norm_ref_3.w1, norm_ref_3.eps, gs3, out3, a3, s3)
 
     eager = {
         "two_step_2": time_per_call(two_step_2, warmup=BENCH_WARMUP, iters=BENCH_ITERS),
@@ -946,13 +1150,10 @@ def run_micro(report: OpReport, checkpoint: Checkpoint, device: torch.device) ->
         num_warps_sweep=list(NUM_WARPS_SWEEP),
         timing="per-call CUDA events median（eager）；graph = 8 次调用录一张图后 replay / 8",
         step_model="112 次 2 消费者 + 16 次 3 消费者（48 GDN + 16 full attention）",
+        reference="Qwen3_5RMSNorm.forward（模块）+ 每消费者一次 nvfp4_quantize",
     )
-    numeric = run_case(
-        case, x, w1_2, 1e-6, gs2, device, label="micro-2consumers"
-    )
-    numeric3 = run_case(
-        case, x, w1_3, 1e-6, gs3, device, label="micro-3consumers"
-    )
+    numeric = run_case(case, x, norm_ref_2, gs2, device, label="micro-2consumers")
+    numeric3 = run_case(case, x, norm_ref_3, gs3, device, label="micro-3consumers")
     case.gate(
         "coverage: 2 消费者与 3 消费者两种形态都测，且 num_warps 扫 2/4/8 三档",
         len(NUM_WARPS_SWEEP) == 3 and numeric["ok"] and numeric3["ok"],
@@ -998,7 +1199,10 @@ def run_micro(report: OpReport, checkpoint: Checkpoint, device: torch.device) ->
     if graph_fused_3 is not None:
         case.metric("graph_two_step_3_ms", graph_two_3["median_ms"])
         case.metric("graph_fused_3_ms", graph_fused_3["median_ms"])
-    case.metric("speedup_2consumers_eager", eager["two_step_2"]["median_ms"] / eager["fused_2"]["median_ms"])
+    case.metric(
+        "speedup_2consumers_eager",
+        eager["two_step_2"]["median_ms"] / eager["fused_2"]["median_ms"],
+    )
 
 
 # ------------------------------------------------------------------ entry
@@ -1049,6 +1253,7 @@ def main(argv: list[str] | None = None) -> int:
     torch.manual_seed(SEED)
     selected = select_cases(args.only)
     checkpoint = load_checkpoint()
+    norm_refs = NormReferences(checkpoint, device)
     report = OpReport(
         args.out,
         CANDIDATE_NAME,
@@ -1057,7 +1262,10 @@ def main(argv: list[str] | None = None) -> int:
             "kernel": "runner/ops/nvfp4/norm_quant.py::_norm_quant_kernel",
             "patch": "runner/model/norm_quant_patch.py (Qwen3_5DecoderLayer.forward, decode only)",
             "quant_rule": "R2（任务 E 冻结）：PTX 算术序列 + rcp.approx.ftz",
-            "rmsnorm_rule": "PyTorch mean(-1) 的 launch 顺序 + rsqrt.approx.f32 + BF16 rounding",
+            "rmsnorm_rule": "Qwen3_5RMSNorm：x.pow(2).mean(-1) 的 launch 顺序 + rsqrt.approx + 单次 BF16 cast",
+            "decisive_reference": "Qwen3_5RMSNorm.forward（模块，bf16 权重）+ nvfp4_quantize",
+            "f_rms_norm_note": "F.rms_norm 仅 diagnostic：composite 里的 pow 是 double，"
+            "与模块的 int pow 在极端量级上差 1 ulp（job-000036 的 1 字节差异来源）",
             "consumers": "2 (GDN in_proj_qkv+z / gate+up) 或 3 (full attention q/k/v)",
             "hidden": HIDDEN,
             "num_warps": DEFAULT_NUM_WARPS,
@@ -1068,13 +1276,12 @@ def main(argv: list[str] | None = None) -> int:
         },
     )
     handler = {
-        "mean-tree": run_mean_tree,
-        "rsqrt-approx": run_rsqrt,
-        "reference-agreement": run_reference_agreement,
-        "real-layers": run_real_layers,
-        "scales-extremes": run_scales_extremes,
-        "distribution-edge": run_distribution_edge,
-        "micro": run_micro,
+        "mean-tree": lambda rep, ck, dev: run_mean_tree(rep, ck, dev),
+        "rsqrt-approx": lambda rep, ck, dev: run_rsqrt(rep, ck, dev),
+        "real-layers": lambda rep, ck, dev: run_real_layers(rep, ck, norm_refs, dev),
+        "scales-extremes": lambda rep, ck, dev: run_scales_extremes(rep, ck, norm_refs, dev),
+        "distribution-edge": lambda rep, ck, dev: run_distribution_edge(rep, ck, norm_refs, dev),
+        "micro": lambda rep, ck, dev: run_micro(rep, ck, norm_refs, dev),
     }
     for name in selected:
         handler[name](report, checkpoint, device)
