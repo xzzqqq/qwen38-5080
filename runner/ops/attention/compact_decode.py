@@ -9,10 +9,16 @@
 - 数值路径与 HF eager 逐项对齐，只改变 reduction 的分组方式：
   ``bf16 matmul -> * scaling -> + additive mask -> softmax(fp32) -> bf16 -> @ V``。
   因此 local gate 用 float64 reference 定容差，而不是和旧 eager 输出比 bitwise。
+- **FP8 KV**：cache 的 decode 返回 fp8 前缀，scale 挂在张量的 ``kv_fp8_scale``
+  属性上（``runner/ops/kv/fp8.py`` 的 side channel）。这里在 bmm 前调用
+  ``fp8.dequantize`` 写进固定 bf16 scratch，然后走完全相同的 bf16 bmm 路径；
+  也就是“FP8 只改变 K/V 的存储与读取字节，不改变 attention 数学”。融合 kernel
+  可以直接消费 ``(K fp8, K scale, V fp8, V scale)``，不必经过这一步 bf16 物化。
 
 数据流（单层，batch=1）：
     q [1,24,1,256] --view--> [4,6,256]
     k [1,4,L,256]（可能是 capacity buffer 的前缀 view）
+      -> [FP8 时] dequantize(k, k_scale) / dequantize(v, v_scale) -> bf16 scratch
       -> bmm(q_g, k^T) -> scores [4,6,L] bf16
       -> * scaling -> + mask[..., :L]
       -> softmax(dim=-1, dtype=float32) -> bf16
@@ -20,8 +26,9 @@
       -> view [1,24,1,256]（第 6j+i 行就是 q head 6j+i）
     attn@V 之后接模型的 ``* sigmoid(gate)`` 与 o_proj，不在本 op 内。
 
-预期瓶颈：L 大时是 K/V 的读带宽（每层 ``2 * 4 * L * 256 * 2`` 字节），
-不再是 repeat_kv 的 6 倍展开写 + 再读；L 小时是 kernel launch 与 softmax。
+预期瓶颈：L 大时是 K/V 的读带宽（BF16 每层 ``2 * 4 * L * 256 * 2`` 字节；
+FP8 读一半，但要把同样元素数的 bf16 写进 scratch，净流量取决于 scratch 是否
+留在 L2）。L 小时是 kernel launch 与 softmax。
 """
 
 from __future__ import annotations
@@ -30,6 +37,8 @@ import os
 from typing import Any
 
 import torch
+
+from runner.ops.kv import fp8 as fp8_kv
 
 # 候选选择：本方向先做分组 bmm；``eager`` 只作为同一实现方向的关闭开关，
 # 用于在同一进程/同一协议下做对照，不是另一个候选。
@@ -57,7 +66,9 @@ def compact_gqa_decode_attention(
     Args:
         query: ``[batch, num_q_heads, 1, head_dim]``，BF16/FP16/FP32。
         key: ``[batch, num_kv_heads, L, head_dim]``；允许是 capacity buffer 的
-            非连续前缀 view（static cache 的真实形态）。
+            非连续前缀 view（static cache 的真实形态）。FP8 KV 时是
+            ``float8_e4m3fn``，且 ``key.kv_fp8_scale`` 是 ``[L, num_kv_heads]``
+            的 fp32 scale（``value`` 同）。
         value: 同 key。
         attention_mask: 加性 mask，可广播到 ``[batch, num_kv_heads, 1, L]``；
             ``None`` 表示全部可见。bf16 的 ``finfo.min`` 掩码在 softmax(fp32)
@@ -68,6 +79,18 @@ def compact_gqa_decode_attention(
         ``(attn_output [batch, num_q_heads, 1, head_dim]``,
         ``attn_weights [batch, num_q_heads, 1, L])``；weights 是 view，不复制。
     """
+    # FP8 KV：先反量化到固定 bf16 scratch；之后的所有数学与 BF16 路径完全相同。
+    k_scale = fp8_kv.kv_scale(key)
+    v_scale = fp8_kv.kv_scale(value)
+    if k_scale is not None or v_scale is not None:
+        if k_scale is None or v_scale is None:
+            raise ValueError("FP8 KV 必须同时提供 K 和 V 的 scale")
+        key = fp8_kv.dequantize(
+            key, k_scale, out=fp8_kv.dequant_scratch("k", key.shape, key.device)
+        )
+        value = fp8_kv.dequantize(
+            value, v_scale, out=fp8_kv.dequant_scratch("v", value.shape, value.device)
+        )
     batch, num_q_heads, q_len, head_dim = query.shape
     batch_k, num_kv_heads, seq_len, head_dim_k = key.shape
     if q_len != 1:
@@ -181,6 +204,14 @@ def _attention_interface(original):
         mask_ok = attention_mask is None or (
             attention_mask.dtype != torch.bool and attention_mask.shape[-1] == key.shape[2]
         )
+        # FP8 KV 时 key/value 是 float8_e4m3fn（scale 在 side channel 上），
+        # dtype 检查要放行这一组；反量化由 compact_gqa_decode_attention 自己做。
+        fp8_kv_ok = (
+            fp8_kv.kv_scale(key) is not None
+            and fp8_kv.kv_scale(value) is not None
+            and key.dtype == value.dtype == fp8_kv.FP8_DTYPE
+        )
+        dtype_ok = (query.dtype == key.dtype == value.dtype) or fp8_kv_ok
         if (
             _backend() == "grouped_bmm"
             and not module.training
@@ -192,7 +223,7 @@ def _attention_interface(original):
             and query.shape[1] == key.shape[1] * groups
             and key.shape[1] == value.shape[1]
             and key.shape[2] == value.shape[2]
-            and query.dtype == key.dtype == value.dtype
+            and dtype_ok
             and mask_ok
         ):
             return compact_gqa_decode_attention(query, key, value, attention_mask, scaling)
@@ -236,6 +267,8 @@ def install() -> dict[str, Any]:
         "module": "transformers.models.qwen3_5.modeling_qwen3_5",
         "symbol": "eager_attention_forward",
         "q_len": "==1 (prefill q_len>1 falls back to original eager)",
+        "kv_formats": ["bfloat16", "float8_e4m3fn"],
+        "fp8_kv": "dequantize(k, k_scale) -> bf16 scratch before bmm",
         "grouping": "kv-head bmm, head 6j+i -> kv head j",
         "env": BACKEND_ENV,
     }

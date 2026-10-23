@@ -154,6 +154,7 @@ def run_scenario(name: str, spec: dict, fixtures: dict, args) -> dict:
 
     result["cache_bytes"] = cache_extra
     result["harness"] = runner.harness_info()
+    result["kv_format"] = result["harness"].get("kv_format")
 
     # 第一次 prefill（无 graph / capture 之前）
     holder: dict = {}

@@ -80,12 +80,21 @@ class Diff:
         }
 
 
+def _finite(tensor: torch.Tensor) -> bool:
+    """fp8 上 ``torch.isfinite`` 没有实现；先 float() 再查。"""
+    if tensor.dtype == torch.float8_e4m3fn:
+        tensor = tensor.float()
+    return bool(torch.isfinite(tensor).all())
+
+
 def snapshot_state(cache):
     """把 cache 的 KV 有效前缀、conv/recurrent state 拷到 CPU。
 
     返回 (kv_keys, kv_values, conv, recurrent, length, finite)。
     KV 一律只取 ``[:, :, :length]``，让 static 的 capacity buffer 和 dynamic 的
-    变长 buffer 用同一口径比较。
+    变长 buffer 用同一口径比较。FP8 KV 在 CPU 快照里是 bf16（fp8 code 直接 cast，
+    不是反量化值）——对拍的是“存储里的 code 是否一致”；反量化后的数值一致性由
+    ``padded-ref->static-cap`` 的 logits/hidden 和 op gate 负责。
     """
     length = int(cache.get_seq_length())
     kv_keys, kv_values, conv, recurrent = [], [], [], []
@@ -96,16 +105,16 @@ def snapshot_state(cache):
             values = getattr(layer, "values", None)
             kv_keys.append(keys[:, :, :length].detach().to("cpu", torch.bfloat16))
             kv_values.append(values[:, :, :length].detach().to("cpu", torch.bfloat16))
-            finite = finite and bool(torch.isfinite(keys).all())
+            finite = finite and _finite(keys)
             continue
         conv_states = getattr(layer, "conv_states", None)
         rec_states = getattr(layer, "recurrent_states", None)
         if conv_states and conv_states.get(0) is not None:
             conv.append(conv_states[0].detach().to("cpu", torch.bfloat16))
-            finite = finite and bool(torch.isfinite(conv_states[0]).all())
+            finite = finite and _finite(conv_states[0])
         if rec_states and rec_states.get(0) is not None:
             recurrent.append(rec_states[0].detach().to("cpu", torch.float32))
-            finite = finite and bool(torch.isfinite(rec_states[0]).all())
+            finite = finite and _finite(rec_states[0])
     return kv_keys, kv_values, conv, recurrent, length, finite
 
 

@@ -26,15 +26,16 @@ from dataclasses import dataclass
 from typing import Any
 
 import torch
-from transformers import DynamicCache
 
 from runner.model.graph_runner import GraphDecodeStep
+from runner.model.padded_reference import build_dynamic_reference
 from runner.model.static_cache import (
     build_static_cache,
     cache_stats,
     preallocate_kv,
     reset_cache,
 )
+from runner.ops.kv import fp8 as fp8_kv
 
 EXECUTIONS = ("eager", "static-exact", "static-cap", "graph")
 STATIC_EXECUTIONS = ("static-exact", "static-cap", "graph")
@@ -129,7 +130,10 @@ class DecodeRunner:
         if self._prepared:
             return self.harness_info()
         if self.execution == "eager":
-            self.cache = DynamicCache(config=self.model.config)
+            # FP8 模式下 eager 也走同一份量化契约的 dynamic 存储，这样四个执行
+            # 方式看到的是同一组 KV 数值（numeric-512 的 eager→static-exact
+            # bitwise 才有意义）；BF16 模式仍是原生 DynamicCache。
+            self.cache = build_dynamic_reference(self.model.config)
         else:
             mode = "exact" if self.execution == "static-exact" else "cap"
             self.cache = build_static_cache(self.model.config, self.capacity, mode)
@@ -151,6 +155,8 @@ class DecodeRunner:
             "capacity": self.capacity,
             "prefill_chunk": self.prefill_chunk,
             "max_context": self.max_context,
+            "kv_format": getattr(self.cache, "kv_format", None) or fp8_kv.kv_format(),
+            "fp8_dequant": fp8_kv.dequant_info(),
             "input_buffer_shape": tuple(self.input_buf.shape),
             "input_buffer_ptr": int(self.input_buf.data_ptr()),
             "input_buffer_dtype": str(self.input_buf.dtype),

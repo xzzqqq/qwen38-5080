@@ -6,6 +6,10 @@
 - 对拍先看 bitwise：hidden / 有效 KV / GDN+conv state / logits / cache 长度；
 - `static-cap` 的对照是独立的 padded DynamicCache reference（自己的位置计数和
   mask 尺寸），不复用 static adapter 的索引逻辑；
+- **KV 格式由配置声明**（`PHASE2_KV_FORMAT`，本分支默认 fp8，plan §7 的验收配置）：
+  FP8 时 eager 与 padded reference 都换成同一量化契约的独立 dynamic 存储，
+  所以“eager->static-exact”“padded-ref->static-cap”仍是同 shape 的 bitwise 对拍；
+  cache 布局 gate 按声明格式核对 dtype/scale/字节；
 - 缓冲填充值隔离检查：fill=0 与 fill=3 必须给出相同输出；
 - reset 覆盖 A→B→A、短→长→短，并与**独立新建 cache** 对比；
 - 边界长度 1/127/128/129/300、两档 capacity 末端与越界拒绝；
@@ -31,18 +35,22 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import torch  # noqa: E402
-from transformers import AutoTokenizer, DynamicCache  # noqa: E402
+from transformers import AutoTokenizer  # noqa: E402
 
 from runner import report as reporting  # noqa: E402
 from runner.loader.nvfp4_model import load_nvfp4_text_model  # noqa: E402
 from runner.model.decode_runner import DecodeRunner  # noqa: E402
-from runner.model.padded_reference import build_padded_reference  # noqa: E402
+from runner.model.padded_reference import (  # noqa: E402
+    build_dynamic_reference,
+    build_padded_reference,
+)
 from runner.model.snapshots import (  # noqa: E402
     Snapshot,
     compare_snapshots,
     run_sequence,
     snapshot_state,
 )
+from runner.ops.kv import fp8 as fp8_kv  # noqa: E402
 from runner.model.static_cache import (  # noqa: E402
     build_static_cache,
     cache_stats,
@@ -226,11 +234,23 @@ def build_static(model, capacity: int, mode: str):
 
 
 def cache_gate(rep: CheckReport, name: str, cache, capacity: int, kv_bytes: int) -> None:
+    """按**当前配置声明的 KV 格式**判定 cache 布局。
+
+    plan §7 的验收配置是 FP8 KV；BF16 仍按 `torch.bfloat16` 判。格式来自
+    `PHASE2_KV_FORMAT` / `build_static_cache`，不是为了让某个候选通过而放宽：
+    dtype、scale dtype 和总字节都按声明格式精确核对。
+    """
     stats = cache_stats(cache, check_finite=False)
+    expected_dtypes = {
+        "bf16": ["torch.bfloat16"],
+        "fp8": ["torch.float8_e4m3fn"],
+    }[stats.kv_format]
+    expected_scale_dtypes = ["torch.float32"] if stats.kv_format == "fp8" else []
     ok = (
         stats.kv_layers == 16
         and stats.linear_layers == 48
-        and stats.kv_dtypes == ["torch.bfloat16"]
+        and stats.kv_dtypes == expected_dtypes
+        and stats.kv_scale_dtypes == expected_scale_dtypes
         and stats.gdn_dtypes == ["torch.float32"]
         and stats.conv_dtypes == ["torch.bfloat16"]
         and stats.kv_bytes == kv_bytes
@@ -239,12 +259,15 @@ def cache_gate(rep: CheckReport, name: str, cache, capacity: int, kv_bytes: int)
         f"{name}: cache 布局",
         ok,
         {
+            "kv_format": stats.kv_format,
             "kv_layers": stats.kv_layers,
             "linear_layers": stats.linear_layers,
             "kv_dtypes": stats.kv_dtypes,
+            "kv_scale_dtypes": stats.kv_scale_dtypes,
             "gdn_dtypes": stats.gdn_dtypes,
             "conv_dtypes": stats.conv_dtypes,
             "kv_bytes": stats.kv_bytes,
+            "kv_scale_bytes": stats.kv_scale_bytes,
             "capacity": capacity,
         },
     )
@@ -271,7 +294,8 @@ def scenario_numeric(
     rep.diag("load", True, load_info)
 
     # 1) eager reference
-    dyn = DynamicCache(config=model.config)
+    # FP8 模式下 eager 也用同一份量化契约的 dynamic 存储（见 padded_reference）。
+    dyn = build_dynamic_reference(model.config)
     ref = run_sequence(model, dyn, prompt, trace, label="eager")
     del dyn
     torch.cuda.empty_cache()
@@ -483,7 +507,8 @@ def boundary_checks(rep: CheckReport, model, tokenizer, capacity: int, fixtures:
     for length in BOUNDARY_LENGTHS:
         ids = base_ids[:length]
         prompt = torch.tensor([ids], dtype=torch.long)
-        dyn = DynamicCache(config=model.config)
+        # FP8 模式下 eager 也用同一份量化契约的 dynamic 存储（见 padded_reference）。
+        dyn = build_dynamic_reference(model.config)
         eager = run_sequence(model, dyn, prompt, trace, label=f"eager-{length}")
         del dyn
         torch.cuda.empty_cache()
@@ -587,7 +612,11 @@ def scenario_graph(rep: CheckReport, depth: int, capacity: int, steps: int, fixt
         {"cache_len": res["cache_len"], "expected": expected_len},
     )
     kv_layers = [layer for layer in runner.cache.layers if hasattr(layer, "cumulative_length")]
-    written = [bool(torch.any(layer.keys[:, :, depth : depth + 1] != 0)) for layer in kv_layers]
+    # fp8 的比较 kernel 不假设存在：先 float() 再判非零。
+    written = [
+        bool(torch.any(layer.keys[:, :, depth : depth + 1].float() != 0))
+        for layer in kv_layers
+    ]
     rep.gate(
         "graph: replay 写入 static KV 槽",
         all(written) and len(written) == 16,
@@ -846,6 +875,11 @@ def run_worker(args) -> int:
             scenario_smoke(rep, fixtures, max_new_tokens=args.smoke_max_new_tokens)
         else:
             raise ValueError(f"unknown worker {args.worker!r}")
+        rep.diag(
+            "kv format / dequant",
+            True,
+            {"kv_format": fp8_kv.kv_format(), "dequant": fp8_kv.dequant_info()},
+        )
         result = rep.result()
     except Exception:
         error = traceback.format_exc()
@@ -853,6 +887,8 @@ def run_worker(args) -> int:
         result["ok"] = False
         result["error"] = error
         print(error, flush=True)
+    result["kv_format"] = fp8_kv.kv_format()
+    result["fp8_dequant"] = fp8_kv.dequant_info()
     result["provenance"] = reporting.provenance(ROOT, {"worker": args.worker, "steps": steps})
     result["fixtures"] = {
         "dir": str(Path(args.fixtures)),
