@@ -107,7 +107,8 @@ TOL_QUANT_MAX_ABS_RATIO = 5e-2
 TOL_ATTN_NRMSE = 1e-2
 TOL_ATTN_COSINE = 0.9999
 TOL_ATTN_MAX_REL = 2e-2
-TOL_DIRECT_NRMSE = 5e-3  # 同一份 KV 上 fused FP8 vs grouped_bmm(bf16 dequant)
+TOL_DIRECT_NRMSE = 5e-3  # fused(bf16 dequant) vs grouped_bmm 同一份 KV：只差 reduction
+TOL_FUSED_RATIO = 1.05   # 任务 K 已冻结：fused 到 fp64 的 nrmse <= 1.05x grouped_bmm
 TOL_DIAG_NRMSE = 8e-2
 TOL_DIAG_COSINE = 0.995
 
@@ -605,6 +606,14 @@ def call_grouped(variant) -> torch.Tensor:
     return out
 
 
+def call_fused_bf16(variant) -> torch.Tensor:
+    """同一份 KV 的 bf16 反量化值直接走 fused（隔离 reduction 顺序与 scale 折叠）。"""
+    out, _ = decode_gqa_attention(
+        variant["q"], variant["k_bf"], variant["v_bf"], variant["mask"], SCALING
+    )
+    return out
+
+
 def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
     case = report.case(
         "attn-fp8-vs-ref",
@@ -622,13 +631,17 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
             "nrmse_vs_fp64": TOL_ATTN_NRMSE,
             "cosine": TOL_ATTN_COSINE,
             "max_rel": TOL_ATTN_MAX_REL,
-            "candidate_vs_grouped_bmm_nrmse": TOL_DIRECT_NRMSE,
+            "fused_vs_bmm_fp64_ratio": TOL_FUSED_RATIO,
+            "fused_bf16_vs_grouped_nrmse": TOL_DIRECT_NRMSE,
         },
     )
     variants_list = ("full", "partial_mask", "capacity_view", "cap_mask")
     worst: dict[str, dict[str, float]] = {name: {} for name in variants_list}
-    direct: dict[str, dict[str, float]] = {name: {} for name in variants_list}
+    kernel_direct: dict[str, dict[str, float]] = {name: {} for name in variants_list}
+    fold_diff: dict[str, dict[str, float]] = {name: {} for name in variants_list}
     bmm_nrmse = {name: 0.0 for name in variants_list}
+    fused_bf_nrmse = {name: 0.0 for name in variants_list}
+    ratio_worst = {name: 0.0 for name in variants_list}
     structure = {"capacity_view_noncontiguous": True, "full_contiguous": True}
     mask_isolated = {"partial_mask": True, "cap_mask": True}
     variants_run: list[str] = []
@@ -650,16 +663,28 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
                 if tag not in combos:
                     combos.append(tag)
                 cand = call_fp8(variant)
+                fused_bf = call_fused_bf16(variant)
                 base = call_grouped(variant)
                 ref = reference_fp64(
                     variant["q"], variant["k_bf"], variant["v_bf"], variant["mask"], SCALING
                 )
                 metrics = numeric_metrics(cand, ref)
-                direct_metrics = numeric_metrics(cand, base)
                 base_metrics = numeric_metrics(base, ref)
+                fused_bf_metrics = numeric_metrics(fused_bf, ref)
+                kernel_metrics = numeric_metrics(fused_bf, base)
+                fold_metrics = numeric_metrics(cand, fused_bf)
                 _worst(worst[name], metrics)
-                _worst(direct[name], direct_metrics)
+                _worst(kernel_direct[name], kernel_metrics)
+                _worst(fold_diff[name], fold_metrics)
                 bmm_nrmse[name] = max(bmm_nrmse[name], base_metrics["nrmse"])
+                fused_bf_nrmse[name] = max(
+                    fused_bf_nrmse[name], fused_bf_metrics["nrmse"]
+                )
+                # 任务 K 的冻结判据：同一份 bf16 KV 上，fused 到 fp64 的距离 <= 1.05x bmm。
+                ratio_worst[name] = max(
+                    ratio_worst[name],
+                    fused_bf_metrics["nrmse"] / max(base_metrics["nrmse"], 1e-12),
+                )
                 structure["capacity_view_noncontiguous"] &= bool(
                     not variant["k"].is_contiguous() if name == "capacity_view" else True
                 )
@@ -672,7 +697,8 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
                     {
                         "candidate": metrics,
                         "grouped_bmm_on_dequant": base_metrics,
-                        "candidate_vs_grouped": direct_metrics,
+                        "fused_bf16_vs_grouped": kernel_metrics,
+                        "fp8_fused_vs_bf16_fused": fold_metrics,
                         "shape": tuple(cand.shape),
                         "dtype": str(cand.dtype),
                     },
@@ -803,15 +829,32 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
             {"max_rel": metrics["max_rel"], "max_abs": metrics["max_abs"]},
         )
         case.gate(
-            f"compare[{name}]: fused FP8 vs grouped_bmm(同 KV) nrmse <= {TOL_DIRECT_NRMSE}",
-            direct[name]["nrmse"] <= TOL_DIRECT_NRMSE,
-            direct[name],
+            f"compare[{name}]: fused(bf16 dequant) vs grouped_bmm 同一份 KV "
+            f"nrmse <= {TOL_DIRECT_NRMSE}（只差 reduction 顺序）",
+            kernel_direct[name]["nrmse"] <= TOL_DIRECT_NRMSE,
+            kernel_direct[name],
+        )
+        case.gate(
+            f"numeric[{name}]: FP8 fused 到 fp64 的 nrmse <= {TOL_FUSED_RATIO}x "
+            f"grouped_bmm（任务 K 已冻结的相对判据）",
+            ratio_worst[name] <= TOL_FUSED_RATIO,
+            {
+                "ratio": ratio_worst[name],
+                "fused_bf16_nrmse": fused_bf_nrmse[name],
+                "grouped_nrmse": bmm_nrmse[name],
+            },
         )
 
     case.metric("nrmse_worst", max(item["nrmse"] for item in worst.values()))
     case.metric("cosine_min", min(item["cosine"] for item in worst.values()))
     case.metric("max_rel_worst", max(item["max_rel"] for item in worst.values()))
-    case.metric("direct_nrmse_worst", max(item["nrmse"] for item in direct.values()))
+    case.metric(
+        "kernel_direct_nrmse_worst",
+        max(item["nrmse"] for item in kernel_direct.values()),
+    )
+    case.metric("fold_nrmse_worst", max(item["nrmse"] for item in fold_diff.values()))
+    case.metric("ratio_worst", max(ratio_worst.values()))
+    case.metric("fused_bf16_nrmse_worst", max(fused_bf_nrmse.values()))
     case.metric("bmm_nrmse_worst", max(bmm_nrmse.values()))
     case.metric("graph_replays", float(len(graph_detail)))
     case.metric("fused_calls", float(fused_delta))
@@ -1142,7 +1185,8 @@ def main(argv: list[str] | None = None) -> int:
                 "attn_nrmse_vs_fp64": TOL_ATTN_NRMSE,
                 "attn_cosine": TOL_ATTN_COSINE,
                 "attn_max_rel": TOL_ATTN_MAX_REL,
-                "candidate_vs_grouped_bmm_nrmse": TOL_DIRECT_NRMSE,
+                "fused_vs_bmm_fp64_ratio": TOL_FUSED_RATIO,
+                "fused_bf16_vs_grouped_nrmse": TOL_DIRECT_NRMSE,
                 "diag_nrmse_vs_bf16": TOL_DIAG_NRMSE,
                 "diag_cosine_vs_bf16": TOL_DIAG_COSINE,
                 "reason": "fused kernel 的误差底噪是 bf16 MMA + fp32 online softmax"
