@@ -29,6 +29,7 @@ from runner.env import configure_flashinfer_env
 configure_flashinfer_env()
 
 from runner.model.host_embedding import HostEmbedding  # noqa: E402
+from runner.ops.attention import install as install_compact_attention  # noqa: E402
 from runner.ops.bf16.stable_linear import ShapeStableLinear  # noqa: E402
 from runner.ops.nvfp4.linear import NVFP4Linear  # noqa: E402
 
@@ -87,6 +88,11 @@ def load_nvfp4_text_model(
         model = Qwen3_5ForCausalLM(text_config)
     model.config._attn_implementation = "eager"
     model.config.use_cache = True
+    # Phase 2 任务 A：q_len==1 的 decode attention 换成按 KV head 分组的紧凑实现
+    # （不物化 repeat_kv）；prefill 由补丁内部回退到原 eager。四个执行方式
+    # （eager / static-exact / static-cap / graph）因此仍共用同一条 decode 路径，
+    # 同 shape bitwise gate 保持可比。
+    attention_info = install_compact_attention()
 
     reader = CheckpointReader(Path(model_dir))
     handled: set[str] = set()
@@ -202,5 +208,6 @@ def load_nvfp4_text_model(
         "gpu_reserved_gb": torch.cuda.memory_reserved() / 1e9,
         "gpu_free_gb": free_b / 1e9,
         "gpu_total_gb": total_b / 1e9,
+        "decode_attention": attention_info,
     }
     return model, text_config, info
