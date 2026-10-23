@@ -213,3 +213,20 @@ graph replay 计时，cutlass 基线走官方入口：
   不改变数值语义 —— 这让接入的 bitwise 风险很低。
 - 已派发第二个 job：只在 M==1 查静态 `(N,K)->backend` 表（全填 cute-dsl、未命中回退
   cutlass），prefill 保持 cutlass，然后跑 `numeric-512,graph-1024` + 两个 graph 场景。
+
+## 任务 H 第一次提交（job-000036-e448042d）：差 1 个字节
+
+- 失败项只有 2 类，且都是 1 byte：
+  1. `reference-agreement: F.rms_norm 与 Qwen3_5RMSNorm 逐位相同`（24 样本
+     `worst_diff_bytes = 1`）；
+  2. `distribution-edge: bitwise[layers.0.input_layernorm/saturation]`
+     （`out_bf16_diff_bytes = 1`）。
+- 判定与修正：
+  - **第 1 条是 gate 规格错**：模型执行的是 `Qwen3_5RMSNorm.forward`，`F.rms_norm` 是
+    另一个实现，1 ulp 差异正常，应降为 diagnostic；决定性 gate 是「kernel 产出的
+    `out_bf16 + 每消费者 (a_fp4, a_sf)` 与**模块路径**逐字节相同」。
+  - **第 2 条是真差异**，最可能来自 `Qwen3_5RMSNorm.forward` 的两个细节：
+    `output * (1.0 + self.weight.float())`（权重是 0 附近的偏移，必须在 fp32 里先加 1.0
+    再乘，不能预计算成 bf16）与「全程 fp32、最后一次性 `type_as(x)`」
+    （不能像 `Qwen3_5RMSNormGated` 那样先 cast 再乘 weight）。
+- 已请 H 修 + 重投一次（本轮最后一次）。
