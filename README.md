@@ -11,6 +11,7 @@
 | [`docs/plans/m3.md`](docs/plans/m3.md) | M3 执行清单（decode baseline） |
 | [`docs/sol.md`](docs/sol.md) | 按实际字节的 SOL 模型与每步公式 |
 | [`docs/bench.md`](docs/bench.md) | decode benchmark 用法：场景、参数、产物、失败恢复 |
+| [`docs/experiments.md`](docs/experiments.md) | GPU 实验队列：请求格式、submit/serve/wait、产物契约、失败恢复 |
 | [`docs/model.md`](docs/model.md) | 模型结构、checkpoint、NVFP4 约定、manifest 和显存账 |
 | [`docs/journal/`](docs/journal/) | 实验记录 |
 
@@ -26,7 +27,8 @@
 
 详见 [M3 journal](docs/journal/2026-10-21-m3-decode-baseline.md)、
 [`docs/roadmap.md`](docs/roadmap.md) §6.1 和 [`docs/sol.md`](docs/sol.md)。
-下一步 Phase 2：按时间线顺序优化 NVFP4 GEMV、8K 的 GQA 展开和算子融合。
+下一步 Phase 2：按时间线顺序优化 NVFP4 GEMV、8K 的 GQA 展开和算子融合；
+多 session 的 GPU 实验统一走 [`scripts/experiment.py`](docs/experiments.md) 队列。
 
 M1 用的 llama.cpp 不纳入版本管理，按固定 commit 拉取和编译：
 

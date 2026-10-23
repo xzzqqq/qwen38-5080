@@ -3,10 +3,13 @@
 #
 # 用法（在仓库根目录，bash）：
 #   source scripts/m2_env.sh
-#   scripts/m3_profile.sh            # 用默认步数 8
-#   STEPS=16 scripts/m3_profile.sh
+#   scripts/m3_profile.sh                        # 用默认步数 8
+#   scripts/m3_profile.sh --steps 16             # 换步数
+#   scripts/m3_profile.sh --out /abs/run-dir     # 显式输出目录（实验队列用）
+#   STEPS=16 scripts/m3_profile.sh               # 兼容旧写法
 #
-# 产物：results/m3/<run-id>-profile/<case>/ 下的 .nsys-rep、nsys stats CSV 和解释用 JSON。
+# 产物：<out>/<case>/ 下的 .nsys-rep、nsys stats CSV 和解释用 JSON；
+# 不给 --out 时写 results/m3/<run-id>-m3-profile。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -14,9 +17,24 @@ cd "$ROOT"
 
 VENV="${VENV:-$ROOT/.venv}"
 STEPS="${STEPS:-8}"
+OUT_ARG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --out)   OUT_ARG="${2:?--out needs a directory}"; shift 2 ;;
+    --steps) STEPS="${2:?--steps needs a number}"; shift 2 ;;
+    -h|--help) sed -n '2,12p' "${BASH_SOURCE[0]}"; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; exit 2 ;;
+  esac
+done
 RUN_ID="$(date +%Y%m%dT%H%M%S)"
-OUT="$ROOT/results/m3/${RUN_ID}-m3-profile"
-mkdir -p "$OUT"
+if [ -n "$OUT_ARG" ]; then
+  mkdir -p "$OUT_ARG"
+  # 统一成绝对路径：provenance 与 summary 里不要出现依赖 cwd 的相对路径。
+  OUT="$(cd "$OUT_ARG" && pwd)"
+else
+  OUT="$ROOT/results/m3/${RUN_ID}-m3-profile"
+  mkdir -p "$OUT"
+fi
 
 # nsys 2023.4（随 CUDA 12.4 装的）看不到 sm_120 的 GPU：报告里没有 CUDA kernel data。
 # 优先用 /opt/nvidia/nsight-systems-cli 里较新的 CLI（2026.2.1 起支持 Blackwell）。

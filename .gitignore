@@ -8,6 +8,9 @@ llama.cpp/
 # 临时文件
 .tmp/
 
+# 实验队列产物（request/execution/summary/logs/output，可能很大）
+results/experiments/
+
 # 运行时日志
 logs/
 

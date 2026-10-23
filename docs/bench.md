@@ -142,6 +142,17 @@ make m3-bench
 scripts/m3_close.sh
 ```
 
+多 session 并发时不要直接跑上面这些命令：把 check/bench 写进
+[实验队列](experiments.md) 的请求，由唯一的 `serve` 串行执行。队列会校验产物里的
+`steps`、`repeats`、场景、fixtures 和 commit，避免把旧的 32 步 / 1 次结果当成新的
+511 步 / 5 次完成：
+
+```bash
+.venv/bin/python scripts/experiment.py submit --request .tmp/experiments/req.json
+.venv/bin/python scripts/experiment.py serve --drain   # GPU 主机上
+.venv/bin/python scripts/experiment.py result <job-id>
+```
+
 ## 9. 与 plan 的关系
 
 - **协议固定**（不能为省时间改）：511 步、两趟计时、首 token 归 TTFT、

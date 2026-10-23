@@ -44,6 +44,7 @@ class Tier:
 TIERS: dict[str, Tier] = {
     "s0": Tier("s0", "S0 静态+产物契约", "", 10, "语法、diff 干净、results 契约"),
     "s1": Tier("s1", "S1 CPU 单测", ".venv/bin/python -m pytest tests/ops tests/model -q --disable-warnings", 5, "op 数值与 shape-stable 回归"),
+    "s-exp": Tier("s-exp", "S-exp 实验队列", ".venv/bin/python -m pytest tests/experiment -q --disable-warnings", 35, "请求/产物校验、worktree、FIFO、超时/取消、重启"),
     "s2": Tier("s2", "S2 单场景 graph", ".venv/bin/python scripts/m3_check.py --only graph-1024 --steps 16 --out .tmp/verify/check-graph", 120, "graph capture / capacity guard / static cache"),
     "s2n": Tier("s2n", "S2n 单场景 reference", ".venv/bin/python scripts/m3_check.py --only numeric-512 --steps 16 --out .tmp/verify/check-numeric", 180, "padded reference / reset / boundary / coverage"),
     "s3": Tier("s3", "S3 快档", "make m3-quick", 300, "graph + 显存 + 两套计时端到端"),
@@ -56,7 +57,8 @@ TIERS: dict[str, Tier] = {
 
 # 前缀 → 档位。顺序无关，取并集。
 RULES: list[tuple[tuple[str, ...], tuple[str, ...]]] = [
-    (("runner/ops/", "tests/"), ("s0", "s1")),
+    (("runner/ops/", "tests/ops", "tests/model"), ("s0", "s1")),
+    (("scripts/experiment.py", "runner/experiment/", "tests/experiment/"), ("s0", "s-exp")),
     (("runner/loader/", "runner/model/host_embedding.py"), ("s2", "s3")),
     (("runner/model/static_cache.py", "runner/model/padded_reference.py", "runner/model/snapshots.py", "scripts/m3_check.py"), ("s2", "s2n")),
     (("runner/model/graph_runner.py", "scripts/m3_memory.py"), ("s2", "s4-mem")),

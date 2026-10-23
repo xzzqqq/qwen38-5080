@@ -3,7 +3,8 @@
 
 .PHONY: m2-preflight m2-manifest m2-test m2-numeric m2-micro m2-smoke m2-memory m2-chunk \
         m3-fixtures m3-check m3-bench m3-memory m3-profile m3-sol m3-attn-effect m3-quick \
-        verify verify-run check-results
+        verify verify-run check-results \
+        experiment-test experiment-status experiment-serve
 
 # M2 环境 / CUDA 头文件 / GPU 预检
 m2-preflight:
@@ -53,6 +54,19 @@ verify-run:
 
 verify-close:
 	.venv/bin/python scripts/verify.py --run --include-s5
+
+# ---- GPU 实验队列：多 session 串行执行 check/bench/memory/profile ------------
+
+# CPU 测试：请求校验、worktree 隔离、FIFO、超时/取消、重启核对、产物校验
+experiment-test:
+	.venv/bin/python -m pytest tests/experiment -q --disable-warnings
+
+experiment-status:
+	.venv/bin/python scripts/experiment.py status
+
+# GPU 主机上的唯一执行器（全访问；常驻）
+experiment-serve:
+	.venv/bin/python scripts/experiment.py serve
 
 # ---- M3：decode 性能 baseline -------------------------------------------------
 

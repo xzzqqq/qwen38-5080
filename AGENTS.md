@@ -12,6 +12,7 @@
 | `docs/journal/` | 实验记录 |
 | `docs/model.md` | 模型结构、checkpoint 布局、NVFP4 约定和已知坑 |
 | `docs/bench.md` | decode benchmark 使用说明：场景、参数、产物、失败恢复 |
+| `docs/experiments.md` | GPU 实验队列：submit/status/result/wait/cancel/serve、请求格式、产物契约、失败恢复 |
 
 ## 命令
 
@@ -28,12 +29,19 @@ GPU 命令都必须在 full access 下运行：bwrap 沙箱看不到 `/dev/nvidi
 | `make check-results` | 校验 `results/` 下 run dir 的产物契约 | < 1 秒 |
 | `make m3-bench` | M3 全量性能矩阵（11 场景 × 5 次 × 511 步） | 约 89 分钟 |
 | `scripts/m3_close.sh` | 完整关闭：check + memory + bench + profile + sol（`SKIP=` 可裁剪，`--resume` 续跑） | 约 135 分钟 |
+| `.venv/bin/python scripts/experiment.py serve` | GPU 实验队列的唯一执行器（full access；常驻） | 常驻 |
+| `.venv/bin/python scripts/experiment.py submit --request PATH` | 提交实验 job（不等待 GPU） | < 1 秒 |
+| `.venv/bin/python scripts/experiment.py status/result/wait/cancel` | 查询、等待、取消 job（查询输出 JSON） | 查询 < 1 秒；`wait` 阻塞 |
+| `make experiment-test` | 实验工具 CPU 测试（队列/worktree/超时/产物校验） | 约 35 秒 |
 
 环境检查：`nvidia-smi --query-gpu=...`、`nvidia-smi -q`、`cuda13/bin/nvcc --version`，
 结果存 `results/`。
 
 ## 约定
 
+- 多 session 的 GPU 实验（check / bench / memory / profile）经
+  `scripts/experiment.py` 队列串行执行，不直接抢占 GPU；本机自测仍用 `make verify`
+  的最小档位，但不要和其他 session 的 job 并发占卡。用法见 `docs/experiments.md`。
 - 渐进式验证：改一点先跑 `make verify` 给出的档位（或对应 op 的单测 / 单场景
   `--only`），把 loop 做小、fail fast；里程碑关闭前才跑全量
   （`make verify-close`：check / memory / bench / profile / sol）。
