@@ -1,6 +1,13 @@
-"""紧凑 GQA decode attention（q_len==1）：不物化 repeat_kv 的 24 份 KV。
+"""紧凑 GQA decode attention（q_len==1）：后端开关 + 不物化 repeat_kv 的两种实现。
 
-设计：
+三个后端（``PHASE2_ATTN_DECODE``，默认 ``fused``）：
+- ``fused``：``decode_fused.py`` 的 split-K + online softmax 单 Triton kernel
+  （q_len==1 时的默认路径；形状/格式不支持时回退 ``grouped_bmm``）；
+- ``grouped_bmm``：本模块的「分组 bmm + softmax + bmm」，作为同协议对照，也是
+  不满足 fused 前置条件（batch>1、非 bf16/fp8、非 pow2 head_dim 等）时的回退；
+- ``eager``：完全不打补丁，走 HF ``eager_attention_forward``（repeat_kv 物化）。
+
+设计（grouped_bmm）：
 - 模型 decode 时 q_len==1、``num_key_value_groups = 24 / 4 = 6``；HF eager 的
   ``repeat_kv`` 先把 4 个 KV head 复制成 24 份（每层 K/V 各 100 MB @8192），
   再走 16 路 batched matmul。这里直接把 q 按 KV head 分组（第 j 个 KV head 对应
@@ -10,15 +17,17 @@
   ``bf16 matmul -> * scaling -> + additive mask -> softmax(fp32) -> bf16 -> @ V``。
   因此 local gate 用 float64 reference 定容差，而不是和旧 eager 输出比 bitwise。
 - **FP8 KV**：cache 的 decode 返回 fp8 前缀，scale 挂在张量的 ``kv_fp8_scale``
-  属性上（``runner/ops/kv/fp8.py`` 的 side channel）。这里在 bmm 前调用
-  ``fp8.dequantize`` 写进固定 bf16 scratch，然后走完全相同的 bf16 bmm 路径；
-  也就是“FP8 只改变 K/V 的存储与读取字节，不改变 attention 数学”。融合 kernel
-  可以直接消费 ``(K fp8, K scale, V fp8, V scale)``，不必经过这一步 bf16 物化。
+  属性上（``runner/ops/kv/fp8.py`` 的 side channel，布局 ``[L, kv_heads]``）。
+  ``fused`` 后端直接在 kernel 里折叠 scale（K 的 scale 乘在 QK 点积后、V 的乘在
+  ``p`` 上），**不物化 bf16 前缀**；只有 ``grouped_bmm`` 回退（形状不支持、后端被
+  显式切到 grouped_bmm、或调用方要 attention weights）才用 ``fp8.dequantize``
+  写进固定 bf16 scratch，并计入 ``decode_backend_info`` 的回退计数。
 
 数据流（单层，batch=1）：
     q [1,24,1,256] --view--> [4,6,256]
     k [1,4,L,256]（可能是 capacity buffer 的前缀 view）
-      -> [FP8 时] dequantize(k, k_scale) / dequantize(v, v_scale) -> bf16 scratch
+      -> fused：Triton split-K kernel 直接读 fp8 + scale，零 bf16 物化
+      -> grouped_bmm（回退）：[FP8 时] dequantize 到 bf16 scratch
       -> bmm(q_g, k^T) -> scores [4,6,L] bf16
       -> * scaling -> + mask[..., :L]
       -> softmax(dim=-1, dtype=float32) -> bf16
@@ -26,9 +35,9 @@
       -> view [1,24,1,256]（第 6j+i 行就是 q head 6j+i）
     attn@V 之后接模型的 ``* sigmoid(gate)`` 与 o_proj，不在本 op 内。
 
-预期瓶颈：L 大时是 K/V 的读带宽（BF16 每层 ``2 * 4 * L * 256 * 2`` 字节；
-FP8 读一半，但要把同样元素数的 bf16 写进 scratch，净流量取决于 scratch 是否
-留在 L2）。L 小时是 kernel launch 与 softmax。
+预期瓶颈：L 大时是 K/V 的读带宽（BF16 每层 ``2 * 4 * L * 256 * 2`` 字节）。
+fused 路径读 FP8 时每层只有一半字节、且没有 scratch 写；grouped_bmm 回退读 FP8
+后还要写一份 bf16 scratch（净流量可能反而高于 BF16），所以它只作对照/回退。
 """
 
 from __future__ import annotations
@@ -40,11 +49,13 @@ import torch
 
 from runner.ops.kv import fp8 as fp8_kv
 
-# 候选选择：本方向先做分组 bmm；``eager`` 只作为同一实现方向的关闭开关，
-# 用于在同一进程/同一协议下做对照，不是另一个候选。
+from .decode_fused import can_fuse, fused_gqa_decode_attention
+
+# 后端选择：``fused`` 是 Phase 2 第 3 轮的默认路径（q_len==1 的融合 Triton kernel）；
+# ``grouped_bmm`` / ``eager`` 是同一协议下的对照与关闭开关。
 BACKEND_ENV = "PHASE2_ATTN_DECODE"
-BACKENDS = ("grouped_bmm", "eager")
-BACKEND = os.environ.get(BACKEND_ENV, "grouped_bmm")
+BACKENDS = ("fused", "grouped_bmm", "eager")
+BACKEND = os.environ.get(BACKEND_ENV, "fused")
 
 
 def _backend() -> str:
@@ -79,12 +90,16 @@ def compact_gqa_decode_attention(
         ``(attn_output [batch, num_q_heads, 1, head_dim]``,
         ``attn_weights [batch, num_q_heads, 1, L])``；weights 是 view，不复制。
     """
-    # FP8 KV：先反量化到固定 bf16 scratch；之后的所有数学与 BF16 路径完全相同。
+    # FP8 KV 的 grouped_bmm 回退：先反量化到固定 bf16 scratch。fused 路径不会走到
+    # 这里（它在 kernel 内折叠 scale，零物化）；这里计数是为了让产物能证明回退没
+    # 有悄悄发生在性能路径上。
     k_scale = fp8_kv.kv_scale(key)
     v_scale = fp8_kv.kv_scale(value)
     if k_scale is not None or v_scale is not None:
         if k_scale is None or v_scale is None:
             raise ValueError("FP8 KV 必须同时提供 K 和 V 的 scale")
+        _DECODE_COUNTERS["dequant_fallback"] += 1
+        _DECODE_COUNTERS["last_fallback"] = "grouped_bmm/compact dequantized fp8 prefix"
         key = fp8_kv.dequantize(
             key, k_scale, out=fp8_kv.dequant_scratch("k", key.shape, key.device)
         )
@@ -180,6 +195,55 @@ def reference_fp64(
 _ORIGINAL: Any = None
 _INSTALLED: dict[str, Any] | None = None
 
+# decode 后端计数：fused 走了多少次、FP8 因回退物化了多少次 bf16 前缀。
+_DECODE_COUNTERS = {"fused": 0, "dequant_fallback": 0, "last_fallback": None}
+
+
+def decode_backend_info() -> dict[str, Any]:
+    """产物用：decode attention 实际走的路径与 FP8 物化回退计数。"""
+    return dict(_DECODE_COUNTERS)
+
+
+def decode_gqa_attention(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    attention_mask: torch.Tensor | None,
+    scaling: float,
+    k_scale: torch.Tensor | None = None,
+    v_scale: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor | None]:
+    """按 ``PHASE2_ATTN_DECODE`` 选择 fused / grouped_bmm（``eager`` 由 patch 处理）。
+
+    fused 的前置条件不满足时**回退 grouped_bmm**（两者语义相同、只差 reduction
+    顺序），而不是抛错：patch 的入口条件已经保证四个执行方式（eager / static-exact /
+    static-cap / graph）对同一个 step 走同一条路径，同 shape bitwise gate 才可比。
+    """
+    backend = _backend()
+    # scale 可以由调用方显式传，也可以从 cache 返回的 fp8 张量 side channel 读。
+    if k_scale is None:
+        k_scale = fp8_kv.kv_scale(key)
+    if v_scale is None:
+        v_scale = fp8_kv.kv_scale(value)
+    if backend == "fused" and can_fuse(
+        query, key, value, attention_mask, k_scale, v_scale
+    ):
+        _DECODE_COUNTERS["fused"] += 1
+        return fused_gqa_decode_attention(
+            query, key, value, attention_mask, scaling, k_scale, v_scale
+        )
+    # 回退到 grouped_bmm：fp8 前缀必须先物化成 bf16（计进 dequant_fallback）。
+    if k_scale is not None or v_scale is not None:
+        if k_scale is None or v_scale is None:
+            raise ValueError("FP8 KV 必须同时提供 K 和 V 的 scale")
+        _DECODE_COUNTERS["dequant_fallback"] += 1
+        _DECODE_COUNTERS["last_fallback"] = (
+            f"backend={backend}, fused_ok="
+            f"{can_fuse(query, key, value, attention_mask, k_scale, v_scale)}"
+        )
+        key, value = fp8_kv.dequant_kv(key, k_scale, value, v_scale)
+    return compact_gqa_decode_attention(query, key, value, attention_mask, scaling)
+
 
 def _attention_interface(original):
     """包一层 transformers 的 eager_attention_forward。
@@ -188,6 +252,10 @@ def _attention_interface(original):
     ``num_key_value_groups==1`` 的视觉 attention、dropout>0、bool mask 或
     mask 长度不匹配时原样回退到原实现。回退条件都写在同一个函数里，避免
     模型里出现两条不可比较的路径。
+
+    ``backend == "eager"`` 时整段旁路，完全走 HF 原实现（同进程对照）；
+    ``fused`` 时若形状/格式不支持或调用方要 attention weights，则回退
+    ``grouped_bmm``（仍需 weights）或原实现。
     """
 
     def attention_forward(
@@ -200,12 +268,14 @@ def _attention_interface(original):
         dropout: float = 0.0,
         **kwargs,
     ):
+        backend = _backend()
         groups = getattr(module, "num_key_value_groups", 1)
         mask_ok = attention_mask is None or (
             attention_mask.dtype != torch.bool and attention_mask.shape[-1] == key.shape[2]
         )
         # FP8 KV 时 key/value 是 float8_e4m3fn（scale 在 side channel 上），
-        # dtype 检查要放行这一组；反量化由 compact_gqa_decode_attention 自己做。
+        # dtype 检查要放行这一组；scale 折叠由 decode_gqa_attention 处理
+        # （fused 折进 kernel；只有回退才物化成 bf16）。
         fp8_kv_ok = (
             fp8_kv.kv_scale(key) is not None
             and fp8_kv.kv_scale(value) is not None
@@ -213,7 +283,7 @@ def _attention_interface(original):
         )
         dtype_ok = (query.dtype == key.dtype == value.dtype) or fp8_kv_ok
         if (
-            _backend() == "grouped_bmm"
+            backend != "eager"
             and not module.training
             and dropout == 0.0
             and groups > 1
@@ -226,7 +296,30 @@ def _attention_interface(original):
             and dtype_ok
             and mask_ok
         ):
-            return compact_gqa_decode_attention(query, key, value, attention_mask, scaling)
+            # scale 优先取调用方显式传入的 kwargs；cache 的 decode 走 side
+            # channel（``kv_fp8_scale``），布局见 decode_fused 的 ``_scale_strides``。
+            k_scale = kwargs.pop("k_scale", None)
+            v_scale = kwargs.pop("v_scale", None)
+            if k_scale is None:
+                k_scale = fp8_kv.kv_scale(key)
+            if v_scale is None:
+                v_scale = fp8_kv.kv_scale(value)
+            if kwargs.get("output_attentions"):
+                # 需要 weights：只有 grouped_bmm 会返回（fused 不物化 L 维）。
+                return compact_gqa_decode_attention(
+                    query, key, value, attention_mask, scaling
+                )
+            return decode_gqa_attention(
+                query, key, value, attention_mask, scaling, k_scale, v_scale
+            )
+        # backend=eager（或任何其它绕过分支）也会从 cache 拿到 fp8 KV：HF eager
+        # 只接受同 dtype 的 matmul，这里才物化 bf16（诊断模式，不进性能路径）。
+        k_scale = fp8_kv.kv_scale(key)
+        v_scale = fp8_kv.kv_scale(value)
+        if k_scale is not None and v_scale is not None:
+            _DECODE_COUNTERS["dequant_fallback"] += 1
+            _DECODE_COUNTERS["last_fallback"] = f"backend={backend}, bypass_fp8"
+            key, value = fp8_kv.dequant_kv(key, k_scale, value, v_scale)
         return original(
             module,
             query,
@@ -239,7 +332,7 @@ def _attention_interface(original):
         )
 
     attention_forward.__name__ = "phase2_compact_decode_attention_forward"
-    attention_forward.__doc__ = "q_len==1 走紧凑 GQA decode；其它情况回退 HF eager。"
+    attention_forward.__doc__ = "q_len==1 走紧凑/fused GQA decode；其它情况回退 HF eager。"
     return attention_forward
 
 
@@ -268,8 +361,11 @@ def install() -> dict[str, Any]:
         "symbol": "eager_attention_forward",
         "q_len": "==1 (prefill q_len>1 falls back to original eager)",
         "kv_formats": ["bfloat16", "float8_e4m3fn"],
-        "fp8_kv": "dequantize(k, k_scale) -> bf16 scratch before bmm",
-        "grouping": "kv-head bmm, head 6j+i -> kv head j",
+        "fp8_kv": "k_scale/v_scale folded in the fused kernel; grouped_bmm fallback "
+        "dequantizes to a bf16 scratch",
+        "grouping": "kv-head bmm / fused split-K, head 6j+i -> kv head j",
+        "fused": "split-K + online softmax Triton kernel (decode_fused.py)",
+        "fallback": "fused 前置条件不满足 -> grouped_bmm（仍需 weights 时也回退）",
         "env": BACKEND_ENV,
     }
     return dict(_INSTALLED)
@@ -296,6 +392,8 @@ __all__ = [
     "BACKEND_ENV",
     "BACKENDS",
     "compact_gqa_decode_attention",
+    "decode_backend_info",
+    "decode_gqa_attention",
     "eager_gqa_decode_attention",
     "install",
     "is_installed",

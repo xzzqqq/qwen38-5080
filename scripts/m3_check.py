@@ -51,6 +51,12 @@ from runner.model.snapshots import (  # noqa: E402
     snapshot_state,
 )
 from runner.ops.kv import fp8 as fp8_kv  # noqa: E402
+
+
+def _decode_backend_info() -> dict:
+    from runner.ops.attention import decode_backend_info
+
+    return decode_backend_info()
 from runner.model.static_cache import (  # noqa: E402
     build_static_cache,
     cache_stats,
@@ -878,7 +884,11 @@ def run_worker(args) -> int:
         rep.diag(
             "kv format / dequant",
             True,
-            {"kv_format": fp8_kv.kv_format(), "dequant": fp8_kv.dequant_info()},
+            {
+                "kv_format": fp8_kv.kv_format(),
+                "dequant": fp8_kv.dequant_info(),
+                "decode_attention": _decode_backend_info(),
+            },
         )
         result = rep.result()
     except Exception:
@@ -889,6 +899,7 @@ def run_worker(args) -> int:
         print(error, flush=True)
     result["kv_format"] = fp8_kv.kv_format()
     result["fp8_dequant"] = fp8_kv.dequant_info()
+    result["decode_attention"] = _decode_backend_info()
     result["provenance"] = reporting.provenance(ROOT, {"worker": args.worker, "steps": steps})
     result["fixtures"] = {
         "dir": str(Path(args.fixtures)),

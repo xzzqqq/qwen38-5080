@@ -20,8 +20,9 @@
 
 两条消费路径（FP8）：
   * decode（q_len==1）返回 **fp8 前缀 + scale**（scale 挂在返回张量的
-    ``kv_fp8_scale`` 上），由 ``compact_decode`` 在 bmm 前反量化；不每步把整段
-    前缀物化成 bf16；
+    ``kv_fp8_scale`` 上），由任务 K 的 fused decode attention 在 kernel 内折叠
+    scale（零 bf16 物化）；只有 ``PHASE2_ATTN_DECODE=grouped_bmm`` 的回退才用
+    ``dequantize`` 写 bf16 scratch；
   * prefill（q_len>1）返回反量化后的连续 bf16 前缀：HF eager attention 用不上
     fp8 的 scale，而且 8K prefill 的额外流量（约 10 GB、十几毫秒）远小于权重
     读取；prefill 用纯 torch 的 reference 公式，decode 才走 Triton 热路径。
@@ -33,9 +34,9 @@
       -> lm_head -> logits [1,1,248320]
 
 预期瓶颈：``exact`` 的 KV 展开流量随 L 线性增长；``cap`` 在 capacity 远大于 L 时
-把这份流量放大到 capacity。FP8 把 K/V 读流量减半，但 ``compact_decode`` 还要把
-前缀反量化成 bf16 才能走 tensor core bmm，净收益取决于 bmm 是否命中 L2（见
-``runner/ops/kv/fp8.py`` 的字节账）。
+把这份流量放大到 capacity。FP8 把 K/V 读流量减半；decode 的 fused kernel 直接
+消费 fp8 + scale，不再物化 bf16 前缀（bf16 物化只出现在 grouped_bmm 回退和
+prefill 的 reference 反量化里）。
 """
 
 from __future__ import annotations

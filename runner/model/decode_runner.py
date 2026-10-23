@@ -38,6 +38,13 @@ from runner.model.static_cache import (
 from runner.ops.kv import fp8 as fp8_kv
 
 EXECUTIONS = ("eager", "static-exact", "static-cap", "graph")
+
+
+def _decode_backend_info() -> dict:
+    # 延迟 import：attention 包会拉起 Triton，非 GPU 的纯静态检查不需要它。
+    from runner.ops.attention import decode_backend_info
+
+    return decode_backend_info()
 STATIC_EXECUTIONS = ("static-exact", "static-cap", "graph")
 
 
@@ -157,6 +164,7 @@ class DecodeRunner:
             "max_context": self.max_context,
             "kv_format": getattr(self.cache, "kv_format", None) or fp8_kv.kv_format(),
             "fp8_dequant": fp8_kv.dequant_info(),
+            "decode_attention": _decode_backend_info(),
             "input_buffer_shape": tuple(self.input_buf.shape),
             "input_buffer_ptr": int(self.input_buf.data_ptr()),
             "input_buffer_dtype": str(self.input_buf.dtype),

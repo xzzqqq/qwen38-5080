@@ -37,17 +37,17 @@ GPU 上不假设它们有：cache 的写入、清零、拼接、pad 一律走 ``
 ::
 
     cache.keys [1,4,L,256] fp8 + k_scale [L,4] fp32
-      -> dequantize()：一次 pass 读 fp8、乘 scale、写 bf16 scratch（固定地址）
-      -> compact_decode 的 bmm（bf16 tensor core）
-      -> softmax(fp32) -> bmm(probs, v_bf16)
+      -> 任务 K 的 fused decode attention：K 的 scale 乘在 QK 点积后、V 的乘在 p 上
+         （零 bf16 物化；``runner/ops/attention/decode_fused.py``）
+      -> 只有 grouped_bmm 回退才 dequantize()：一次 pass 读 fp8、乘 scale、写
+         bf16 固定 scratch（这一步计入 ``dequant_fallback``）
 
 ## 预期瓶颈
 
-反量化是带宽操作，不是算力操作：每层读 ``2*4*L*256`` 字节 fp8，写
-``2*4*L*256*2`` 字节 bf16。bf16 scratch 在 decode 里是固定地址、固定 shape，
-bmm 很可能命中 L2；HBM 上主要是 fp8 读 + scratch 的 write-back。FP8 KV 的
-真实收益依赖“不物化 bf16 前缀”的融合 attention kernel（另一位 Explorer 的方向）；
-纯 dequant 路径的 per-call 时间与有效带宽由 ``scripts/phase2_fp8kv_check.py`` 实测。
+fused 路径的瓶颈是 fp8 KV 读带宽：每层读 ``2*4*L*256`` 字节，是 BF16 的一半，
+且没有 scratch 写。``dequantize`` 的纯 torch 实现会拆成 2–3 个 elementwise
+kernel（写出流量反而高于 BF16），所以它只用于回退与 prefill；per-call 时间、
+有效带宽和回退代价由 ``scripts/phase2_fp8kv_check.py`` 实测。
 """
 
 from __future__ import annotations

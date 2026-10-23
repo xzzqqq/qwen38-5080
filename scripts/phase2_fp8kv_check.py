@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Phase 2 任务 J：FP8 KV（E4M3 + per-(head,token) scale）的 op gate + microbench。
 
-候选：``runner/ops/kv/fp8.py`` 的 FP8 KV 编码 + ``compact_decode`` 的
-“反量化后走原 bf16 bmm”路径。冻结方案（实现之前写死，见模块
+候选：``runner/ops/kv/fp8.py`` 的 FP8 KV 编码 + 任务 K 的 **fused decode
+attention**（``decode_fused.py``）：K/V 以 fp8 读入，per (token, kv_head) 的
+scale 直接折进 kernel（K 的 scale 乘在 QK 点积后、V 的乘在 ``p`` 上），**不物化
+bf16 前缀**。这是 plan §7 的验收形态：8K 每层 K+V 只读 33.55 MB fp8（BF16 是
+67.1 MB），零 scratch。``grouped_bmm`` 只在回退时把 fp8 反量化成 bf16（计入
+``dequant_fallback``），不在性能路径上。冻结方案（实现之前写死，见模块
 ``runner/ops/kv/fp8.py`` docstring）：
 
 - 存储 ``torch.float8_e4m3fn``，K/V 都存；
@@ -20,12 +24,11 @@
      ``float32(fp64 精确乘积)``（q 的 4 位 × scale 的 24 位在 fp64 里精确）。
 2. **FP8-KV attention vs 同一份量化后 KV 的 fp64 attention**（gate）：沿用 BF16
    attention op gate 冻结的绝对容差 ``nrmse <= 1e-2``、``cosine >= 0.9999``、
-   ``max_rel <= 2e-2``。理由：反量化后 bf16 张量与 BF16 路径的输入完全相同，
-   误差底噪是 bf16 bmm/softmax，不是 FP8 存储。
-   - 另一条 plumbing gate：FP8 路径的输出必须与“把同一份 fp8 用 torch reference
-     反量化成 bf16 后直接调用 compact attention”的输出 **bitwise** 相同。这条同时
-     验证运行后端（Triton 或回退）在真实 capacity / 前缀布局上与 reference 逐位一致
-     ——e2e 里 static cache 用运行后端、padded reference 用 reference，两边必须同值。
+   ``max_rel <= 2e-2``；另加“fused FP8 vs 同一份 KV 的 grouped_bmm”的
+   ``nrmse <= 5e-3``（只差 reduction 顺序，不是格式差）。
+   - **dispatch gate**：FP8 decode 必须全部走 fused，``dequant_fallback == 0``；
+     回退计数写进产物。
+   - fused kernel 的确定性单独 gate（重复调用 bitwise，graph replay bitwise）。
 3. **FP8 vs BF16 的差**（diagnostic，plan §5 不要求两种格式 greedy trace 相同）：
    只记录 nrmse/cosine，并用从 CPU 校准冻结的宽 sanity 界
    （``nrmse <= 0.08``、``cosine >= 0.995``）防止输出坏掉被当成“格式差异”。
@@ -41,16 +44,17 @@
 - ``attn-fp8-vs-ref``：L ∈ {1, 513, 1025, 8191} × {full, partial_mask,
   capacity_view, cap_mask}；L ∈ {513, 8191} 额外做 CUDA Graph capture+replay。
 - ``attn-fp8-vs-bf16``：L ∈ {513, 8191}，同一份未量化 K/V 下两种存储的 attention 差。
-- ``microbench``：L ∈ {513, 8191}，capacity-view 输入，FP8 与 BF16 各计时；
-  有效带宽按“该长度实际读取的 KV 字节”算。
+- ``microbench``：L ∈ {513, 8191}，capacity-view 输入；计 fp8-fused、bf16-fused、
+  fp8-grouped（回退物化）与 dequant-only 四条路径；有效带宽按 fp8 实际读取的
+  KV 字节算。
 
 ## microbench 口径
 
-FP8 与 BF16 调用的是同一个 compact attention（相同 bmm/softmax），唯一差别是
-K/V 的存储与读取：BF16 直接读 bf16；FP8 读 fp8 + 一次反量化写 bf16 scratch。
-所以 ``speedup`` 只反映“存储格式 + 反量化”的净效果，不混入 attention 数学差异；
-``fp8_kv_gbps`` 的分母是 fp8 实际读取的 KV 字节，``dequant_write_gbps`` 单列
-反量化的写流量。provenance 的 git excludes 注入与 ``phase2_attn_check.py`` 相同
+``fp8-fused`` 与 ``bf16-fused`` 是同一个 fused kernel，唯一差别是 K/V 的存储
+（fp8 + 折叠 scale vs bf16）；``fp8-grouped`` 是回退路径（fp8 反量化写 bf16
+scratch 后 grouped_bmm），用来量化“物化前缀”的代价；``dequant-only`` 单列反量化
+kernel 的写带宽。``speedup_fused_vs_bf16`` 才是 FP8 KV 在 e2e 里省下的 KV 读
+带宽；provenance 的 git excludes 注入与 ``phase2_attn_check.py`` 相同
 （执行器建的 ``.venv``/``models`` 符号链接不算源码改动）。
 
 整份脚本在 GPU 上约 60–90 秒（含一次 Triton 编译）。
@@ -76,6 +80,8 @@ import torch  # noqa: E402
 from runner.experiment.op_artifact import OpReport  # noqa: E402
 from runner.ops.attention import (  # noqa: E402
     compact_gqa_decode_attention,
+    decode_backend_info,
+    decode_gqa_attention,
     reference_fp64,
 )
 from runner.ops.kv import fp8 as fp8_kv  # noqa: E402
@@ -101,6 +107,7 @@ TOL_QUANT_MAX_ABS_RATIO = 5e-2
 TOL_ATTN_NRMSE = 1e-2
 TOL_ATTN_COSINE = 0.9999
 TOL_ATTN_MAX_REL = 2e-2
+TOL_DIRECT_NRMSE = 5e-3  # 同一份 KV 上 fused FP8 vs grouped_bmm(bf16 dequant)
 TOL_DIAG_NRMSE = 8e-2
 TOL_DIAG_COSINE = 0.995
 
@@ -572,12 +579,28 @@ def build_variants(length: int, seed: int, device: torch.device):
 
 
 def call_fp8(variant) -> torch.Tensor:
-    """候选调用：fp8 K/V + scale side channel -> compact decode attention。"""
-    k, v = attach(
-        variant["k"], variant["k_scale"], variant["v"], variant["v_scale"]
+    """候选调用：fp8 K/V + scale 直接进 fused decode attention（scale 折进 kernel）。"""
+    out, _ = decode_gqa_attention(
+        variant["q"],
+        variant["k"],
+        variant["v"],
+        variant["mask"],
+        SCALING,
+        variant["k_scale"],
+        variant["v_scale"],
     )
+    return out
+
+
+def call_grouped(variant) -> torch.Tensor:
+    """对照：同一份 fp8 用 torch reference 反量化成 bf16 后走 grouped_bmm。
+
+    这里刻意用 reference 反量化（不是运行后端）作对照，等价于“把同一份量化后
+    KV 物化成 bf16 再算 attention”，与 fused 的差别只有 reduction 顺序和
+    scale 折叠位置。
+    """
     out, _ = compact_gqa_decode_attention(
-        variant["q"], k, v, variant["mask"], SCALING
+        variant["q"], variant["k_bf"], variant["v_bf"], variant["mask"], SCALING
     )
     return out
 
@@ -594,62 +617,70 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
         head_dim=HEAD_DIM,
         scaling=SCALING,
         graph_lengths=list(GRAPH_LENGTHS),
+        backend="fused decode attention (PHASE2_ATTN_DECODE), fp8 scales folded in kernel",
         tolerances={
             "nrmse_vs_fp64": TOL_ATTN_NRMSE,
             "cosine": TOL_ATTN_COSINE,
             "max_rel": TOL_ATTN_MAX_REL,
+            "candidate_vs_grouped_bmm_nrmse": TOL_DIRECT_NRMSE,
         },
     )
-    worst_by_variant: dict[str, dict[str, float]] = {
-        name: {} for name in ("full", "partial_mask", "capacity_view", "cap_mask")
-    }
-    plumbing_ok = True
-    mask_isolated = {"partial_mask": True, "cap_mask": True}
+    variants_list = ("full", "partial_mask", "capacity_view", "cap_mask")
+    worst: dict[str, dict[str, float]] = {name: {} for name in variants_list}
+    direct: dict[str, dict[str, float]] = {name: {} for name in variants_list}
+    bmm_nrmse = {name: 0.0 for name in variants_list}
     structure = {"capacity_view_noncontiguous": True, "full_contiguous": True}
+    mask_isolated = {"partial_mask": True, "cap_mask": True}
     variants_run: list[str] = []
+    combos: list[str] = []
     graph_detail: list[dict] = []
+    determinism = True
+    fallback_before = decode_backend_info()["dequant_fallback"]
+    fused_before = decode_backend_info()["fused"]
 
     for length in LENGTHS:
         for sample in range(SAMPLES):
             seed = SEED + 1000 * length + 17 * sample
-            variants, visible, cap_visible = build_variants(length, seed, device)
-            for name in ("full", "partial_mask", "capacity_view", "cap_mask"):
+            variants, _visible, _cap_visible = build_variants(length, seed, device)
+            for name in variants_list:
                 variant = variants[name]
                 if name not in variants_run:
                     variants_run.append(name)
+                tag = f"L{length}:{name}"
+                if tag not in combos:
+                    combos.append(tag)
                 cand = call_fp8(variant)
-                base, _ = compact_gqa_decode_attention(
-                    variant["q"],
-                    variant["k_bf"],
-                    variant["v_bf"],
-                    variant["mask"],
-                    SCALING,
-                )
+                base = call_grouped(variant)
                 ref = reference_fp64(
                     variant["q"], variant["k_bf"], variant["v_bf"], variant["mask"], SCALING
                 )
-                bitwise = torch.equal(cand, base)
-                plumbing_ok = plumbing_ok and bitwise
                 metrics = numeric_metrics(cand, ref)
-                _worst(worst_by_variant[name], metrics)
+                direct_metrics = numeric_metrics(cand, base)
+                base_metrics = numeric_metrics(base, ref)
+                _worst(worst[name], metrics)
+                _worst(direct[name], direct_metrics)
+                bmm_nrmse[name] = max(bmm_nrmse[name], base_metrics["nrmse"])
                 structure["capacity_view_noncontiguous"] &= bool(
-                    not variant["k"].is_contiguous()
-                    if name == "capacity_view"
-                    else True
+                    not variant["k"].is_contiguous() if name == "capacity_view" else True
                 )
                 structure["full_contiguous"] &= bool(
                     variant["k"].is_contiguous() if name == "full" else True
                 )
                 case.diag(
-                    f"detail[{name}][L={length}][sample {sample}]",
+                    f"detail[{tag}][sample {sample}]",
                     True,
                     {
-                        "fp8_vs_bf16_same_values_bitwise": bitwise,
                         "candidate": metrics,
+                        "grouped_bmm_on_dequant": base_metrics,
+                        "candidate_vs_grouped": direct_metrics,
                         "shape": tuple(cand.shape),
                         "dtype": str(cand.dtype),
                     },
                 )
+            # 同一输入重复调用必须 bitwise 一致（fused kernel 的确定性）。
+            again = call_fp8(variants["cap_mask"])
+            first = call_fp8(variants["cap_mask"])
+            determinism = determinism and bool(torch.equal(first, again))
 
             # mask 隔离：把不可见槽位的 fp8 code/scale 改成垃圾值，输出必须 bitwise 不变。
             for name in ("partial_mask", "cap_mask"):
@@ -702,21 +733,27 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
                         "variant": "cap_mask",
                         "error": f"{type(exc).__name__}: {exc}",
                     }
-                plumbing_ok = plumbing_ok and ok_replay
                 graph_detail.append(detail)
                 case.gate(f"graph replay[L={length}]: eager/replay bitwise", ok_replay, detail)
                 case.diag(f"graph-replay[L={length}]", ok_replay, detail)
 
+    info = decode_backend_info()
+    fallback_delta = int(info["dequant_fallback"]) - int(fallback_before)
+    fused_delta = int(info["fused"]) - int(fused_before)
+    graph_covered = sorted({int(item["length"]) for item in graph_detail})
+
     case.gate(
         f"coverage: L={list(LENGTHS)} × full/partial_mask/capacity_view/cap_mask "
         f"(capacity={CAPACITY}, samples={SAMPLES}) + graph replay {list(GRAPH_LENGTHS)}",
-        set(variants_run) == {"full", "partial_mask", "capacity_view", "cap_mask"}
-        and len(graph_detail) == len(GRAPH_LENGTHS),
+        set(variants_run) == set(variants_list)
+        and len(combos) == len(LENGTHS) * len(variants_list)
+        and set(graph_covered) == set(GRAPH_LENGTHS),
         {
             "variants": variants_run,
+            "combos": combos,
             "samples": SAMPLES,
             "lengths": list(LENGTHS),
-            "graph_lengths": list(GRAPH_LENGTHS),
+            "graph_covered": graph_covered,
             "partial_mask_visible": [visible_keys(x) for x in LENGTHS],
             "cap_mask_visible": [min(x, MASK_VISIBLE_LONG) for x in LENGTHS],
         },
@@ -727,10 +764,18 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
         structure,
     )
     case.gate(
-        "plumbing: FP8 路径 == torch reference 反量化后的 bf16 直接走 compact attention"
-        "（bitwise；同时验证运行后端在真实 capacity/前缀布局上的反量化）",
-        plumbing_ok,
-        {"note": "graph replay 也计入这一条"},
+        "dispatch: FP8 decode 全部走 fused kernel，零 bf16 物化回退",
+        fused_delta > 0 and fallback_delta == 0,
+        {
+            "fused_calls": fused_delta,
+            "dequant_fallbacks": fallback_delta,
+            "last_fallback": info["last_fallback"],
+        },
+    )
+    case.gate(
+        "determinism: 同一输入重复调用 bitwise 一致",
+        determinism,
+        {"bitwise": determinism},
     )
     case.gate(
         "mask: 不可见槽位的 fp8 code/scale 改写后输出 bitwise 不变",
@@ -740,8 +785,8 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
             "bitwise": mask_isolated,
         },
     )
-    for name in ("full", "partial_mask", "capacity_view", "cap_mask"):
-        metrics = worst_by_variant[name]
+    for name in variants_list:
+        metrics = worst[name]
         case.gate(
             f"numeric[{name}]: nrmse <= {TOL_ATTN_NRMSE}",
             metrics["nrmse"] <= TOL_ATTN_NRMSE,
@@ -757,11 +802,20 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
             metrics["max_rel"] <= TOL_ATTN_MAX_REL,
             {"max_rel": metrics["max_rel"], "max_abs": metrics["max_abs"]},
         )
+        case.gate(
+            f"compare[{name}]: fused FP8 vs grouped_bmm(同 KV) nrmse <= {TOL_DIRECT_NRMSE}",
+            direct[name]["nrmse"] <= TOL_DIRECT_NRMSE,
+            direct[name],
+        )
 
-    case.metric("nrmse_worst", max(item["nrmse"] for item in worst_by_variant.values()))
-    case.metric("cosine_min", min(item["cosine"] for item in worst_by_variant.values()))
-    case.metric("max_rel_worst", max(item["max_rel"] for item in worst_by_variant.values()))
+    case.metric("nrmse_worst", max(item["nrmse"] for item in worst.values()))
+    case.metric("cosine_min", min(item["cosine"] for item in worst.values()))
+    case.metric("max_rel_worst", max(item["max_rel"] for item in worst.values()))
+    case.metric("direct_nrmse_worst", max(item["nrmse"] for item in direct.values()))
+    case.metric("bmm_nrmse_worst", max(bmm_nrmse.values()))
     case.metric("graph_replays", float(len(graph_detail)))
+    case.metric("fused_calls", float(fused_delta))
+    case.metric("dequant_fallbacks", float(fallback_delta))
     case.metric("samples_total", float(SAMPLES * len(LENGTHS)))
 
 
@@ -771,6 +825,7 @@ def run_diag_case(report: OpReport, device: torch.device) -> None:
         "attn-fp8-vs-bf16",
         lengths=list(BENCH_LENGTHS),
         purpose="diagnostic",
+        backend="fused decode attention, fp8 kv vs unquantized bf16 kv（同一 kernel）",
         note="plan §5：FP8 vs BF16 的差异只作 diagnostic，不要求 greedy trace 相同",
     )
     worst: dict[str, float] = {}
@@ -781,17 +836,8 @@ def run_diag_case(report: OpReport, device: torch.device) -> None:
         k, v = make_kv(length, seed + 1, device)
         qk, sk = fp8_kv.quantize_kv(k)
         qv, sv = fp8_kv.quantize_kv(v)
-        fp8_out = call_fp8(
-            {
-                "q": q,
-                "k": qk,
-                "k_scale": sk,
-                "v": qv,
-                "v_scale": sv,
-                "mask": None,
-            }
-        )
-        bf16_out, _ = compact_gqa_decode_attention(q, k, v, None, SCALING)
+        fp8_out, _ = decode_gqa_attention(q, qk, qv, None, SCALING, sk, sv)
+        bf16_out, _ = decode_gqa_attention(q, k, v, None, SCALING)
         metrics = numeric_metrics(fp8_out, bf16_out)
         _worst(worst, metrics)
         finite_ok = finite_ok and bool(torch.isfinite(fp8_out).all())
@@ -862,6 +908,7 @@ def time_per_call_ms(fn, *, warmup: int, iters: int) -> dict[str, float]:
 
 
 def run_micro_case(report: OpReport, device: torch.device) -> None:
+    info_before = decode_backend_info()
     case = report.case(
         "microbench",
         lengths=list(BENCH_LENGTHS),
@@ -869,6 +916,7 @@ def run_micro_case(report: OpReport, device: torch.device) -> None:
         warmup=BENCH_WARMUP,
         iters={str(k): v for k, v in BENCH_ITERS.items()},
         timing="per-call CUDA events, median",
+        paths=("fp8-fused", "bf16-fused", "fp8-grouped-dequant-fallback", "dequant-only"),
         formula="fp8_kv_bytes = 2*H_kv*L*head_dim*1; bf16 = same *2",
     )
     rows: list[dict] = []
@@ -886,16 +934,22 @@ def run_micro_case(report: OpReport, device: torch.device) -> None:
         v_bf = fp8_kv.reference_dequantize(qv, sv)
 
         def fp8_call():
-            return compact_gqa_decode_attention(
+            out, _ = decode_gqa_attention(q, qk, qv, None, SCALING, sk, sv)
+            return out
+
+        def bf16_call():
+            out, _ = decode_gqa_attention(q, k, v, None, SCALING)
+            return out
+
+        def fp8_grouped_call():
+            out, _ = compact_gqa_decode_attention(
                 q,
                 fp8_kv.attach_scale(qk, sk),
                 fp8_kv.attach_scale(qv, sv),
                 None,
                 SCALING,
             )
-
-        def bf16_call():
-            return compact_gqa_decode_attention(q, k_bf, v_bf, None, SCALING)
+            return out
 
         def dequant_call():
             out = fp8_kv.dequant_scratch("bench-k", qk.shape, qk.device)
@@ -904,13 +958,18 @@ def run_micro_case(report: OpReport, device: torch.device) -> None:
             fp8_kv.dequantize(qv, sv, out=outv)
 
         cand, _ = fp8_call()
-        base, _ = bf16_call()
-        bitwise = torch.equal(cand, base)
+        ref = reference_fp64(q, k_bf, v_bf, None, SCALING)
+        metrics = numeric_metrics(cand, ref)
+        again, _ = fp8_call()
+        determinism = bool(torch.equal(cand, again))
         fp8_time = time_per_call_ms(
             fp8_call, warmup=BENCH_WARMUP, iters=BENCH_ITERS[length]
         )
         bf16_time = time_per_call_ms(
             bf16_call, warmup=BENCH_WARMUP, iters=BENCH_ITERS[length]
+        )
+        grouped_time = time_per_call_ms(
+            fp8_grouped_call, warmup=BENCH_WARMUP, iters=BENCH_ITERS[length]
         )
         dequant_time = time_per_call_ms(
             dequant_call, warmup=BENCH_WARMUP, iters=BENCH_ITERS[length]
@@ -920,58 +979,86 @@ def run_micro_case(report: OpReport, device: torch.device) -> None:
         dequant_bytes = 2 * H_KV * length * HEAD_DIM * 2  # 写 bf16 scratch
         row = {
             "length": length,
-            "fp8_ms": fp8_time["median_ms"],
-            "fp8_min_ms": fp8_time["min_ms"],
-            "bf16_ms": bf16_time["median_ms"],
-            "bf16_min_ms": bf16_time["min_ms"],
+            "fp8_fused_ms": fp8_time["median_ms"],
+            "fp8_fused_min_ms": fp8_time["min_ms"],
+            "bf16_fused_ms": bf16_time["median_ms"],
+            "bf16_fused_min_ms": bf16_time["min_ms"],
+            "fp8_grouped_ms": grouped_time["median_ms"],
             "dequant_ms": dequant_time["median_ms"],
-            "speedup": bf16_time["median_ms"] / fp8_time["median_ms"],
+            "speedup_fused_vs_bf16": bf16_time["median_ms"] / fp8_time["median_ms"],
+            "speedup_fused_vs_grouped_fp8": grouped_time["median_ms"]
+            / fp8_time["median_ms"],
             "fp8_kv_gbps": fp8_bytes / (fp8_time["median_ms"] * 1e-3) / 1e9,
             "bf16_kv_gbps": bf16_bytes / (bf16_time["median_ms"] * 1e-3) / 1e9,
             "dequant_write_gbps": dequant_bytes
             / (dequant_time["median_ms"] * 1e-3)
             / 1e9,
             "fp8_kv_bytes_per_call": fp8_bytes,
-            "bitwise_vs_bf16_same_values": bitwise,
+            "deterministic": determinism,
+            "nrmse_vs_fp64": metrics["nrmse"],
             "samples": BENCH_ITERS[length],
         }
         rows.append(row)
         case.diag(f"timing[L={length}]", True, row)
         case.gate(
-            f"coverage: L={length} FP8/BF16 各 {BENCH_ITERS[length]} 次计时 + dequant 单独计时",
+            f"coverage: L={length} fp8-fused/bf16-fused/fp8-grouped 各 "
+            f"{BENCH_ITERS[length]} 次计时 + dequant 单独计时",
             True,
             {"length": length, "warmup": BENCH_WARMUP, "iters": BENCH_ITERS[length]},
         )
         case.gate(
-            f"plumbing: L={length} FP8 路径 == 同一份反量化 bf16（bitwise）",
-            bitwise,
-            {"bitwise": bitwise},
+            f"numeric: L={length} fp8-fused vs fp64 nrmse <= {TOL_ATTN_NRMSE}",
+            metrics["nrmse"] <= TOL_ATTN_NRMSE,
+            metrics,
+        )
+        case.gate(
+            f"determinism: L={length} fp8-fused 重复调用 bitwise",
+            determinism,
+            {"bitwise": determinism},
         )
         case.gate(
             f"timing: L={length} 计时样本有效",
             fp8_time["median_ms"] > 0
             and bf16_time["median_ms"] > 0
+            and grouped_time["median_ms"] > 0
             and dequant_time["median_ms"] > 0
             and all(
                 math.isfinite(item["median_ms"])
-                for item in (fp8_time, bf16_time, dequant_time)
+                for item in (fp8_time, bf16_time, grouped_time, dequant_time)
             ),
-            {"fp8": fp8_time, "bf16": bf16_time, "dequant": dequant_time},
+            {
+                "fp8_fused": fp8_time,
+                "bf16_fused": bf16_time,
+                "fp8_grouped": grouped_time,
+                "dequant": dequant_time,
+            },
         )
 
-    info = fp8_kv.dequant_info()
-    case.diag("dequant backend", info["triton_available"], info)
+    info = decode_backend_info()
+    dequant_info = fp8_kv.dequant_info()
+    case.diag("dequant backend / decode dispatch", True, {**dequant_info, **info})
+    case.metric("triton_active", 1.0 if dequant_info["triton_available"] else 0.0)
+    case.metric("dequant_calls", float(dequant_info["dequant_calls"]))
+    case.metric("dequant_fallbacks", float(dequant_info["dequant_fallbacks"]))
+    case.metric("fused_calls", float(info["fused"] - info_before["fused"]))
     # 汇总 metric 用最差（最短）长度，避免只报好看的数字。
-    case.metric("triton_active", 1.0 if info["triton_available"] else 0.0)
-    case.metric("dequant_calls", float(info["dequant_calls"]))
-    case.metric("dequant_fallbacks", float(info["dequant_fallbacks"]))
-    case.metric("fp8_ms_worst", max(row["fp8_ms"] for row in rows))
-    case.metric("bf16_ms_worst", max(row["bf16_ms"] for row in rows))
+    case.metric("fp8_fused_ms_worst", max(row["fp8_fused_ms"] for row in rows))
+    case.metric("bf16_fused_ms_worst", max(row["bf16_fused_ms"] for row in rows))
+    case.metric("fp8_grouped_ms_worst", max(row["fp8_grouped_ms"] for row in rows))
     case.metric("dequant_ms_worst", max(row["dequant_ms"] for row in rows))
-    case.metric("speedup_min", min(row["speedup"] for row in rows))
+    case.metric(
+        "speedup_fused_vs_bf16_min", min(row["speedup_fused_vs_bf16"] for row in rows)
+    )
+    case.metric(
+        "speedup_fused_vs_grouped_fp8_min",
+        min(row["speedup_fused_vs_grouped_fp8"] for row in rows),
+    )
     case.metric("fp8_kv_gbps_worst", min(row["fp8_kv_gbps"] for row in rows))
     case.metric("bf16_kv_gbps_worst", min(row["bf16_kv_gbps"] for row in rows))
-    case.metric("dequant_write_gbps_worst", min(row["dequant_write_gbps"] for row in rows))
+    case.metric(
+        "dequant_write_gbps_worst", min(row["dequant_write_gbps"] for row in rows)
+    )
+    case.metric("nrmse_vs_fp64_worst", max(row["nrmse_vs_fp64"] for row in rows))
     case.metric("lengths", float(len(rows)))
 
 
@@ -1046,7 +1133,8 @@ def main(argv: list[str] | None = None) -> int:
             "quantize": "scale = amax/448 (fp32); q = rne_e4m3(clamp(x/scale))",
             "dequantize": "bf16(float32(q) * scale)",
             "unused_slots": "code 0, scale 0, mask semantics unchanged",
-            "attention_path": "dequantize -> bf16 bmm (same math as bf16 compact decode)",
+            "attention_path": "fused split-K Triton decode attention with k_scale/v_scale folded in the kernel; zero bf16 materialization",
+            "fallback": "grouped_bmm dequantizes fp8 to bf16 only when fused preconditions fail (counted)",
             "tolerances_frozen_before_candidate": {
                 "quant_nrmse": TOL_QUANT_NRMSE,
                 "quant_cosine": TOL_QUANT_COSINE,
@@ -1054,11 +1142,13 @@ def main(argv: list[str] | None = None) -> int:
                 "attn_nrmse_vs_fp64": TOL_ATTN_NRMSE,
                 "attn_cosine": TOL_ATTN_COSINE,
                 "attn_max_rel": TOL_ATTN_MAX_REL,
+                "candidate_vs_grouped_bmm_nrmse": TOL_DIRECT_NRMSE,
                 "diag_nrmse_vs_bf16": TOL_DIAG_NRMSE,
                 "diag_cosine_vs_bf16": TOL_DIAG_COSINE,
-                "reason": "反量化后 bf16 张量与 BF16 attention 路径完全相同，"
-                "误差底噪是 bf16 bmm/softmax（沿用 phase2_attn_check 的冻结容差）；"
-                "roundtrip 界由 CPU 校准（随机 bf16 nrmse 0.026、max|err|/amax 0.03）",
+                "reason": "fused kernel 的误差底噪是 bf16 MMA + fp32 online softmax"
+                "（沿用 phase2_attn_check 的冻结容差）；candidate vs grouped_bmm 用"
+                "5e-3，只差 reduction 顺序；roundtrip 界由 CPU 校准"
+                "（随机 bf16 nrmse 0.026、max|err|/amax 0.03）",
             },
         },
     )
