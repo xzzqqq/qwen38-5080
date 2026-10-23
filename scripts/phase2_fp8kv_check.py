@@ -24,8 +24,16 @@ bf16 前缀**。这是 plan §7 的验收形态：8K 每层 K+V 只读 33.55 MB 
      ``float32(fp64 精确乘积)``（q 的 4 位 × scale 的 24 位在 fp64 里精确）。
 2. **FP8-KV attention vs 同一份量化后 KV 的 fp64 attention**（gate）：沿用 BF16
    attention op gate 冻结的绝对容差 ``nrmse <= 1e-2``、``cosine >= 0.9999``、
-   ``max_rel <= 2e-2``；另加“fused FP8 vs 同一份 KV 的 grouped_bmm”的
-   ``nrmse <= 5e-3``（只差 reduction 顺序，不是格式差）。
+   ``max_rel <= 2e-2``。
+   - **相对判据**（任务 K 已冻结）：fused 到 fp64 的 nrmse ``<= 1.05x``
+     grouped_bmm 到 fp64，分别对“同一份 bf16 KV 上的 fused”和“候选 FP8 fused”
+     各查一次。
+   - **同一份 KV 上的直接比较**：fused(bf16 dequant) vs grouped_bmm 要求
+     ``nrmse <= 1e-2`` **且** ``max|diff| <= 4 ulp(bf16 of ref_absmax)``。
+     这里**不再**用 5e-3 的绝对阈值：实测 0.00533–0.00630、max|diff| 只有
+     1–2 bf16 ulp，是 bf16 score 舍入 vs fp32 online softmax 的 reduction 差异；
+     而 fused 到 fp64 的距离只有 bmm 的 0.54–0.56 倍（fused 更准），用 5e-3 会把
+     更准的实现判成失败（第 3 次 job 的实际失败）。
    - **dispatch gate**：FP8 decode 必须全部走 fused，``dequant_fallback == 0``；
      回退计数写进产物。
    - fused kernel 的确定性单独 gate（重复调用 bitwise，graph replay bitwise）。
@@ -107,8 +115,10 @@ TOL_QUANT_MAX_ABS_RATIO = 5e-2
 TOL_ATTN_NRMSE = 1e-2
 TOL_ATTN_COSINE = 0.9999
 TOL_ATTN_MAX_REL = 2e-2
-TOL_DIRECT_NRMSE = 5e-3  # fused(bf16 dequant) vs grouped_bmm 同一份 KV：只差 reduction
 TOL_FUSED_RATIO = 1.05   # 任务 K 已冻结：fused 到 fp64 的 nrmse <= 1.05x grouped_bmm
+TOL_MAX_ABS_ULP = 4      # fused vs grouped 同一份 KV：max|diff| <= 4 ulp(bf16 of ref_absmax)
+# 旧的 5e-3 nrmse 绝对阈值已下线：实测 0.00533–0.00630、max|diff| 只有 1–2 bf16 ulp，
+# 而 fused 到 fp64 的距离只有 grouped_bmm 的 0.54–0.56 倍（fused 更准）。见 docstring。
 TOL_DIAG_NRMSE = 8e-2
 TOL_DIAG_COSINE = 0.995
 
@@ -242,6 +252,17 @@ def _worst(acc: dict[str, float], metrics: dict[str, float]) -> None:
     acc["cosine"] = min(acc.get("cosine", 1.0), metrics["cosine"])
     acc["max_rel"] = max(acc.get("max_rel", 0.0), metrics["max_rel"])
     acc["max_abs"] = max(acc.get("max_abs", 0.0), metrics["max_abs"])
+    acc["ref_absmax"] = max(acc.get("ref_absmax", 0.0), metrics["ref_absmax"])
+
+
+def bf16_ulp(absmax: float) -> float:
+    """bf16 在给定 absmax 所在 binade 的 ulp：``2**(floor(log2(absmax)) - 7)``。
+
+    bf16 有 7 个显式 mantissa 位；值在 ``[2^e, 2^(e+1))`` 时 ulp = ``2^(e-7)``。
+    """
+    if not math.isfinite(absmax) or absmax <= 0.0:
+        return 0.0
+    return 2.0 ** (math.floor(math.log2(absmax)) - 7)
 
 
 def bits_uint8(tensor: torch.Tensor) -> torch.Tensor:
@@ -632,7 +653,8 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
             "cosine": TOL_ATTN_COSINE,
             "max_rel": TOL_ATTN_MAX_REL,
             "fused_vs_bmm_fp64_ratio": TOL_FUSED_RATIO,
-            "fused_bf16_vs_grouped_nrmse": TOL_DIRECT_NRMSE,
+            "fused_bf16_vs_grouped_nrmse": TOL_ATTN_NRMSE,
+            "fused_bf16_vs_grouped_max_abs_ulp": TOL_MAX_ABS_ULP,
         },
     )
     variants_list = ("full", "partial_mask", "capacity_view", "cap_mask")
@@ -641,7 +663,9 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
     fold_diff: dict[str, dict[str, float]] = {name: {} for name in variants_list}
     bmm_nrmse = {name: 0.0 for name in variants_list}
     fused_bf_nrmse = {name: 0.0 for name in variants_list}
-    ratio_worst = {name: 0.0 for name in variants_list}
+    ratio_worst = {name: 0.0 for name in variants_list}       # fused(bf16)→fp64 / bmm→fp64
+    cand_ratio_worst = {name: 0.0 for name in variants_list}   # FP8 fused→fp64 / bmm→fp64
+    max_abs_ulp = {name: 0.0 for name in variants_list}        # fused vs grouped 的 max|diff|/ulp
     structure = {"capacity_view_noncontiguous": True, "full_contiguous": True}
     mask_isolated = {"partial_mask": True, "cap_mask": True}
     variants_run: list[str] = []
@@ -685,6 +709,16 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
                     ratio_worst[name],
                     fused_bf_metrics["nrmse"] / max(base_metrics["nrmse"], 1e-12),
                 )
+                cand_ratio_worst[name] = max(
+                    cand_ratio_worst[name],
+                    metrics["nrmse"] / max(base_metrics["nrmse"], 1e-12),
+                )
+                # fused 与 grouped 在同一份 KV 上的直接差：用 bf16 输出 ulp 归一化。
+                ulp = bf16_ulp(kernel_metrics["ref_absmax"])
+                if ulp > 0.0:
+                    max_abs_ulp[name] = max(
+                        max_abs_ulp[name], kernel_metrics["max_abs"] / ulp
+                    )
                 structure["capacity_view_noncontiguous"] &= bool(
                     not variant["k"].is_contiguous() if name == "capacity_view" else True
                 )
@@ -829,18 +863,37 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
             {"max_rel": metrics["max_rel"], "max_abs": metrics["max_abs"]},
         )
         case.gate(
-            f"compare[{name}]: fused(bf16 dequant) vs grouped_bmm 同一份 KV "
-            f"nrmse <= {TOL_DIRECT_NRMSE}（只差 reduction 顺序）",
-            kernel_direct[name]["nrmse"] <= TOL_DIRECT_NRMSE,
-            kernel_direct[name],
+            f"compare[{name}]: fused(bf16 dequant) vs grouped_bmm 同一份 KV："
+            f"nrmse <= {TOL_ATTN_NRMSE} 且 max|diff| <= {TOL_MAX_ABS_ULP} ulp(bf16)",
+            kernel_direct[name]["nrmse"] <= TOL_ATTN_NRMSE
+            and max_abs_ulp[name] <= TOL_MAX_ABS_ULP,
+            {
+                "nrmse": kernel_direct[name]["nrmse"],
+                "max_abs": kernel_direct[name]["max_abs"],
+                "max_abs_ulp": max_abs_ulp[name],
+                "cosine": kernel_direct[name]["cosine"],
+                "ref_absmax": kernel_direct[name]["ref_absmax"],
+                "note": "同一份 bf16 KV，只差 reduction 顺序；旧 5e-3 绝对阈值测出 "
+                "0.00533–0.00630 / 1–2 ulp，是刀锋且与 fused 更准（0.54–0.56x）矛盾",
+            },
         )
         case.gate(
-            f"numeric[{name}]: FP8 fused 到 fp64 的 nrmse <= {TOL_FUSED_RATIO}x "
-            f"grouped_bmm（任务 K 已冻结的相对判据）",
+            f"compare[{name}]: fused(bf16 dequant)→fp64 <= {TOL_FUSED_RATIO}x "
+            f"grouped_bmm→fp64（任务 K 已冻结的相对判据）",
             ratio_worst[name] <= TOL_FUSED_RATIO,
             {
                 "ratio": ratio_worst[name],
                 "fused_bf16_nrmse": fused_bf_nrmse[name],
+                "grouped_nrmse": bmm_nrmse[name],
+            },
+        )
+        case.gate(
+            f"numeric[{name}]: FP8 fused→fp64 <= {TOL_FUSED_RATIO}x grouped_bmm→fp64"
+            f"（候选自身不差于 baseline 的相对判据）",
+            cand_ratio_worst[name] <= TOL_FUSED_RATIO,
+            {
+                "ratio": cand_ratio_worst[name],
+                "candidate_nrmse": metrics["nrmse"],
                 "grouped_nrmse": bmm_nrmse[name],
             },
         )
@@ -854,6 +907,8 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
     )
     case.metric("fold_nrmse_worst", max(item["nrmse"] for item in fold_diff.values()))
     case.metric("ratio_worst", max(ratio_worst.values()))
+    case.metric("candidate_ratio_worst", max(cand_ratio_worst.values()))
+    case.metric("max_abs_ulp_worst", max(max_abs_ulp.values()))
     case.metric("fused_bf16_nrmse_worst", max(fused_bf_nrmse.values()))
     case.metric("bmm_nrmse_worst", max(bmm_nrmse.values()))
     case.metric("graph_replays", float(len(graph_detail)))
@@ -1186,12 +1241,15 @@ def main(argv: list[str] | None = None) -> int:
                 "attn_cosine": TOL_ATTN_COSINE,
                 "attn_max_rel": TOL_ATTN_MAX_REL,
                 "fused_vs_bmm_fp64_ratio": TOL_FUSED_RATIO,
-                "fused_bf16_vs_grouped_nrmse": TOL_DIRECT_NRMSE,
+                "fused_bf16_vs_grouped_nrmse": TOL_ATTN_NRMSE,
+                "fused_bf16_vs_grouped_max_abs_ulp": TOL_MAX_ABS_ULP,
                 "diag_nrmse_vs_bf16": TOL_DIAG_NRMSE,
                 "diag_cosine_vs_bf16": TOL_DIAG_COSINE,
                 "reason": "fused kernel 的误差底噪是 bf16 MMA + fp32 online softmax"
-                "（沿用 phase2_attn_check 的冻结容差）；candidate vs grouped_bmm 用"
-                "5e-3，只差 reduction 顺序；roundtrip 界由 CPU 校准"
+                "（沿用 phase2_attn_check 的冻结容差）；fused vs grouped_bmm 用"
+                "nrmse <= 1e-2 + max|diff| <= 4 bf16 ulp（实测 0.00533–0.00630 /"
+                "1–2 ulp；旧 5e-3 绝对阈值是刀锋，且与 fused 到 fp64 只有 bmm 的"
+                "0.54–0.56 倍（更准）矛盾）+ 1.05x 相对判据；roundtrip 界由 CPU 校准"
                 "（随机 bf16 nrmse 0.026、max|err|/amax 0.03）",
             },
         },
