@@ -230,3 +230,46 @@ graph replay 计时，cutlass 基线走官方入口：
     再乘，不能预计算成 bf16）与「全程 fp32、最后一次性 `type_as(x)`」
     （不能像 `Qwen3_5RMSNormGated` 那样先 cast 再乘 weight）。
 - 已请 H 修 + 重投一次（本轮最后一次）。
+
+## 任务 F 采纳（job-000037-150586b0，commit `3c3ac27`）
+
+| 指标 | baseline job-000029 | F 接入后 | 变化 |
+|---|---|---|---|
+| graph-8192 step p50 | 27.781 ms | **25.084 ms** | **−2.697 ms（−9.7%）** |
+| graph-8192 系统 | 35.99 tok/s | **39.81** | +10.6% |
+| graph-512-1024 step p50 | 26.779 ms | **24.090 ms** | −2.689 ms（−10.0%） |
+| graph-512-1024 系统 | 37.29 tok/s | **41.42** | +11.1% |
+
+- **check 139/139**：三组 bitwise（`eager→static-exact`、`padded-ref→static-cap`、
+  `static-cap→graph`）全部保持，说明「backend 间输出逐位一致」在端到端成立。
+- 接入面：`DECODE_BACKEND_TABLE`（8 个 (N,K) → cute-dsl），只在 `M==1` 查表，
+  prefill 仍 cutlass，`mm_fp4` 其它参数未动；失败回退 + 永久禁用 + 每进程一次 warning。
+- JIT 时机可判定：`nvfp4_decode.first_call_ms` 每 shape 一条（lm_head 19.95 ms、其余
+  ~1 ms），发生在 `GraphDecodeStep.warmup()` 的 3 步 eager decode 里，steady state 无编译。
+- e2e −2.70 ms 比 op 级加权 −2.39 ms 多 0.31 ms（k/v_proj 从 164→505 GB/s 在整图内
+  还被额外放大），两个 depth 收益一致，说明是纯权重带宽收益。
+
+## 任务 H 第二次提交（job-000038-ad133bc8）：op 全过、check 在 eager 路径崩
+
+- **op 步骤 260/260 全过**：`real-layers` 128 个真实 norm / 1,392,640 个 code 逐字节相同、
+  `scales-extremes` 72/72、`distribution-edge` 48/48、`mean-tree` / `rsqrt-approx`
+  （8228 个样本）全 0 差异；micro 2 消费者 0.0702 → **0.0155 ms/次**。
+  即「用 E 的 R2 契约把 norm+quant 融合成 bitwise 相同的 kernel」这个难点已经成立。
+- check 的 `numeric-512` 在 **eager（DynamicCache）路径**崩：
+  `norm_quant_patch.py:236 → norm_quant_fused: a_fp4 / a_sf length must match gs_list`。
+  是消费者计划的长度与应用数量不一致，不是 kernel 算术问题（op 的 static/graph 都过了）。
+  说明上一轮只验证了 static/graph 两种执行方式。
+- 处理：授权**最后一次**修复 —— 要求 (a) 长度不一致时安全回退 + 计数而不是抛异常，
+  (b) **四种执行方式都要跑通**，(c) 重投同一个 3 步 job。
+- 记账：这一条线目前**未采纳**（op 有强证据，但端到端未验证）；若最后这次仍失败，
+  留给第 3 轮，原因是「融合 kernel 在 eager/DynamicCache 路径的消费者计划不完整」。
+
+## 第 2 轮集成测量（job-000039-3eb94d6c）
+
+- 集成 commit **`a855a56`** = `9e35873`（A+D）+ G（`af034f5`）+ I（`14f06de`）+ F（`1035abd`）。
+  唯一一处需要人工解决的冲突是 `runner/loader/nvfp4_model.py` 的 info 字段（A 与 D 各加
+  一个 key，已同时保留）。
+- 步骤：`check --only numeric-512,graph-1024,graph-8192 --steps 16` +
+  `bench --only 三个 graph 场景 --steps 511 --repeats 5`，timeout 3000。
+- 预期（三项相加）：8K 27.78 − 0.73（G）− 0.27（I）− 2.70（F）= **约 24.1 ms**，
+  系统约 41.5 tok/s，%SOL 约 66%；512-1024 约 23.1 ms。
