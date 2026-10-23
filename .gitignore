@@ -1,6 +1,11 @@
 # 模型权重：体积大，不入库
 models/
 *.gguf
+# worktree 里执行器创建的符号链接（指向主仓库的 models / .venv）。
+# 带斜杠的 pattern 只匹配目录，符号链接会以 `?? models` 出现在
+# `git status --porcelain` 里，进而把产物 provenance 判成 dirty。
+/models
+/.venv
 
 # 第三方工具 checkout：用 scripts/setup_llama_cpp.sh 按固定 commit 拉取
 llama.cpp/

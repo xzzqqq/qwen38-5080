@@ -28,6 +28,7 @@ from runner.env import configure_flashinfer_env
 
 configure_flashinfer_env()
 
+from runner.model.gdn_patch import install_from_env as install_gdn_decode  # noqa: E402
 from runner.model.host_embedding import HostEmbedding  # noqa: E402
 from runner.ops.attention import install as install_compact_attention  # noqa: E402
 from runner.ops.bf16.stable_linear import ShapeStableLinear  # noqa: E402
@@ -195,6 +196,10 @@ def load_nvfp4_text_model(
 
     model.eval()
     torch.set_grad_enabled(False)
+    # Phase 2 任务 D：GDN decode 的 recurrent step 走融合 kernel（GDN_FUSED_DECODE=0 可关）。
+    # 必须在 graph capture 之前接入：每个 state buffer 的 bf16 out 槽在首个 decode
+    # step（warmup）里分配，之后地址固定，replay 依赖这一点。
+    gdn_decode_info = install_gdn_decode(model)
     torch.cuda.synchronize()
     free_b, total_b = torch.cuda.mem_get_info()
     info = {
@@ -209,5 +214,6 @@ def load_nvfp4_text_model(
         "gpu_free_gb": free_b / 1e9,
         "gpu_total_gb": total_b / 1e9,
         "decode_attention": attention_info,
+        "gdn_decode": gdn_decode_info,
     }
     return model, text_config, info
