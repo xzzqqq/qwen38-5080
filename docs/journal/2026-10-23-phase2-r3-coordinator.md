@@ -187,3 +187,26 @@ L+K 恰好等于可加预测（21.824 − 0.683 − 0.629 = 20.512 → 实测 20
   `[1,1,17408]`/`[1,1,6144]` 的量化比 FlashInfer 的 320-block 形态慢、
   或 `_pending_quantized` 槽位与 L/H 的槽位在 graph 内多一次分支。
   **这正是我坚持在每个候选之后做同协议组合测量的原因。**
+
+## 任务 J 判定：**已实现、未完成 e2e 验证 → 本轮不接入**
+
+- **已证明**（commit `4133560`，journal `feeaac3`）：
+  - `quant-roundtrip` 11/11：roundtrip nrmse 0.0261 / cosine 0.99966，code/scale/dequant
+    对独立 reference **bitwise**，dequant fp32 中间值对 fp64 精确乘 **bitwise**；
+  - `attn-fp8-vs-ref`（4 长度 × 4 变体 × 2 样本 + 4 次 graph replay）：fused FP8
+    nrmse **0.00350** / cosine 0.9999939 / max_rel 0.0052；到 fp64 的距离是 grouped_bmm
+    的 **0.54–0.56 倍**；`fused_calls=132, dequant_fallbacks=0`；重复调用 / graph replay /
+    mask 隔离 / capacity-view 全 bitwise。
+- **未完成**：e2e bench、`smoke-graph`、8K memory、端到端 bitwise —— 三次 job 都停在 op
+  步骤（`job-000045` coverage 计数错、`job-000049` 解包错、`job-000051` 刀锋容差
+  0.00533 vs 0.005），所以**没有任何端到端/显存证据**，不能写成有收益。
+- **两条实测结论（有价值）**：
+  1. **物化 bf16 前缀是净回退**：fp8 0.2635 vs bf16 0.1795 ms/call，dequant 写出仅
+     71 GB/s → +1.3 ms/step。FP8 只有在「kernel 内折叠 scale、零物化」时才有意义；
+  2. **即使 fused，FP8 分支每层仍比 BF16 慢 4–5%**（L=8191 0.0458 vs 0.0437 ms；
+     366 vs 768 GB/s，受 fp8→bf16 转换限制）。**FP8 目前是显存（−0.264 GB）与验收格式
+     收益，不是速度收益** —— 这修正了 plan 里「FP8 KV 会更快」的隐含假设，下一轮的
+     FP8 时间要按「中性或 +0.03 ms/step」预估。
+- 下一轮入口（J 的 journal §8）：判据换成 K 的相对判据 + `max_abs ≤ 4 ulp`；
+  先只跑 `op + bench` 两步拿 e2e（对 `job-000050` 的 20.493 ms），smoke 与 memory 各自
+  独立 job；kernel 侧要原生消费 fp8（fp8 `tl.dot`/流水线内 `cvt`），否则兑现不了 KV 读减半。
