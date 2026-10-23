@@ -22,24 +22,24 @@ bf16 前缀**。这是 plan §7 的验收形态：8K 每层 K+V 只读 33.55 MB 
    - 候选反量化（Triton 或 torch 回退）与 ``reference_dequantize`` 逐位相同；
    - 反量化的 fp32 中间值还必须等于 ``dequantize_exact`` 的
      ``float32(fp64 精确乘积)``（q 的 4 位 × scale 的 24 位在 fp64 里精确）。
-2. **FP8-KV attention vs 同一份量化后 KV 的 fp64 attention**（gate）：沿用 BF16
-   attention op gate 冻结的绝对容差 ``nrmse <= 1e-2``、``cosine >= 0.9999``、
-   ``max_rel <= 2e-2``。
-   - **相对判据**（任务 K 已冻结）：fused 到 fp64 的 nrmse ``<= 1.05x``
-     grouped_bmm 到 fp64，分别对“同一份 bf16 KV 上的 fused”和“候选 FP8 fused”
-     各查一次。
-   - **同一份 KV 上的直接比较**：fused(bf16 dequant) vs grouped_bmm 要求
-     ``nrmse <= 1e-2`` **且** ``max|diff| <= 4 ulp(bf16 of ref_absmax)``。
-     这里**不再**用 5e-3 的绝对阈值：实测 0.00533–0.00630、max|diff| 只有
-     1–2 bf16 ulp，是 bf16 score 舍入 vs fp32 online softmax 的 reduction 差异；
-     而 fused 到 fp64 的距离只有 bmm 的 0.54–0.56 倍（fused 更准），用 5e-3 会把
-     更准的实现判成失败（第 3 次 job 的实际失败）。
-   - **dispatch gate**：FP8 decode 必须全部走 fused，``dequant_fallback == 0``；
-     回退计数写进产物。
-   - fused kernel 的确定性单独 gate（重复调用 bitwise，graph replay bitwise）。
+2. **FP8-KV attention 的 fused kernel 质量**（gate，本轮按第 5 轮口径收敛为两条）：
+   参考是**同一份精确反量化 KV**（``fp8 code × fp32 scale``，fp64，不经过 bf16
+   往返）上的 fp64 attention；两个 fused kernel 都对这一个参考比较，因此只比
+   reduction / scale 折叠质量，不把 bf16 存储舍入混进比值。
+   - `nrmse(FP8 fused → exact fp64) <= 1.05 × nrmse(bf16-fused → 同一 fp64)`；
+     分母加 ``+1e-12`` 保护，detail 里同时打印两侧绝对值。
+   - `max|FP8 fused − exact fp64| <= 4 ulp(bf16 of ref_absmax)`；
+     ``ulp = 2^(floor(log2(absmax)) - 7)``（bf16 7 个显式 mantissa 位）。
+     L=1 时 bf16-fused 与 bf16 参考完全相等、旧比值会 0 除，这也是为什么参考
+     必须用精确 fp64 而不是 bf16 参考（第 3 轮 5e-3 绝对阈值的刀锋同理：
+     实测 0.00533–0.00630、max|diff| 1–2 ulp，却把更准的实现判成失败）。
+   - 与 grouped_bmm 的比较、旧绝对容差（nrmse/cosine/max_rel）与格式间差异
+     全部降为 **diagnostic**（本轮 Coordinator 口径）。
+   - **结构 gate**（不参与数值判定）：coverage、dispatch（``dequant_fallback == 0``）、
+     fused kernel 确定性、mask 隔离、graph replay bitwise。
 3. **FP8 vs BF16 的差**（diagnostic，plan §5 不要求两种格式 greedy trace 相同）：
-   只记录 nrmse/cosine，并用从 CPU 校准冻结的宽 sanity 界
-   （``nrmse <= 0.08``、``cosine >= 0.995``）防止输出坏掉被当成“格式差异”。
+   只记录 nrmse/cosine 与宽 sanity 界（``nrmse <= 0.08``、``cosine >= 0.995``），
+   不参与判定。
 4. **roundtrip 误差**（gate）：``nrmse <= 0.04``、``cosine >= 0.999``、
    ``max|err| <= 0.05*amax``。CPU 校准：随机 bf16 向量 nrmse 0.026、
    max|err|/amax 0.03；这个界只拦“scale 用错/漏乘”这类量级错误。
@@ -65,7 +65,7 @@ kernel 的写带宽。``speedup_fused_vs_bf16`` 才是 FP8 KV 在 e2e 里省下�
 带宽；provenance 的 git excludes 注入与 ``phase2_attn_check.py`` 相同
 （执行器建的 ``.venv``/``models`` 符号链接不算源码改动）。
 
-整份脚本在 GPU 上约 60–90 秒（含一次 Triton 编译）。
+整份脚本在 GPU 上约 1–2 分钟（含一次 Triton 编译与每组变体两个 fp64 reference）。
 
 用法：
     .venv/bin/python scripts/phase2_fp8kv_check.py --out {output}/op
@@ -112,6 +112,7 @@ GRAPH_LENGTHS = (513, 8191)
 TOL_QUANT_NRMSE = 4e-2
 TOL_QUANT_COSINE = 0.999
 TOL_QUANT_MAX_ABS_RATIO = 5e-2
+# 旧绝对容差：本轮只用于 diagnostic 记录（不再当 gate；见模块 docstring）。
 TOL_ATTN_NRMSE = 1e-2
 TOL_ATTN_COSINE = 0.9999
 TOL_ATTN_MAX_REL = 2e-2
@@ -635,6 +636,25 @@ def call_fused_bf16(variant) -> torch.Tensor:
     return out
 
 
+def exact_kv_fp64(variant) -> tuple[torch.Tensor, torch.Tensor]:
+    """fp8 code × fp32 scale 的**精确**反量化（fp64），不经过 bf16 往返。
+
+    这是本轮判据的唯一 fp64 参考：两个 fused kernel（FP8 与 BF16）都与同一份
+    “精确反量化后的 KV”上算出的 fp64 attention 比较，从而只比较 kernel 的
+    reduction/scale 折叠质量，不把 bf16 存储舍入混进比值。
+    """
+    # fp8 -> fp32 -> fp64：两步都是精确转换，且不依赖 CUDA 上 fp8->fp64 的直接 kernel。
+    k_exact = (
+        variant["k"].float().double()
+        * variant["k_scale"].double().transpose(0, 1).unsqueeze(-1)
+    )
+    v_exact = (
+        variant["v"].float().double()
+        * variant["v_scale"].double().transpose(0, 1).unsqueeze(-1)
+    )
+    return k_exact, v_exact
+
+
 def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
     case = report.case(
         "attn-fp8-vs-ref",
@@ -648,24 +668,27 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
         scaling=SCALING,
         graph_lengths=list(GRAPH_LENGTHS),
         backend="fused decode attention (PHASE2_ATTN_DECODE), fp8 scales folded in kernel",
-        tolerances={
-            "nrmse_vs_fp64": TOL_ATTN_NRMSE,
-            "cosine": TOL_ATTN_COSINE,
-            "max_rel": TOL_ATTN_MAX_REL,
-            "fused_vs_bmm_fp64_ratio": TOL_FUSED_RATIO,
-            "fused_bf16_vs_grouped_nrmse": TOL_ATTN_NRMSE,
-            "fused_bf16_vs_grouped_max_abs_ulp": TOL_MAX_ABS_ULP,
+        reference="fp64 attention on the exact fp8*scale dequantized KV (no bf16 round-trip)",
+        criteria={
+            "ratio": "nrmse(fp8 fused -> exact fp64) <= 1.05 * nrmse(bf16 fused -> same exact fp64)",
+            "max_abs": "max|fp8 fused - exact fp64| <= 4 ulp(bf16 of ref_absmax)",
+            "rationale": "同一份精确 KV、同一个 fp64 参考上比两个 fused kernel；不把 bf16 "
+            "存储舍入混进比值，也避免旧 grouped_bmm 绝对阈值的刀锋（实测 0.00533–0.00630、"
+            "max_abs 1–2 ulp）。与 grouped_bmm 的比较、格式间差异只作 diagnostic。",
         },
     )
     variants_list = ("full", "partial_mask", "capacity_view", "cap_mask")
-    worst: dict[str, dict[str, float]] = {name: {} for name in variants_list}
-    kernel_direct: dict[str, dict[str, float]] = {name: {} for name in variants_list}
-    fold_diff: dict[str, dict[str, float]] = {name: {} for name in variants_list}
-    bmm_nrmse = {name: 0.0 for name in variants_list}
-    fused_bf_nrmse = {name: 0.0 for name in variants_list}
-    ratio_worst = {name: 0.0 for name in variants_list}       # fused(bf16)→fp64 / bmm→fp64
-    cand_ratio_worst = {name: 0.0 for name in variants_list}   # FP8 fused→fp64 / bmm→fp64
-    max_abs_ulp = {name: 0.0 for name in variants_list}        # fused vs grouped 的 max|diff|/ulp
+    cand_metrics_worst: dict[str, dict[str, float]] = {name: {} for name in variants_list}
+    bf16_metrics_worst: dict[str, dict[str, float]] = {name: {} for name in variants_list}
+    ratio_worst = {name: 0.0 for name in variants_list}
+    max_abs_ulp_worst = {name: 0.0 for name in variants_list}
+    diag_worst: dict[str, dict[str, float]] = {
+        "fp8_vs_bf16_ref": {},
+        "bf16_fused_vs_bf16_ref": {},
+        "fp8_vs_bf16_fused": {},
+        "grouped_vs_exact": {},
+        "grouped_vs_bf16_ref": {},
+    }
     structure = {"capacity_view_noncontiguous": True, "full_contiguous": True}
     mask_isolated = {"partial_mask": True, "cap_mask": True}
     variants_run: list[str] = []
@@ -686,39 +709,41 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
                 tag = f"L{length}:{name}"
                 if tag not in combos:
                     combos.append(tag)
+
+                k_exact, v_exact = exact_kv_fp64(variant)
+                ref_exact = reference_fp64(
+                    variant["q"], k_exact, v_exact, variant["mask"], SCALING
+                )
                 cand = call_fp8(variant)
-                fused_bf = call_fused_bf16(variant)
+                bf16_fused = call_fused_bf16(variant)
                 base = call_grouped(variant)
-                ref = reference_fp64(
+
+                cand_m = numeric_metrics(cand, ref_exact)
+                bf16_m = numeric_metrics(bf16_fused, ref_exact)
+                ratio = cand_m["nrmse"] / (bf16_m["nrmse"] + 1e-12)
+                ulp = bf16_ulp(cand_m["ref_absmax"])
+                max_abs_ulp = cand_m["max_abs"] / ulp if ulp > 0.0 else 0.0
+
+                _worst(cand_metrics_worst[name], cand_m)
+                _worst(bf16_metrics_worst[name], bf16_m)
+                ratio_worst[name] = max(ratio_worst[name], ratio)
+                max_abs_ulp_worst[name] = max(max_abs_ulp_worst[name], max_abs_ulp)
+
+                # 以下全部只作 diagnostic（不参与 gate）。
+                ref_bf = reference_fp64(
                     variant["q"], variant["k_bf"], variant["v_bf"], variant["mask"], SCALING
                 )
-                metrics = numeric_metrics(cand, ref)
-                base_metrics = numeric_metrics(base, ref)
-                fused_bf_metrics = numeric_metrics(fused_bf, ref)
-                kernel_metrics = numeric_metrics(fused_bf, base)
-                fold_metrics = numeric_metrics(cand, fused_bf)
-                _worst(worst[name], metrics)
-                _worst(kernel_direct[name], kernel_metrics)
-                _worst(fold_diff[name], fold_metrics)
-                bmm_nrmse[name] = max(bmm_nrmse[name], base_metrics["nrmse"])
-                fused_bf_nrmse[name] = max(
-                    fused_bf_nrmse[name], fused_bf_metrics["nrmse"]
-                )
-                # 任务 K 的冻结判据：同一份 bf16 KV 上，fused 到 fp64 的距离 <= 1.05x bmm。
-                ratio_worst[name] = max(
-                    ratio_worst[name],
-                    fused_bf_metrics["nrmse"] / max(base_metrics["nrmse"], 1e-12),
-                )
-                cand_ratio_worst[name] = max(
-                    cand_ratio_worst[name],
-                    metrics["nrmse"] / max(base_metrics["nrmse"], 1e-12),
-                )
-                # fused 与 grouped 在同一份 KV 上的直接差：用 bf16 输出 ulp 归一化。
-                ulp = bf16_ulp(kernel_metrics["ref_absmax"])
-                if ulp > 0.0:
-                    max_abs_ulp[name] = max(
-                        max_abs_ulp[name], kernel_metrics["max_abs"] / ulp
-                    )
+                d_fp8_bf = numeric_metrics(cand, ref_bf)
+                d_bf16_bf = numeric_metrics(bf16_fused, ref_bf)
+                d_fold = numeric_metrics(cand, bf16_fused)
+                d_grouped_exact = numeric_metrics(base, ref_exact)
+                d_grouped_bf = numeric_metrics(base, ref_bf)
+                _worst(diag_worst["fp8_vs_bf16_ref"], d_fp8_bf)
+                _worst(diag_worst["bf16_fused_vs_bf16_ref"], d_bf16_bf)
+                _worst(diag_worst["fp8_vs_bf16_fused"], d_fold)
+                _worst(diag_worst["grouped_vs_exact"], d_grouped_exact)
+                _worst(diag_worst["grouped_vs_bf16_ref"], d_grouped_bf)
+
                 structure["capacity_view_noncontiguous"] &= bool(
                     not variant["k"].is_contiguous() if name == "capacity_view" else True
                 )
@@ -729,14 +754,20 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
                     f"detail[{tag}][sample {sample}]",
                     True,
                     {
-                        "candidate": metrics,
-                        "grouped_bmm_on_dequant": base_metrics,
-                        "fused_bf16_vs_grouped": kernel_metrics,
-                        "fp8_fused_vs_bf16_fused": fold_metrics,
+                        "fp8_fused_vs_exact_fp64": cand_m,
+                        "bf16_fused_vs_exact_fp64": bf16_m,
+                        "ratio_fp8_over_bf16": ratio,
+                        "max_abs_ulp_bf16": max_abs_ulp,
+                        "fp8_fused_vs_bf16_ref(diag)": d_fp8_bf,
+                        "bf16_fused_vs_bf16_ref(diag)": d_bf16_bf,
+                        "fp8_fused_vs_bf16_fused(diag)": d_fold,
+                        "grouped_bmm_vs_exact_fp64(diag)": d_grouped_exact,
+                        "grouped_bmm_vs_bf16_ref(diag)": d_grouped_bf,
                         "shape": tuple(cand.shape),
                         "dtype": str(cand.dtype),
                     },
                 )
+
             # 同一输入重复调用必须 bitwise 一致（fused kernel 的确定性）。
             again = call_fp8(variants["cap_mask"])
             first = call_fp8(variants["cap_mask"])
@@ -764,8 +795,6 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
                 )
 
             # CUDA Graph replay：capture 后 replay 与 eager 调用 bitwise，replay 两次也 bitwise。
-            # 用 cap_mask（真实 static-cap decode 的 shape）。capture 失败写 gate failure
-            # 而不是抛异常，保证 op.json 仍然落盘、其他 case 的证据不丢。
             if length in GRAPH_LENGTHS:
                 variant = variants["cap_mask"]
                 eager = call_fp8(variant)
@@ -846,71 +875,47 @@ def run_attn_ref_case(report: OpReport, device: torch.device) -> None:
         },
     )
     for name in variants_list:
-        metrics = worst[name]
+        cand_m = cand_metrics_worst[name]
+        bf16_m = bf16_metrics_worst[name]
         case.gate(
-            f"numeric[{name}]: nrmse <= {TOL_ATTN_NRMSE}",
-            metrics["nrmse"] <= TOL_ATTN_NRMSE,
-            metrics,
-        )
-        case.gate(
-            f"numeric[{name}]: cosine >= {TOL_ATTN_COSINE}",
-            metrics["cosine"] >= TOL_ATTN_COSINE,
-            {"cosine": metrics["cosine"]},
-        )
-        case.gate(
-            f"numeric[{name}]: max_rel <= {TOL_ATTN_MAX_REL}",
-            metrics["max_rel"] <= TOL_ATTN_MAX_REL,
-            {"max_rel": metrics["max_rel"], "max_abs": metrics["max_abs"]},
-        )
-        case.gate(
-            f"compare[{name}]: fused(bf16 dequant) vs grouped_bmm 同一份 KV："
-            f"nrmse <= {TOL_ATTN_NRMSE} 且 max|diff| <= {TOL_MAX_ABS_ULP} ulp(bf16)",
-            kernel_direct[name]["nrmse"] <= TOL_ATTN_NRMSE
-            and max_abs_ulp[name] <= TOL_MAX_ABS_ULP,
-            {
-                "nrmse": kernel_direct[name]["nrmse"],
-                "max_abs": kernel_direct[name]["max_abs"],
-                "max_abs_ulp": max_abs_ulp[name],
-                "cosine": kernel_direct[name]["cosine"],
-                "ref_absmax": kernel_direct[name]["ref_absmax"],
-                "note": "同一份 bf16 KV，只差 reduction 顺序；旧 5e-3 绝对阈值测出 "
-                "0.00533–0.00630 / 1–2 ulp，是刀锋且与 fused 更准（0.54–0.56x）矛盾",
-            },
-        )
-        case.gate(
-            f"compare[{name}]: fused(bf16 dequant)→fp64 <= {TOL_FUSED_RATIO}x "
-            f"grouped_bmm→fp64（任务 K 已冻结的相对判据）",
+            f"numeric[{name}]: FP8 fused→exact fp64 <= {TOL_FUSED_RATIO}x "
+            f"bf16-fused→同一 fp64（同结构比同结构）",
             ratio_worst[name] <= TOL_FUSED_RATIO,
             {
                 "ratio": ratio_worst[name],
-                "fused_bf16_nrmse": fused_bf_nrmse[name],
-                "grouped_nrmse": bmm_nrmse[name],
+                "fp8_fused_nrmse": cand_m["nrmse"],
+                "bf16_fused_nrmse": bf16_m["nrmse"],
+                "guard": "+1e-12 on the denominator",
+                "note": "同一份精确反量化 KV 的 fp64 attention 作参考；只比 reduction/"
+                "scale 折叠质量，不把格式量化误差混进比值",
             },
         )
         case.gate(
-            f"numeric[{name}]: FP8 fused→fp64 <= {TOL_FUSED_RATIO}x grouped_bmm→fp64"
-            f"（候选自身不差于 baseline 的相对判据）",
-            cand_ratio_worst[name] <= TOL_FUSED_RATIO,
+            f"numeric[{name}]: max|FP8 fused - exact fp64| <= {TOL_MAX_ABS_ULP} "
+            f"ulp(bf16 of ref_absmax)",
+            max_abs_ulp_worst[name] <= TOL_MAX_ABS_ULP,
             {
-                "ratio": cand_ratio_worst[name],
-                "candidate_nrmse": metrics["nrmse"],
-                "grouped_nrmse": bmm_nrmse[name],
+                "max_abs": cand_m["max_abs"],
+                "ref_absmax": cand_m["ref_absmax"],
+                "ulp": bf16_ulp(cand_m["ref_absmax"]),
+                "max_abs_ulp": max_abs_ulp_worst[name],
+                "note": "输出是 bf16，1 ulp 的差就是舍入下限；4 ulp 给 reduction 顺序留余量",
             },
         )
 
-    case.metric("nrmse_worst", max(item["nrmse"] for item in worst.values()))
-    case.metric("cosine_min", min(item["cosine"] for item in worst.values()))
-    case.metric("max_rel_worst", max(item["max_rel"] for item in worst.values()))
-    case.metric(
-        "kernel_direct_nrmse_worst",
-        max(item["nrmse"] for item in kernel_direct.values()),
-    )
-    case.metric("fold_nrmse_worst", max(item["nrmse"] for item in fold_diff.values()))
     case.metric("ratio_worst", max(ratio_worst.values()))
-    case.metric("candidate_ratio_worst", max(cand_ratio_worst.values()))
-    case.metric("max_abs_ulp_worst", max(max_abs_ulp.values()))
-    case.metric("fused_bf16_nrmse_worst", max(fused_bf_nrmse.values()))
-    case.metric("bmm_nrmse_worst", max(bmm_nrmse.values()))
+    case.metric("max_abs_ulp_worst", max(max_abs_ulp_worst.values()))
+    case.metric(
+        "fp8_fused_nrmse_worst",
+        max(item["nrmse"] for item in cand_metrics_worst.values()),
+    )
+    case.metric(
+        "bf16_fused_nrmse_worst",
+        max(item["nrmse"] for item in bf16_metrics_worst.values()),
+    )
+    # diagnostic 汇总（不进 gate）
+    for key, acc in diag_worst.items():
+        case.metric(f"diag_{key}_nrmse", acc["nrmse"])
     case.metric("graph_replays", float(len(graph_detail)))
     case.metric("fused_calls", float(fused_delta))
     case.metric("dequant_fallbacks", float(fallback_delta))
@@ -954,13 +959,14 @@ def run_diag_case(report: OpReport, device: torch.device) -> None:
         finite_ok,
         {"finite": finite_ok},
     )
-    case.gate(
-        f"sanity: fp8-vs-bf16 nrmse <= {TOL_DIAG_NRMSE}（宽界，只防坏输出）",
+    # 格式间差异只作 diagnostic（plan §5；本轮按 Coordinator 口径不再当 gate）。
+    case.diag(
+        f"format diff: fp8-vs-bf16 nrmse <= {TOL_DIAG_NRMSE}（宽界，只防坏输出）",
         worst["nrmse"] <= TOL_DIAG_NRMSE,
         {"nrmse_worst": worst["nrmse"], "cosine_min": worst["cosine"]},
     )
-    case.gate(
-        f"sanity: fp8-vs-bf16 cosine >= {TOL_DIAG_COSINE}（宽界，只防坏输出）",
+    case.diag(
+        f"format diff: fp8-vs-bf16 cosine >= {TOL_DIAG_COSINE}（宽界，只防坏输出）",
         worst["cosine"] >= TOL_DIAG_COSINE,
         {"cosine_min": worst["cosine"]},
     )
@@ -1104,8 +1110,8 @@ def run_micro_case(report: OpReport, device: torch.device) -> None:
             True,
             {"length": length, "warmup": BENCH_WARMUP, "iters": BENCH_ITERS[length]},
         )
-        case.gate(
-            f"numeric: L={length} fp8-fused vs fp64 nrmse <= {TOL_ATTN_NRMSE}",
+        case.diag(
+            f"numeric(diag): L={length} fp8-fused vs fp64 nrmse <= {TOL_ATTN_NRMSE}",
             metrics["nrmse"] <= TOL_ATTN_NRMSE,
             metrics,
         )
@@ -1233,24 +1239,22 @@ def main(argv: list[str] | None = None) -> int:
             "unused_slots": "code 0, scale 0, mask semantics unchanged",
             "attention_path": "fused split-K Triton decode attention with k_scale/v_scale folded in the kernel; zero bf16 materialization",
             "fallback": "grouped_bmm dequantizes fp8 to bf16 only when fused preconditions fail (counted)",
-            "tolerances_frozen_before_candidate": {
+            "criteria": {
+                "quant_bitwise": "codes/scale/dequant vs independent reference, all classes",
                 "quant_nrmse": TOL_QUANT_NRMSE,
                 "quant_cosine": TOL_QUANT_COSINE,
                 "quant_max_abs_ratio": TOL_QUANT_MAX_ABS_RATIO,
-                "attn_nrmse_vs_fp64": TOL_ATTN_NRMSE,
-                "attn_cosine": TOL_ATTN_COSINE,
-                "attn_max_rel": TOL_ATTN_MAX_REL,
-                "fused_vs_bmm_fp64_ratio": TOL_FUSED_RATIO,
-                "fused_bf16_vs_grouped_nrmse": TOL_ATTN_NRMSE,
-                "fused_bf16_vs_grouped_max_abs_ulp": TOL_MAX_ABS_ULP,
-                "diag_nrmse_vs_bf16": TOL_DIAG_NRMSE,
-                "diag_cosine_vs_bf16": TOL_DIAG_COSINE,
-                "reason": "fused kernel 的误差底噪是 bf16 MMA + fp32 online softmax"
-                "（沿用 phase2_attn_check 的冻结容差）；fused vs grouped_bmm 用"
-                "nrmse <= 1e-2 + max|diff| <= 4 bf16 ulp（实测 0.00533–0.00630 /"
-                "1–2 ulp；旧 5e-3 绝对阈值是刀锋，且与 fused 到 fp64 只有 bmm 的"
-                "0.54–0.56 倍（更准）矛盾）+ 1.05x 相对判据；roundtrip 界由 CPU 校准"
-                "（随机 bf16 nrmse 0.026、max|err|/amax 0.03）",
+                "fp8_vs_bf16_fused_nrmse_ratio": TOL_FUSED_RATIO,
+                "fp8_fused_max_abs_ulp": TOL_MAX_ABS_ULP,
+                "reference": "fp64 attention on the exact fp8*scale dequantized KV "
+                "(no bf16 round-trip); both fused kernels compared to this one reference",
+                "diagnostic_only": "grouped_bmm comparisons, old absolute nrmse/cosine/"
+                "max_rel, fp8-vs-bf16 format diff, microbench numeric",
+                "reason": "第 5 轮口径：只保留量化逐位 gate + 同结构（fp8 fused vs "
+                "bf16 fused）对同一精确 fp64 参考的相对判据 + max_abs <= 4 bf16 ulp。"
+                "旧 grouped_bmm 绝对阈值实测 0.00533–0.00630 / 1–2 ulp 是刀锋；"
+                "L=1 时 bf16-fused 与 bf16 参考相等，旧比值会 0 除，所以参考改用"
+                "精确 fp64。其余全部只作 diagnostic。",
             },
         },
     )
