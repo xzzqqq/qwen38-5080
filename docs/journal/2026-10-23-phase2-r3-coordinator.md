@@ -61,3 +61,47 @@ gated RMSNorm → 剩余 elementwise 融合。
 - K 的 kernel 接口要预留 FP8 scale 参数（J 可能同期落地），合并时由 Coordinator 统一。
 - 组合 gate + 三个 graph 场景正式测量 + 8K 显存由 Coordinator 做；FP8 落地后要按
   **FP8 的 B_mean 重算 %SOL**，并与 BF16 分开报告。
+
+## 集成后 profile（job-000042-0c4fdf2d，graph-7680 8 步）
+
+`21.20 ms` kernel 时间 / **3212 kernel 每步**（第 2 轮前是 6013）：
+
+| ms/step | 次数 | kernel |
+|---|---|---|
+| **16.570** | 401 | `kernel_cutlass_kernel_flashinfergemmkernelssm12x_cuteindependent_small`（F 的 cute-dsl） |
+| **1.128** | 32 | `cutlass::Kernel2`（16 层 QK + 16 层 PV bmm） |
+| 0.991 | 1347 | `vectorized_elementwise` |
+| 0.509 | 128 | `_norm_quant_kernel`（H 的融合） |
+| 0.494 | 354 | `unrolled_elementwise`（`StoreWithCast`，dtype cast） |
+| 0.488 | 409 | `elementwise_kernel` |
+| 0.264 | 48 | `_gdn_decode_kernel` |
+| **0.204** | **129** | `quantize_with_block_size` ← 未融合的消费者 |
+| 0.193 | 96 | `_bf16_matvec_kernel`（G） |
+| 0.135 | 82 | `at::native::`（截断） |
+| 0.114 | 82 | `reduce_kernel`（剩余 norm：gated norm 等） |
+| 0.050 | 32 | `index_elementwise` |
+| 0.048 | 48 | `_gdn_conv_decode_kernel`（I） |
+
+elementwise 2.15 ms 的细分（按 functor 聚合）：
+
+| ms/step | 次数 | 归因 |
+|---|---|---|
+| 0.581 | 501 | dtype cast（`StoreWithCast` + `bfloat16_copy`） |
+| 0.438 | 502 | `MulFunctor<float>`（sigmoid·attn、silu·mul、scale） |
+| 0.197 | 274 | 残差 add |
+| 0.211 | 243 | norm 的 `pow` + `MeanOps` + `rsqrt`（剩余 81 个 norm） |
+| 0.210 | 176 | `silu` / `sigmoid` / `softplus` |
+| 0.168 | 133 | `direct_copy` |
+| **0.112** | **129** | `reciprocal`（每个未融合消费者一次 `1/input_scale`） |
+| 0.050 | 32 | `index_elementwise` |
+
+**401 − 272 = 129 个未融合消费者**：`down_proj` 64、`out_proj` 48、`o_proj` 16、
+`lm_head` 1。它们对应的 `quantize`(0.204) + `reciprocal`(0.112) + 相关 cast/mul ≈ **0.4–0.5 ms**。
+其中 `down_proj` 的输入是 `silu(gate)*up`（plan §4 的融合项）、`o_proj` 的输入是
+`attn_out*sigmoid(gate)`、`lm_head` 的输入是 final norm —— 都可以在**生产者侧**融合。
+
+## 派发（第 4 项）
+
+| 任务 | session | worktree / branch | 脚本入口 | 目标 |
+|---|---|---|---|---|
+| M 剩余 129 个消费者的 quant 融合（down_proj 的 silu·mul、o_proj、lm_head） | `phase2-fuse` | `.tmp/worktrees/r3-fuse` / `exp/phase2-fuse` | `scripts/phase2_normquant_check.py`（扩展） | −0.4 ~ −0.5 ms |
