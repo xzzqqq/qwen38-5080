@@ -3,8 +3,9 @@
 - 日期：2026-10-23
 - 对应：[experiment-tools spec](../experiment-tools-spec.md)、
   [optimization workflow](../optimization-workflow.md)、[使用说明](../experiments.md)
-- 代码 commit：验收时仓库 HEAD 为 `34303182db95fe21be4993e2cc7805b4ff0246a8`；
-  本工具提交为 `cd16e2f`；checkpoint revision
+- 代码 commit：check→bench 验收时 HEAD 为
+  `34303182db95fe21be4993e2cc7805b4ff0246a8`；本工具提交为 `cd16e2f`；
+  profile / memory 复核在 `4891030`；checkpoint revision
   `5b7a687fc8211a5d631c8ca6a593dd37eb26ce33`
 
 ## 1. 做了什么
@@ -127,6 +128,44 @@
 - 成功后 worktree 删除；timed_out 的 job-000002/job-000005 的 worktree 保留供查，
   `.tmp/experiments/worktrees/` 里只剩这两个目录。
 
+### 3.4 profile（真实 nsys）
+
+工具提交后（`4891030` 已包含 `m3_profile.sh --out/--steps`）跑了一个真实 profile job：
+
+```bash
+.venv/bin/python scripts/experiment.py submit --request .tmp/experiments/profile-request.json
+.venv/bin/python scripts/experiment.py serve --drain
+.venv/bin/python scripts/experiment.py result job-000008-6baf748a
+```
+
+- `job-000008-6baf748a`：state=succeeded、correctness=**not_checked**（纯 profile，
+  符合 spec），queue 1.9 s / elapsed 124.7 s；6 个 case × 8 步。
+- 产物校验通过：`timeline_summary.json`、`summary.md`、`provenance.json`、每 case 的
+  `meta.json`、`trace.nsys-rep`、`gpu_trace.csv`；`check_results.py` 对
+  `output/profile` 返回 `[OK]`。
+- 计时（每步 kernel 累计 / 墙钟）：eager-512 30.29 ms / 112.55 ms、eager-7680
+  44.08 / 111.28；graph-512 29.74 / **32.54**、graph-7680 42.34 / **45.03**；
+  graph 每步 7290 个 kernel、eager 7242，<5 µs kernel 占 93.6%——与 M3 记录一致。
+- `--out` 生效：worktree 里没有留下 `results/m3/...`；成功后 worktree 删除，
+  GPU 回到 0 MiB。
+- 产物 295 MB（nsys trace / gpu_trace.csv 为主），按 `.gitignore` 只留在
+  `results/experiments/job-000008-6baf748a/output/profile/`，不入库。
+
+### 3.5 memory（真实）
+
+```bash
+# job-000009-1083ebdd，commit 4891030；graph-512-1024 --steps 32
+.venv/bin/python scripts/experiment.py submit --request .tmp/experiments/memory-request.json
+.venv/bin/python scripts/experiment.py serve --drain
+.venv/bin/python scripts/experiment.py result job-000009-1083ebdd
+```
+
+- state=succeeded、correctness=not_checked、elapsed 112.9 s；10 个 stage。
+- load peak 14.458 GB，max allocated **14.879 GB** / reserved 15.005 GB，min free
+  **1.170 GB**；`allocated_delta` 与 `cycle2_*` 都是 0，KV data ptr 稳定，
+  reset 后 prefill / step logits 一致。
+- `check_results.py` 对 `output/memory` → `[OK]`；worktree 删除、GPU 回到 0 MiB。
+
 ## 4. 实现过程中踩到并修掉的问题
 
 1. **per-step pgid 不满足“每个 job 一个进程组”**。最初的实现给每一步
@@ -152,15 +191,15 @@
 - 工具在 CPU 上覆盖了 spec §7 的九类场景；在 5080 上完成了 check→bench 的真实
   小实验：correctness=passed、24/24 gate、bench 31.40 tok/s（与 M3 baseline
   31.41 一致），产物同时通过 `check_results.py` 契约。
-- 超时/取消能杀掉 job 进程组并让队列继续；执行器重启、halt、通知去重都有测试。
+- 四种 kind 都在 GPU 上实跑过：check/bench（`job-000001` / `job-000007`）、
+  profile（`job-000008`）、memory（`job-000009`）；超时/取消能杀掉 job 进程组并
+  让队列继续；执行器重启、halt、通知去重都有测试。
 - `succeeded` 只表示步骤跑完；性能比较仍由 Coordinator 按可比协议判断。
 
 ## 6. 已知限制
 
-- **profile kind 没有真实 GPU 采集**：验收时 `scripts/m3_profile.sh --out/--steps`
-  的改动还不在执行器读取的 HEAD 里，worktree 取到的是旧脚本；fake profile 的产物
-  校验和端到端已测。脚本改动已在 `cd16e2f` 入库，用一次真实 profile job 复核即可
-  （尚未跑）。
+- profile 产物约 295 MB（nsys trace 为主），只在 `results/experiments/` 保留、
+  不入库；复核时需要读本地路径。
 - 通知默认 `pending`，依赖 Coordinator 的 `wait`；自动投递只尝试一次，不重试。
 - GPU 守卫是轮询 + 10 s 宽限，不是内核级互斥；检查与步骤启动之间仍有极小窗口。
 - 所有 job 共用 `.tmp/flashinfer` JIT 缓存；首次运行被 kill 后下一次可能变慢
@@ -169,9 +208,10 @@
 
 ## 7. 下一步
 
-1. 本工具已提交并 push 为 `cd16e2f`；用 `submit` 跑一次真实 profile job 复核
-   `profile` 分支（这是最后一个未在 GPU 上实跑的 kind）。
-2. Coordinator 在 GPU 主机上常驻 `serve`（tmux/systemd），用后台 `wait` 收摘要；
+1. Coordinator 在 GPU 主机上常驻 `serve`（tmux/systemd），用后台 `wait` 收摘要；
    Explorer 沿用 `docs/optimization-workflow.md` 的流程。
-3. Phase 2 的第一个 NVFP4 GEMV 候选按“check（gate）→ bench（与 baseline 同协议）”
+2. Phase 2 的第一个 NVFP4 GEMV 候选按“check（gate）→ bench（与 baseline 同协议）”
    两步提交，用 job ID 在 journal 里引用结果。
+3. 需要解释 kernel 级收益时，用同一套 profile job 在改动前后各跑一次，按
+   `per_step_kernels / per_step_kernel_us / per_step_wall_us` 对比（注意 profile
+   产物不入库，路径写进 journal）。

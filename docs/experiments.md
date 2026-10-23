@@ -237,7 +237,7 @@ ps -o pid,pgid,cmd -p <record.pid>
 - CPU：`pytest tests/experiment -q` → **51 passed**，覆盖 spec §7 的九类场景
   （并发 FIFO/不重叠、改动 worktree、check 失败/缺产物、旧配置、超时/取消、
   重启、通知、重复查询、纯 bench/profile）。
-- GPU（commit `3430318`，checkpoint `5b7a687`）：
+- GPU（check/bench 在 commit `3430318`；profile/memory 在 `4891030`；checkpoint `5b7a687`）：
   - `job-000001-e6dcf12d`：`graph-1024 --steps 16` check + `graph-512-1024
     --steps 32 --repeats 1` bench；**24/24 gate 通过**，1 个 diagnostic 差异；
     bench **31.40 tok/s**（与 M3 baseline 31.41 一致）；correctness=passed；
@@ -247,14 +247,20 @@ ps -o pid,pgid,cmd -p <record.pid>
   - 队列在超时后继续执行下一 job（`job-000006` succeeded），无 halt；
   - 最终版本代码复跑 `job-000007`：同样 24/24 gate、31.404 tok/s，`--notify-cmd`
     投递成功（并把更早的 `pending` 通知各补投一次，按 job 去重）。
+  - `job-000008`（commit `4891030`）：`m3_profile.sh --out/--steps 8` 的 6 个 case
+    全部通过产物校验。每步 kernel 数 eager 7242 / graph 7290；graph-512 墙钟
+    **32.5 µs**、eager-512 112.6 µs，graph-7680 45.0 µs、eager-7680 111.3 µs，
+    <5 µs kernel 占 93.6%；correctness=not_checked（纯 profile）。
+  - `job-000009`（commit `4891030`）：`m3_memory.py --only graph-512-1024 --steps 32`
+    的 10 个 stage 通过校验；load peak 14.458 GB、max allocated **14.879 GB** /
+    reserved 15.005 GB、min free **1.170 GB**；allocated 与 cycle2 增长 0、KV ptr
+    稳定、reset 后 logits 一致；correctness=not_checked。
 - 复现命令与结果路径见 [journal](journal/2026-10-23-experiment-tools.md)。
 
 ## 11. 已知限制
 
-- `profile` kind 的产物校验和 fake 端到端已测；真实 GPU 的 nsys 采集尚未跑。
-  `scripts/m3_profile.sh --out/--steps` 已在 `cd16e2f` 入库（验收时还没提交，
-  所以当时的 worktree 只能取旧脚本）；现在可以直接用 `submit` 跑一次 profile job
-  复核，耗时约 10–12 分钟。
+- profile 产物约 295 MB（nsys trace 为主），只在 `results/experiments/` 下保留、
+  不入库；复核时需要读本地路径，或把关键 `timeline_summary` 数字抄进 journal。
 - 默认不主动向 session 投递通知（`pending`），需要 Coordinator 转发；配置
   `--notify-cmd` 后是“尽力投递一次”，不做重试。
 - GPU 守卫是“取 job 前检查 + 10 s 释放宽限”，检查与真正启动步骤之间仍有一个
