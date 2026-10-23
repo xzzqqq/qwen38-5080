@@ -1000,10 +1000,10 @@ def run_micro_case(report: OpReport, device: torch.device) -> None:
             outv = fp8_kv.dequant_scratch("bench-v", qv.shape, qv.device)
             fp8_kv.dequantize(qv, sv, out=outv)
 
-        cand, _ = fp8_call()
+        cand = fp8_call()
         ref = reference_fp64(q, k_bf, v_bf, None, SCALING)
         metrics = numeric_metrics(cand, ref)
-        again, _ = fp8_call()
+        again = fp8_call()
         determinism = bool(torch.equal(cand, again))
         fp8_time = time_per_call_ms(
             fp8_call, warmup=BENCH_WARMUP, iters=BENCH_ITERS[length]
