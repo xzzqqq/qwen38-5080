@@ -88,6 +88,9 @@ OP_SCRIPTS = (
     "bench/micro/stable_linear_decode.py",
     "scripts/phase2_normquant_check.py",
     "scripts/phase2_gdn_conv_check.py",
+    # 第 3 轮（FP8 KV、decoder-layer elementwise 融合）
+    "scripts/phase2_fp8kv_check.py",
+    "scripts/phase2_fuse_check.py",
 )
 for _op_path in OP_SCRIPTS:
     SCRIPTS[_op_path] = ScriptSpec(
