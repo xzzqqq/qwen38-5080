@@ -33,6 +33,10 @@ bitwise 契约（与模型实际执行的两步路径逐字节相同）
   ``x_acc / (1 + expf(-x_acc))``，opmath f32，结果 cast BF16；
 - ``sigmoid``（``aten::sigmoid``，CUDA ``sigmoid_kernel``）：
   ``1 / (1 + expf(-x_acc))``，同上；
+- **操作数约定**：``silu_mul`` 是 ``silu(a) * b``（a=gate_proj 输出、b=up_proj 输出），
+  ``sigmoid_mul`` 是 ``a * sigmoid(b)``（a=attn 输出、b=gate）。两个 kind 的激活
+  作用在**不同位置**，写反是结构性错误（任务 M 第一次提交就是这样挂的）；op case
+  的逐字节 gate 与 ``producer-wiring`` 都会抓住；
 - ``expf`` 是 libdevice 的 ``__nv_expf``（PyTorch 编译时没有 fast-math）；
   Triton 侧用 backend 的 ``triton.language.extra.cuda.libdevice.exp``（同一个 bitcode）；
 - 两个除法都必须显式 ``div.rn.f32``（``libdevice.div_rn``），不能用 fdiv 近似；
@@ -120,16 +124,27 @@ def _producer_quant_kernel(
     av = tl.load(a_ptr + offs).to(tl.float32)
     bv = tl.load(b_ptr + offs).to(tl.float32)
 
+    # 两个 kind 的**操作数约定**不同，别写反：
+    #   KIND_SILU_MUL    : silu(a) * b      （down_proj：a = gate_proj 输出, b = up_proj 输出）
+    #   KIND_SIGMOID_MUL : a * sigmoid(b)   （o_proj   ：a = attn 输出,      b = gate）
+    if KIND == 0:
+        src = av
+        other = bv
+    else:
+        src = bv
+        other = av
+
     # torch 的机器算术：opmath f32 上的 expf + div.rn，然后一次 BF16 cast。
-    denom = _exp(-av) + 1.0
-    if KIND == 0:  # KIND_SILU_MUL: x / (1 + exp(-x))
-        act = _div_rn(av, denom)
-    else:  # KIND_SIGMOID_MUL: 1 / (1 + exp(-x))
-        act = _div_rn(1.0, denom)
+    denom = _exp(-src) + 1.0
+    if KIND == 0:
+        act = _div_rn(src, denom)  # silu(x) = x / (1 + exp(-x))
+    else:
+        act = _div_rn(1.0, denom)  # sigmoid(x) = 1 / (1 + exp(-x))
     act_bf = act.to(tl.bfloat16)
 
-    # torch mul 是 opmath f32 乘再 round 到 BF16：先 cast 回来，乘完再 cast。
-    prod = (act_bf.to(tl.float32) * bv).to(tl.bfloat16)
+    # torch 的 sigmoid/silu 与 mul 是**两次独立 kernel、两次独立舍入**：
+    # activation 先 round 回 BF16，再在 opmath f32 里乘、再 round 回 BF16。
+    prod = (act_bf.to(tl.float32) * other).to(tl.bfloat16)
     tl.store(out_ptr + offs, prod)
 
     yqf = prod.to(tl.float32)
