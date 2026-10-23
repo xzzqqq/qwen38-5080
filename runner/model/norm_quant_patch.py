@@ -489,16 +489,29 @@ def info() -> dict[str, Any]:
 
 
 def install_from_env(model: torch.nn.Module) -> dict[str, Any]:
-    """loader 用：默认打开，``NORM_QUANT_FUSED=0`` 关闭；失败只记录不抛。"""
+    """loader 用：默认打开，``NORM_QUANT_FUSED=0`` 关闭；失败只记录不抛。
+
+    Phase 2 第 3 轮任务 L 的 gated RMSNorm 融合（``runner/model/gated_norm_patch.py``）
+    也从这里接：两者 patch 的是不同层次（本模块 patch ``Qwen3_5DecoderLayer.forward``，
+    gated norm patch ``Qwen3_5RMSNormGated.forward``），互不依赖，所以各自带自己的
+    env flag、各自失败只回退自己。loader 只认识本函数，新增信息挂在
+    ``info()["gated_norm"]`` 下，产物里就是 ``load.norm_quant.gated_norm``。
+    """
     flag = os.environ.get(ENV_FLAG, "1").strip().lower()
     if flag in _DISABLED:
-        return {"enabled": False, "reason": f"{ENV_FLAG}={flag}"}
-    try:
-        result = install(model)
-    except Exception as exc:  # noqa: BLE001 - 接入失败时回退原路径，不让非 decode 工具崩
-        LOGGER.error("norm+quant 融合接入失败（回退原路径）：%r", exc)
-        return {"enabled": False, "reason": f"{type(exc).__name__}: {exc}"}
-    LOGGER.warning("norm+quant 融合已接入: %s", json.dumps(result, ensure_ascii=False))
+        result: dict[str, Any] = {"enabled": False, "reason": f"{ENV_FLAG}={flag}"}
+    else:
+        try:
+            result = install(model)
+        except Exception as exc:  # noqa: BLE001 - 接入失败时回退原路径，不让非 decode 工具崩
+            LOGGER.error("norm+quant 融合接入失败（回退原路径）：%r", exc)
+            result = {"enabled": False, "reason": f"{type(exc).__name__}: {exc}"}
+        else:
+            LOGGER.warning("norm+quant 融合已接入: %s", json.dumps(result, ensure_ascii=False))
+
+    from runner.model.gated_norm_patch import install_from_env as install_gated_norm
+
+    result["gated_norm"] = install_gated_norm(model)
     return result
 
 
