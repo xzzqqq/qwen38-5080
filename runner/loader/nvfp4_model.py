@@ -30,6 +30,7 @@ configure_flashinfer_env()
 
 from runner.model.gdn_patch import install_from_env as install_gdn_decode  # noqa: E402
 from runner.model.host_embedding import HostEmbedding  # noqa: E402
+from runner.model.norm_quant_patch import install_from_env as install_norm_quant  # noqa: E402
 from runner.ops.attention import install as install_compact_attention  # noqa: E402
 from runner.ops.bf16.stable_linear import ShapeStableLinear  # noqa: E402
 from runner.ops.nvfp4.linear import NVFP4Linear  # noqa: E402
@@ -200,6 +201,10 @@ def load_nvfp4_text_model(
     # 必须在 graph capture 之前接入：每个 state buffer 的 bf16 out 槽在首个 decode
     # step（warmup）里分配，之后地址固定，replay 依赖这一点。
     gdn_decode_info = install_gdn_decode(model)
+    # Phase 2 任务 H：decoder layer 的 RMSNorm + activation quant 融合（只走单 token
+    # decode；prefill 由 patch 内部回退）。scratch 缓冲在这里一次性分配，地址固定，
+    # 之后的 graph capture/replay 依赖它（NORM_QUANT_FUSED=0 可关）。
+    norm_quant_info = install_norm_quant(model)
     torch.cuda.synchronize()
     free_b, total_b = torch.cuda.mem_get_info()
     info = {
@@ -215,5 +220,6 @@ def load_nvfp4_text_model(
         "gpu_total_gb": total_b / 1e9,
         "decode_attention": attention_info,
         "gdn_decode": gdn_decode_info,
+        "norm_quant": norm_quant_info,
     }
     return model, text_config, info
