@@ -24,9 +24,16 @@ microbench：同一计时边界（CUDA event 包住一次 48 层完整 step，wa
 中位数）比较原 PyTorch 路径与候选 kernel，报每层 µs 与整步 ms。生产路径是
 CUDA Graph，eager 数字含 Python/launch 开销，所以另外用 graph replay 计时。
 
+第三个 case 复刻**接入后的真实调用形态**：模型先 ``repeat_interleave(3, dim=2)``，
+再把 ``[:, :, ::3, :]`` 这个 strided view 交给 kernel（head 维按 stride 寻址）。
+它专门证明 head 映射没接反：同一 case 里跑一次「错误映射」（取重复后的前 16 个
+head）作为负对照，必须显著超出容差 —— 否则这个 case 证明不了任何东西。
+m3_check 的 bitwise gate 只比执行方式，抓不到「head 全读错但每次都错得一样」，
+所以这一项的独立 reference 必须在算子 gate 里。
+
 用法：
     .venv/bin/python scripts/phase2_gdn_check.py --out {output}/op
-    .venv/bin/python scripts/phase2_gdn_check.py --only microbench --out .tmp/op
+    .venv/bin/python scripts/phase2_gdn_check.py --only microbench-baseline-vs-candidate --out .tmp/op
 """
 
 from __future__ import annotations
@@ -54,8 +61,13 @@ from runner.ops.gdn import (  # noqa: E402
 )
 from runner.ops.nvfp4.reference import error_metrics  # noqa: E402
 
-SCENARIOS = ("decode-two-steps-48-layers", "microbench-baseline-vs-candidate")
-PERF_CASE = SCENARIOS[1]
+SCENARIOS = (
+    "decode-two-steps-48-layers",
+    "decode-strided-view-integration",
+    "microbench-baseline-vs-candidate",
+)
+VIEW_CASE = SCENARIOS[1]
+PERF_CASE = SCENARIOS[2]
 
 # 冻结的模型 shape（64 层里 48 层是 GDN；config: linear_num_value_heads=48,
 # linear_num_key_heads=16, linear_{key,value}_head_dim=128, conv_kernel_dim=4）。
@@ -136,10 +148,13 @@ def _conv_states(device: torch.device, gen: torch.Generator) -> list[torch.Tenso
     ]
 
 
-def _reference(problem: dict[str, torch.Tensor], initial_state: torch.Tensor):
-    """逐位对照对象：未修改的 torch_recurrent_gated_delta_rule（decode 分支）。"""
-    query = problem["q"].repeat_interleave(RATIO, dim=2)
-    key = problem["k"].repeat_interleave(RATIO, dim=2)
+def _reference_qk(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    problem: dict[str, torch.Tensor],
+    initial_state: torch.Tensor,
+):
+    """把「已经 repeat 好」的 query/key 直接喂给未修改的 reference。"""
     return torch_recurrent_gated_delta_rule(
         query,
         key,
@@ -149,6 +164,16 @@ def _reference(problem: dict[str, torch.Tensor], initial_state: torch.Tensor):
         initial_state=initial_state,
         output_final_state=True,
         use_qk_l2norm_in_kernel=True,
+    )
+
+
+def _reference(problem: dict[str, torch.Tensor], initial_state: torch.Tensor):
+    """逐位对照对象：未修改的 torch_recurrent_gated_delta_rule（decode 分支）。"""
+    return _reference_qk(
+        problem["q"].repeat_interleave(RATIO, dim=2),
+        problem["k"].repeat_interleave(RATIO, dim=2),
+        problem,
+        initial_state,
     )
 
 
@@ -352,6 +377,177 @@ def _run_correctness(report: OpReport, device: torch.device) -> None:
 
 
 # ------------------------------------------------------------------------- case 2
+
+
+def _run_strided_view(report: OpReport, device: torch.device) -> None:
+    """复刻接入后的真实调用形态：repeat_interleave 之后的 strided view + 负对照。
+
+    接入点（`runner/model/gdn_patch.py`）把模型已经 repeat 好的 q/k 用
+    ``[:, :, ::ratio, :]`` 的 view 传给 kernel，head 维靠 stride 寻址。m3_check
+    的 bitwise gate 只比较执行方式，抓不到「head 全读错但每次都错得一样」，所以
+    这里用未修改的 reference（吃重复后的完整 tensor）独立对拍，并跑一次错位映射
+    作为负对照，证明这个 case 对 head 映射是有分辨力的。
+    """
+    case = report.case(
+        VIEW_CASE,
+        layers=NUM_LAYERS,
+        num_v_heads=NUM_V_HEADS,
+        num_k_heads=NUM_K_HEADS,
+        head_k_dim=HEAD_K_DIM,
+        head_v_dim=HEAD_V_DIM,
+        io_dtype="bfloat16",
+        state_dtype="float32",
+        steps=STEPS,
+        qk_input="repeat_interleave(3, dim=2)[:, :, ::3, :]",
+        head_stride_elems=RATIO * HEAD_K_DIM,
+        kernel="gdn.ops.decode.gdn_decode_step",
+        block_v=DEFAULT_BLOCK_V,
+        num_warps=DEFAULT_NUM_WARPS,
+        negative_control="q_rep[:, :, :16, :]（head 映射错位，必须被抓住）",
+        reference="transformers.torch_recurrent_gated_delta_rule(use_qk_l2norm_in_kernel=True)",
+        tolerance=GDN_TOL,
+    )
+    gen = torch.Generator(device=device).manual_seed(SEED + 2)
+    layers = _layers(device, gen)
+    states = _states(device, gen)
+
+    history_absmax = [float(item.abs().max()) for item in states]
+    ptr_before = [item.data_ptr() for item in states]
+    bytes_before = [item.numel() * item.element_size() for item in states]
+    out = torch.empty(
+        (1, 1, NUM_V_HEADS, HEAD_V_DIM), dtype=torch.bfloat16, device=device
+    )
+    wrong_out = torch.empty_like(out)
+
+    geometry_ok = True
+    views_match_original = True
+    worst = {"nrmse": 0.0, "max_rel": 0.0, "cosine": 1.0, "finite": True}
+    negative_nrmse = 0.0
+    negative_cosine = 1.0
+    finite = True
+    steps_done = 0
+    layers_checked = 0
+
+    for step in range(1, STEPS + 1):
+        for idx, problem in enumerate(layers):
+            state = states[idx]
+            # 模型在 forward 里做的事：先 repeat，再交给 rule。
+            q_rep = problem["q"].repeat_interleave(RATIO, dim=2)
+            k_rep = problem["k"].repeat_interleave(RATIO, dim=2)
+            q_view = q_rep[:, :, ::RATIO, :]
+            k_view = k_rep[:, :, ::RATIO, :]
+            geometry_ok = geometry_ok and (
+                q_view.shape == problem["q"].shape
+                and q_view.stride(-2) == RATIO * HEAD_K_DIM
+                and q_view.storage_offset() == 0
+                and k_view.stride(-2) == RATIO * HEAD_K_DIM
+            )
+            views_match_original = views_match_original and torch.equal(
+                q_view, problem["q"]
+            ) and torch.equal(k_view, problem["k"])
+
+            init = state.clone()
+            ref_out, ref_state = _reference_qk(q_rep, k_rep, problem, init)
+            cand = gdn_decode_step(
+                q_view,
+                k_view,
+                problem["v"],
+                problem["g"],
+                problem["beta"],
+                state,
+                out=out,
+            )
+            if cand is not out:
+                raise RuntimeError("候选没有写进调用方给的 out 槽")
+            finite = finite and bool(torch.isfinite(out).all())
+            finite = finite and bool(torch.isfinite(state).all())
+            _track(
+                worst,
+                _numeric(case, f"numeric:step{step}:layer{idx:02d}:out", out, ref_out),
+            )
+            _track(
+                worst,
+                _numeric(
+                    case, f"numeric:step{step}:layer{idx:02d}:state", state, ref_state
+                ),
+            )
+            layers_checked += 1
+
+            if step == 1:
+                # 负对照：用错位的 head（重复后的前 16 个）跑同一个 kernel。
+                wrong = init.clone()
+                gdn_decode_step(
+                    q_rep[:, :, :NUM_K_HEADS, :],
+                    k_rep[:, :, :NUM_K_HEADS, :],
+                    problem["v"],
+                    problem["g"],
+                    problem["beta"],
+                    wrong,
+                    out=wrong_out,
+                )
+                metrics = error_metrics(wrong, ref_state)
+                negative_nrmse = max(negative_nrmse, metrics["nrmse"])
+                negative_cosine = min(negative_cosine, metrics["cosine"])
+        steps_done += 1
+
+    case.gate(
+        "coverage:strided-view-geometry",
+        geometry_ok and views_match_original,
+        {
+            "qk_input": "repeat_interleave(3, dim=2)[:, :, ::3, :]",
+            "head_stride_elems": RATIO * HEAD_K_DIM,
+            "shape_equals_pre_repeat": views_match_original,
+            "storage_offset": 0,
+            "note": "view 必须逐位等于 repeat 之前的 q/k，kernel 只靠 stride 寻址",
+        },
+    )
+    case.gate(
+        "coverage:nonzero-history-state",
+        min(history_absmax) > 1e-3,
+        {"min_absmax": min(history_absmax), "max_absmax": max(history_absmax)},
+    )
+    case.gate(
+        "coverage:two-consecutive-steps",
+        steps_done == STEPS == 2,
+        {"steps": steps_done, "recursion": "step2 从候选 step1 后的 state 出发"},
+    )
+    case.gate(
+        "coverage:layers-48",
+        len(layers) == NUM_LAYERS and layers_checked == NUM_LAYERS * STEPS,
+        {"layers": len(layers), "comparisons": layers_checked},
+    )
+    case.gate(
+        "coverage:state-pointer-and-bytes-stable",
+        [item.data_ptr() for item in states] == ptr_before
+        and [item.numel() * item.element_size() for item in states] == bytes_before
+        and all(item == STATE_BYTES for item in bytes_before),
+        {"bytes_per_layer": STATE_BYTES, "layers": NUM_LAYERS},
+    )
+    case.gate("coverage:finite", finite and worst["finite"], {"finite": finite})
+    # 负对照：错位映射必须显著超出容差，否则这个 case 没有分辨力。
+    case.gate(
+        "coverage:negative-control-detected",
+        negative_nrmse > 10.0 * GDN_TOL["nrmse"]
+        and negative_cosine < GDN_TOL["cosine"],
+        {
+            "negative_nrmse": negative_nrmse,
+            "negative_cosine": negative_cosine,
+            "threshold_nrmse": 10.0 * GDN_TOL["nrmse"],
+            "note": "错位 head 必须被容差挡住；挡住说明正确路径的通过不是巧合",
+        },
+    )
+
+    case.metric("worst_nrmse", worst["nrmse"])
+    case.metric("worst_max_rel", worst["max_rel"])
+    case.metric("worst_cosine", worst["cosine"])
+    case.metric("negative_control_nrmse", negative_nrmse)
+    case.metric("negative_control_cosine", negative_cosine)
+    case.metric("layers_checked", float(layers_checked))
+    case.metric("steps_checked", float(steps_done))
+    case.metric("head_stride_elems", float(RATIO * HEAD_K_DIM))
+
+
+# ------------------------------------------------------------------------- case 3
 
 
 def _time_loop(fn, reset, *, warmup: int, reps: int) -> float:
@@ -667,6 +863,8 @@ def main(argv: list[str] | None = None) -> int:
     with torch.no_grad():
         if SCENARIOS[0] in selected:
             _run_correctness(report, device)
+        if VIEW_CASE in selected:
+            _run_strided_view(report, device)
         if PERF_CASE in selected:
             _run_microbench(report, device)
     payload = report.finish()

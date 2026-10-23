@@ -24,8 +24,10 @@ rank-1 更新和输出投影，每一步都在 ``[48,128,128]`` 的 FP32 recurre
 
 布局约束（不可改）：recurrent state 是 static cache 里的
 ``[1, 48, 128, 128]`` contiguous FP32，必须原地更新、保持地址；conv state 是
-BF16，本算子不碰。q/k 传 **repeat_interleave 之前**的 ``[1, 1, 16, 128]``，
-head 映射在 kernel 里用 ``kh = h // 3`` 完成，省掉两次 repeat 拷贝。
+BF16，本算子不碰。q/k 的 head 维按 stride 寻址（``kh = h // 3`` 映射），所以
+既可以传 repeat_interleave 之前的 ``[1, 1, 16, 128]``，也可以传 repeat 之后的
+``[:, :, ::3, :]`` view，两种都不需要额外拷贝。``decay`` 用 ``libdevice.exp``
+（``__nv_expf``），与 ``torch.exp`` 在 FP32 上逐位一致。
 
 预期瓶颈：纯 state 带宽。每层 3.1 MB 读 + 3.1 MB 写，48 层约 0.30 GB/step；
 在 960 GB/s 上约 0.31 ms/step，实际受 48 个 program group 的 occupancy 和
@@ -37,6 +39,7 @@ from __future__ import annotations
 import torch
 import triton
 import triton.language as tl
+from triton.language.extra import libdevice
 
 # 粗粒度参数：v 维 block 与配套的 num_warps。三组都保持 state 元素只读写一次，
 # 差别只在 tile 行宽（BV*4 B）、每线程寄存器数（K*BV/线程数）和 block 数。
@@ -58,6 +61,8 @@ def _gdn_decode_kernel(
     K: tl.constexpr,
     V: tl.constexpr,
     BV: tl.constexpr,
+    q_stride: tl.constexpr,  # q 的 head 维步长（元素）：支持 repeat 之后的 strided view
+    k_stride: tl.constexpr,
     sqrt_k: tl.constexpr,
     eps: tl.constexpr,
 ):
@@ -71,12 +76,13 @@ def _gdn_decode_kernel(
     vx = blk * BV + tl.arange(0, BV)
 
     # l2norm 在 FP32 里做一次（与 reference 一致），再按 sqrt(head_dim) 缩放 q。
-    q = tl.load(q_ptr + kh * K + kx).to(tl.float32)
-    k = tl.load(k_ptr + kh * K + kx).to(tl.float32)
+    q = tl.load(q_ptr + kh * q_stride + kx).to(tl.float32)
+    k = tl.load(k_ptr + kh * k_stride + kx).to(tl.float32)
     q = q * tl.rsqrt(tl.sum(q * q) + eps) / sqrt_k
     k = k * tl.rsqrt(tl.sum(k * k) + eps)
 
-    decay = tl.exp(tl.load(g_ptr + head))
+    # libdevice.exp = __nv_expf，与 torch.exp 在 fp32 上逐位一致（tl.exp 走 ex2.approx）。
+    decay = libdevice.exp(tl.load(g_ptr + head))
     beta = tl.load(b_ptr + head).to(tl.float32)
     val = tl.load(v_ptr + head * V + vx).to(tl.float32)
 
@@ -107,7 +113,9 @@ def gdn_decode_step(
     """单层、单 token 的 GDN recurrent step（原地更新 ``state``）。
 
     Args:
-        q, k: BF16 ``[1, 1, num_k_heads, head_k_dim]``，repeat_interleave 之前。
+        q, k: BF16 ``[1, 1, num_k_heads, head_k_dim]``，最后一维 contiguous；
+            允许 strided 的 head 维（接入时传 ``repeat_interleave`` 之后的
+            ``[:, :, ::ratio, :]`` view，避免再拷一次）。base 必须是 storage 起点。
         v: BF16 ``[1, 1, num_v_heads, head_v_dim]``。
         g: FP32 ``[1, 1, num_v_heads]``，log decay（``decay = exp(g)``）。
         beta: BF16/FP32 ``[1, 1, num_v_heads]``。
@@ -144,8 +152,8 @@ def gdn_decode_step(
     if g.numel() != num_v_heads or beta.numel() != num_v_heads:
         raise ValueError("g/beta 必须是 [1, 1, num_v_heads]")
 
-    q = q.contiguous()
-    k = k.contiguous()
+    q = _flat(q, "q")
+    k = _flat(k, "k")
     v = v.contiguous()
     g = g.contiguous()
     beta = beta.contiguous()
@@ -169,11 +177,22 @@ def gdn_decode_step(
         K=k_dim,
         V=v_dim,
         BV=block_v,
+        q_stride=q.stride(-2),
+        k_stride=k.stride(-2),
         sqrt_k=float(k_dim) ** 0.5,
         eps=1e-6,
         num_warps=num_warps,
     )
     return out
+
+
+def _flat(tensor: torch.Tensor, name: str) -> torch.Tensor:
+    """校验 head 维可以只靠 stride 寻址，且 base 指向 storage 起点。"""
+    if tensor.stride(-1) != 1:
+        raise ValueError(f"{name} 的最后一维必须 stride=1")
+    if tensor.storage_offset() != 0:
+        raise ValueError(f"{name} 的 storage_offset 必须是 0，得到 {tensor.storage_offset()}")
+    return tensor
 
 
 __all__ = [
