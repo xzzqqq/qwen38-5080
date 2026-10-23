@@ -32,3 +32,7 @@ build/
 .vscode/
 .idea/
 .cache/
+
+# Queue 的 job worktree 把 .venv / models 建成符号链接；带斜杠的目录规则匹配不到 symlink。
+/.venv
+/models
