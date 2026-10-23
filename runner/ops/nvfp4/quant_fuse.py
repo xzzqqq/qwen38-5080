@@ -44,26 +44,29 @@ bitwise 契约（与模型实际执行的两步路径逐字节相同）
   BF16，再按 R2 算 ``sf -> e4m3 -> out_scale -> e2m1``，两个倒数都用
   ``rcp.approx.ftz``。
 
-amax / sf / code 的生成直接复用 ``norm_quant._emit_consumer``，保证与 H 的 272 个
-消费者**同一条代码路径**，不出现两套量化实现。
+amax / sf / code 的生成与 ``norm_quant._emit_consumer`` 是同一段算术（本地按
+``NBLK`` 参数化，方便按 CTA 大小调参），保证与 H 的 272 个消费者**同一条语义**，
+不出现两套量化实现。
 
-数据流（一个 program 处理 64 个 16-element block = 1024 个元素）
-==============================================================
-    a[1024] BF16 (attn_output / gate_proj_out)
-    b[1024] BF16 (gate / up_proj_out)
-      -> f32 -> exp(-a) -> div.rn -> act f32 -> act BF16（与 torch 一致）
-      -> * b（f32）-> prod BF16（写 out_bf16，供 fallback / 语义完整）
+数据流（一个 program 处理 ``TILE_BLOCKS`` 个 16-element block）
+=============================================================
+    a[TILE*16] BF16 (attn_output / gate_proj_out)
+    b[TILE*16] BF16 (gate / up_proj_out)
+      -> f32 -> exp(-src) -> div.rn -> act f32 -> act BF16（与 torch 一致）
+      -> * other（f32）-> prod BF16（写 out_bf16，供 fallback / 语义完整）
       -> amax（每 16 个）-> 每消费者 sf/e4m3/out_scale/codes -> a_fp4/a_sf
-    grid = K / 1024：down_proj 17、o_proj 6（K=6144）、lm_head 5（K=5120，走 norm 路径）。
+    grid = K / (TILE*16)：K=17408 时 tile=64 -> 17 / tile=32 -> 34 / tile=16 -> 68 CTA。
 
-K 必须是 1024 的倍数（checkpoint 的 17408 / 6144 / 5120 都满足）；不满足时调用方回退。
+K 必须是 ``TILE_BLOCKS * 16`` 的倍数（checkpoint 的 17408 / 6144 / 5120 在 16/32/64
+三档都满足）；不满足时调用方回退。
 
 预期瓶颈
 ========
 单次调用只读写 4–12 KB，算力/带宽都不是瓶颈；收益来自 kernel 数量：现有路径每个
 消费者是「silu/sigmoid + mul + quantize + reciprocal」4 个 kernel，融合后 1 个。
-所以真正要压的是单 kernel 固定开销；``num_warps`` 由 ``DEFAULT_NUM_WARPS`` 控制，
-op 脚本扫 2/4/8 三档（诊断用，接入固定 4）。
+所以真正要压的是单 kernel 固定开销。任务 M 第 4 轮在 graph 口径下扫
+``TILE_BLOCKS ∈ (16, 32, 64)``：CTA 越多越能摊平小 kernel 的延迟（down_proj 从
+17 CTA 提到 68 CTA），接入默认取扫描里最优的一档（``TILE_BLOCKS_DEFAULT``）。
 """
 
 from __future__ import annotations
@@ -78,21 +81,23 @@ from .norm_quant import (
     C6,
     C_GROUP_STRIDE,
     C_PAIR,
-    CHUNK_BLOCKS,
     DEFAULT_NUM_WARPS,
     SF_ROWS,
-    _emit_consumer,
+    _e2m1_from_f32,
+    _e4m3_from_f32,
+    _e4m3_to_f32,
+    _rcp_approx_ftz,
 )
 
-#: producer 的种类：silu(g)*u 与 attn*sigmoid(gate)。
+#: producer 的种类：silu(a)*b 与 a*sigmoid(b)。
 KIND_SILU_MUL = 0
 KIND_SIGMOID_MUL = 1
 KINDS = {"silu_mul": KIND_SILU_MUL, "sigmoid_mul": KIND_SIGMOID_MUL}
 
-#: 一个 program 处理的元素数 = CHUNK_BLOCKS(64) * BLOCK(16)；必须与 ``_emit_consumer``
-#: 里的 reshape 形状一致，所以固定等于 ``CHUNK_BLOCKS``。
-TILE_BLOCKS = CHUNK_BLOCKS
-TILE_ELEMS = TILE_BLOCKS * BLOCK
+#: 一个 CTA 处理的 16-element block 数（可调参数）。三档在 op 的 graph 口径里扫过：
+#: 这些 kernel 是延迟受限的小 kernel，CTA 太少（17 个）铺不满 84 个 SM。
+TILE_BLOCKS_CHOICES = (16, 32, 64)
+TILE_BLOCKS_DEFAULT = 16
 
 #: ``exp`` 的 Triton 绑定：**backend 的** libdevice 才是真实现
 #: （``triton.language.extra.libdevice`` 只是 stub），fp32 映射到 ``__nv_expf``，
@@ -101,7 +106,27 @@ _exp = libdevice.exp
 _div_rn = libdevice.div_rn
 
 C_BLOCK = tl.constexpr(BLOCK)
-C_CHUNK_BLOCKS = tl.constexpr(TILE_BLOCKS)
+
+
+@triton.jit
+def _emit_consumer_n(yf, amax, gs, c6, a_ptr, sf_ptr, a_off, sf_off, NBLK: tl.constexpr):
+    """规则 R2：一个消费者的 sf / out scale / code，并写 a_fp4 + a_sf。
+
+    与 ``norm_quant._emit_consumer`` 逐条相同，只把 reshape 的 block 数参数化。
+    """
+    sf_pre = gs * (amax * c6)
+    sf_code = _e4m3_from_f32(sf_pre) & 0xFF
+    sff = _e4m3_to_f32(sf_code)
+    gs_vec = tl.where(amax >= 0.0, gs, gs)
+    gs_rcp = _rcp_approx_ftz(gs_vec)
+    out_scale = _rcp_approx_ftz(sff * gs_rcp)
+    out_scale = tl.where(amax == 0.0, 0.0, out_scale)
+
+    codes = _e2m1_from_f32(yf * out_scale[:, None])
+    lo, hi = tl.split(tl.reshape(codes, (NBLK, C_PAIR, 2)))
+    packed = (lo & 0xF) | ((hi & 0xF) << 4)
+    tl.store(a_ptr + a_off, packed.to(tl.uint8))
+    tl.store(sf_ptr + sf_off, sf_code.to(tl.uint8))
 
 
 @triton.jit
@@ -114,10 +139,11 @@ def _producer_quant_kernel(
     a_fp4_ptr,
     sf_ptr,
     KIND: tl.constexpr,
+    NBLK: tl.constexpr,
 ):
-    """一个 program：1024 个元素的 producer elementwise + 单消费者 NVFP4 quant。"""
+    """一个 program：``NBLK*16`` 个元素的 producer elementwise + 单消费者 quant。"""
     pid = tl.program_id(0)
-    blocks = pid * C_CHUNK_BLOCKS + tl.arange(0, C_CHUNK_BLOCKS)
+    blocks = pid * NBLK + tl.arange(0, NBLK)
     elems = tl.arange(0, C_BLOCK)
     offs = blocks[:, None] * C_BLOCK + elems[None, :]
 
@@ -153,8 +179,7 @@ def _producer_quant_kernel(
     pair = tl.arange(0, C_PAIR)
     a_off = blocks[:, None] * C_PAIR + pair[None, :]
     sf_off = (blocks // 4) * C_GROUP_STRIDE + (blocks % 4)
-    # 复用 H 的 R2 实现：两套量化语义必须完全一致。
-    _emit_consumer(yqf, amax, gs, c6, a_fp4_ptr, sf_ptr, a_off, sf_off)
+    _emit_consumer_n(yqf, amax, gs, c6, a_fp4_ptr, sf_ptr, a_off, sf_off, NBLK)
 
 
 # ------------------------------------------------------------------ 宿主入口
@@ -168,9 +193,13 @@ def _as_u8(tensor: torch.Tensor) -> torch.Tensor:
     return tensor.view(torch.uint8)
 
 
-def supports_k(k: int) -> bool:
-    """K 必须是 1024 的倍数（checkpoint 的 5120/6144/17408 都满足）。"""
-    return int(k) % TILE_ELEMS == 0
+def tile_elems(tile_blocks: int) -> int:
+    return int(tile_blocks) * BLOCK
+
+
+def supports_k(k: int, tile_blocks: int = TILE_BLOCKS_DEFAULT) -> bool:
+    """K 必须是 ``tile_blocks * 16`` 的倍数（真实 K 在 16/32/64 三档都满足）。"""
+    return int(k) % tile_elems(tile_blocks) == 0
 
 
 def producer_quant_fused(
@@ -182,6 +211,7 @@ def producer_quant_fused(
     a_fp4: torch.Tensor,
     a_sf: torch.Tensor,
     *,
+    tile_blocks: int = TILE_BLOCKS_DEFAULT,
     num_warps: int = DEFAULT_NUM_WARPS,
 ) -> None:
     """一次融合 launch：producer elementwise（BF16 输出）+ 单消费者 NVFP4 A。
@@ -195,17 +225,24 @@ def producer_quant_fused(
         out_bf16: BF16 ``[1, 1, K]`` 输出缓冲（elementwise 结果，已 round 到 BF16）。
         a_fp4: U8 ``[1, K/2]``（或 ``[K/2]``）。
         a_sf: U8 ``[128, K/16]`` swizzled；padding 必须已清零。
+        tile_blocks: 每个 CTA 处理的 16-element block 数（16/32/64；只影响性能）。
         num_warps: program 的 warp 数（只影响性能）。
     """
     if kind not in KINDS:
         raise ValueError(f"unknown producer kind {kind!r}; expected {sorted(KINDS)}")
+    if int(tile_blocks) not in TILE_BLOCKS_CHOICES:
+        raise ValueError(
+            f"tile_blocks must be one of {TILE_BLOCKS_CHOICES}, got {tile_blocks}"
+        )
     if a.dtype != torch.bfloat16 or b.dtype != torch.bfloat16:
         raise TypeError(f"a/b must be bf16, got {a.dtype} / {b.dtype}")
     k = a.numel()
     if b.numel() != k:
         raise ValueError(f"a/b element count mismatch: {k} vs {b.numel()}")
-    if not supports_k(k):
-        raise ValueError(f"kernel requires K % {TILE_ELEMS} == 0, got K={k}")
+    if not supports_k(k, tile_blocks):
+        raise ValueError(
+            f"kernel requires K % {tile_elems(tile_blocks)} == 0, got K={k}"
+        )
     if out_bf16.numel() != k:
         raise ValueError(f"out_bf16 has {out_bf16.numel()} elements, expected {k}")
     if not a.is_contiguous():
@@ -225,7 +262,7 @@ def producer_quant_fused(
             f"a_sf has {sf_u8.numel()} bytes, expected {SF_ROWS * (k // BLOCK)}"
         )
 
-    _producer_quant_kernel[(k // TILE_ELEMS,)](
+    _producer_quant_kernel[(k // tile_elems(tile_blocks),)](
         a,
         b,
         out_bf16,
@@ -234,6 +271,7 @@ def producer_quant_fused(
         a_u8,
         sf_u8,
         KIND=KINDS[kind],
+        NBLK=int(tile_blocks),
         num_warps=int(num_warps),
     )
 
@@ -266,8 +304,10 @@ __all__ = [
     "KINDS",
     "KIND_SIGMOID_MUL",
     "KIND_SILU_MUL",
-    "TILE_ELEMS",
+    "TILE_BLOCKS_CHOICES",
+    "TILE_BLOCKS_DEFAULT",
     "allocate_scratch",
     "producer_quant_fused",
     "supports_k",
+    "tile_elems",
 ]

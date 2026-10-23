@@ -109,6 +109,8 @@ from runner.ops.nvfp4.norm_quant import (  # noqa: E402
 )
 from runner.ops.nvfp4.quant_fuse import (  # noqa: E402
     KINDS,
+    TILE_BLOCKS_CHOICES,
+    TILE_BLOCKS_DEFAULT,
     allocate_scratch as allocate_producer_scratch,
     producer_quant_fused,
 )
@@ -1901,7 +1903,12 @@ def run_fuse_micro(
     norm_refs: NormReferences,
     device: torch.device,
 ) -> None:
-    """生产者侧融合的 per-call 计时 + 按真实 64/16/1 分布折算整步。"""
+    """生产者侧融合的 graph/eager per-call 计时 + 三档 tile 扫描 + 整步估计。
+
+    任务 M 第 4 轮的要求：模型跑在 CUDA graph 里，**graph 口径才是判定口径**。这里
+    除逐点 per-call 外，还把「64 down + 16 o + 1 lm」的整条 producer 链各录进一张
+    graph，直接比较融合前后的 graph replay 时间，排除 eager 的 CPU 提交开销。
+    """
     SfLayout, nvfp4_quantize = _flashinfer()
     act = _silu()
     config = checkpoint.text_config or {}
@@ -1936,11 +1943,6 @@ def run_fuse_micro(
             backend="cuda",
         )
 
-    def fused_down():
-        producer_quant_fused(
-            gate, up, "silu_mul", gs_down, down_out, down_a, down_sf
-        )
-
     def two_o():
         product = attn * torch.sigmoid(attn_gate)
         nvfp4_quantize(
@@ -1949,11 +1951,6 @@ def run_fuse_micro(
             sfLayout=SfLayout.layout_128x4,
             do_shuffle=False,
             backend="cuda",
-        )
-
-    def fused_o():
-        producer_quant_fused(
-            attn, attn_gate, "sigmoid_mul", gs_o, o_out, o_a, o_sf
         )
 
     def two_lm():
@@ -1966,7 +1963,75 @@ def run_fuse_micro(
             backend="cuda",
         )
 
+    def fused_down(tile: int = TILE_BLOCKS_DEFAULT):
+        producer_quant_fused(
+            gate,
+            up,
+            "silu_mul",
+            gs_down,
+            down_out,
+            down_a,
+            down_sf,
+            tile_blocks=tile,
+        )
+
+    def fused_o(tile: int = TILE_BLOCKS_DEFAULT):
+        producer_quant_fused(
+            attn,
+            attn_gate,
+            "sigmoid_mul",
+            gs_o,
+            o_out,
+            o_a,
+            o_sf,
+            tile_blocks=tile,
+        )
+
     def fused_lm():
+        norm_quant_fused(
+            x, final_norm.w1, final_norm.eps, [gs_lm], lm_out, [lm_a], [lm_sf]
+        )
+
+    # ---- 整条 producer 链（64 down + 16 o + 1 lm）一起录进 graph
+    def agg_two():
+        for _ in range(64):
+            product = act(gate) * up
+            nvfp4_quantize(
+                product.reshape(1, down_k),
+                gs_down_t,
+                sfLayout=SfLayout.layout_128x4,
+                do_shuffle=False,
+                backend="cuda",
+            )
+        for _ in range(16):
+            product = attn * torch.sigmoid(attn_gate)
+            nvfp4_quantize(
+                product.reshape(1, o_k),
+                gs_o_t,
+                sfLayout=SfLayout.layout_128x4,
+                do_shuffle=False,
+                backend="cuda",
+            )
+        y = final_norm.bf16(x)
+        nvfp4_quantize(
+            y.reshape(1, HIDDEN),
+            gs_lm_t,
+            sfLayout=SfLayout.layout_128x4,
+            do_shuffle=False,
+            backend="cuda",
+        )
+
+    def agg_fused():
+        for _ in range(64):
+            producer_quant_fused(
+                gate, up, "silu_mul", gs_down, down_out, down_a, down_sf,
+                tile_blocks=TILE_BLOCKS_DEFAULT,
+            )
+        for _ in range(16):
+            producer_quant_fused(
+                attn, attn_gate, "sigmoid_mul", gs_o, o_out, o_a, o_sf,
+                tile_blocks=TILE_BLOCKS_DEFAULT,
+            )
         norm_quant_fused(
             x, final_norm.w1, final_norm.eps, [gs_lm], lm_out, [lm_a], [lm_sf]
         )
@@ -1997,6 +2062,41 @@ def run_fuse_micro(
                 "fused_ms": g_fused["median_ms"],
             }
 
+    # ---- tile 扫描（graph 口径）：CTA 数 = K / (tile*16)
+    tile_graph: dict[int, dict[str, float]] = {}
+    for tile in TILE_BLOCKS_CHOICES:
+        g_down = graph_per_call(
+            lambda tile=tile: fused_down(tile),
+            warmup=GRAPH_WARMUP,
+            iters=GRAPH_ITERS,
+            repeats=GRAPH_REPEATS,
+        )
+        g_o = graph_per_call(
+            lambda tile=tile: fused_o(tile),
+            warmup=GRAPH_WARMUP,
+            iters=GRAPH_ITERS,
+            repeats=GRAPH_REPEATS,
+        )
+        tile_graph[tile] = {
+            "down_proj_ms": g_down["median_ms"] if g_down else None,
+            "o_proj_ms": g_o["median_ms"] if g_o else None,
+            "down_proj_ctas": down_k // (tile * 16),
+            "o_proj_ctas": o_k // (tile * 16),
+        }
+    # 逐步估计用的默认 tile 融合时间（模型实际接入的就是这一档）
+    default_tile_graph = tile_graph.get(TILE_BLOCKS_DEFAULT, {})
+    if graph.get("down_proj") and default_tile_graph.get("down_proj_ms"):
+        graph["down_proj"]["fused_ms"] = float(default_tile_graph["down_proj_ms"])
+    if graph.get("o_proj") and default_tile_graph.get("o_proj_ms"):
+        graph["o_proj"]["fused_ms"] = float(default_tile_graph["o_proj_ms"])
+
+    g_agg_two = graph_per_call(
+        agg_two, warmup=GRAPH_WARMUP, iters=2, repeats=GRAPH_REPEATS
+    )
+    g_agg_fused = graph_per_call(
+        agg_fused, warmup=GRAPH_WARMUP, iters=2, repeats=GRAPH_REPEATS
+    )
+
     def estimate(timings: dict) -> dict:
         down_saved = timings["down_proj"]["two_step_ms"] - timings["down_proj"]["fused_ms"]
         o_saved = timings["o_proj"]["two_step_ms"] - timings["o_proj"]["fused_ms"]
@@ -2019,6 +2119,9 @@ def run_fuse_micro(
         "fuse-micro",
         note="任务 M 的 micro tier；脚本里既有的 ``micro`` case 是任务 H 的 norm 口径，保持不变",
         timing="per-call CUDA events median（eager）；graph = 8 次调用录一张图后 replay / 8",
+        aggregate="64 down + 16 o + 1 lm 录进同一张 graph，replay / 2",
+        tile_choices=list(TILE_BLOCKS_CHOICES),
+        model_tile=TILE_BLOCKS_DEFAULT,
         step_model="64 down_proj + 16 o_proj + 1 lm_head；129 = 再加 48 个 out_proj（不是本任务）",
         reference="silu/sigmoid->mul + nvfp4_quantize（torch + FlashInfer）",
         warmup=BENCH_WARMUP,
@@ -2046,12 +2149,74 @@ def run_fuse_micro(
             "step_model": {"down_proj": 64, "o_proj": 16, "lm_head": 1, "out_proj": 48},
         },
     )
+    fused_le_two = (
+        len(graph) == len(pairs)
+        and graph["down_proj"]["fused_ms"] <= graph["down_proj"]["two_step_ms"]
+        and graph["o_proj"]["fused_ms"] <= graph["o_proj"]["two_step_ms"]
+        and graph["lm_head"]["fused_ms"] <= graph["lm_head"]["two_step_ms"]
+    )
+    case.gate(
+        "graph: 三个调用点的融合 per-call 都 ≤ 未融合的两步路径（graph replay 口径）",
+        fused_le_two,
+        {"graph": graph},
+    )
+    tiles_ok = all(
+        item["down_proj_ms"] is not None and item["o_proj_ms"] is not None
+        for item in tile_graph.values()
+    ) and len(tile_graph) == len(TILE_BLOCKS_CHOICES)
+    tile_best = None
+    if tiles_ok:
+        tile_best = min(
+            TILE_BLOCKS_CHOICES,
+            key=lambda t: tile_graph[t]["down_proj_ms"] * 64
+            + tile_graph[t]["o_proj_ms"] * 16,
+        )
+    case.gate(
+        "coverage: tile ∈ (16,32,64) 三档都做 graph per-call 扫描（down/o 的 CTA 数随 tile 变化）",
+        tiles_ok,
+        {
+            "tiles": {
+                str(tile): item for tile, item in tile_graph.items()
+            },
+            "model_tile": TILE_BLOCKS_DEFAULT,
+            "best_tile": tile_best,
+        },
+    )
+    case.diag(
+        "aggregate graph（64 down + 16 o + 1 lm 同一张图）",
+        g_agg_two is not None and g_agg_fused is not None,
+        {
+            "two_step_ms": g_agg_two["median_ms"] if g_agg_two else None,
+            "fused_ms": g_agg_fused["median_ms"] if g_agg_fused else None,
+            "saved_ms": (
+                g_agg_two["median_ms"] - g_agg_fused["median_ms"]
+                if (g_agg_two and g_agg_fused)
+                else None
+            ),
+            "note": "这是整条 producer 链的 graph replay 时间，不含 GEMV",
+        },
+    )
     for name, item in eager.items():
         case.metric(f"eager_{name}_two_step_ms", item["two_step_ms"])
         case.metric(f"eager_{name}_fused_ms", item["fused_ms"])
     for name, item in graph.items():
         case.metric(f"graph_{name}_two_step_ms", item["two_step_ms"])
         case.metric(f"graph_{name}_fused_ms", item["fused_ms"])
+    for tile, item in tile_graph.items():
+        if item["down_proj_ms"] is not None:
+            case.metric(f"graph_tile{tile}_down_ms", item["down_proj_ms"])
+        if item["o_proj_ms"] is not None:
+            case.metric(f"graph_tile{tile}_o_ms", item["o_proj_ms"])
+    if g_agg_two is not None:
+        case.metric("graph_agg_two_step_ms", g_agg_two["median_ms"])
+    if g_agg_fused is not None:
+        case.metric("graph_agg_fused_ms", g_agg_fused["median_ms"])
+    if g_agg_two is not None and g_agg_fused is not None:
+        case.metric(
+            "graph_agg_saved_ms", g_agg_two["median_ms"] - g_agg_fused["median_ms"]
+        )
+    if tile_best is not None:
+        case.metric("graph_best_tile", float(tile_best))
     for key, value in eager_est.items():
         case.metric(f"eager_{key}", value)
     if graph_est is not None:
@@ -2368,6 +2533,8 @@ def main(argv: list[str] | None = None) -> int:
             "producer_callsites": "down_proj x64, o_proj x16, lm_head x1（out_proj 不在本任务）",
             "producer_elementwise": "silu: x/(1+__nv_expf(-x)); sigmoid: 1/(1+__nv_expf(-x)); "
             "两者 div.rn.f32 -> BF16，再 mul（opmath f32）-> BF16",
+            "producer_tiles": "graph 口径扫 CTA tile 16/32/64（接入默认 16）；per-call graph "
+            "与整条 producer 链的 aggregate graph 见 fuse-micro",
         },
     )
     producer = ProducerWeights(device)

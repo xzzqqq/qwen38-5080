@@ -72,6 +72,7 @@ from runner.ops.nvfp4.norm_quant import (
     norm_quant_fused,
 )
 from runner.ops.nvfp4.quant_fuse import (
+    TILE_BLOCKS_DEFAULT,
     allocate_scratch as allocate_producer_scratch,
     producer_quant_fused,
     supports_k,
@@ -104,6 +105,7 @@ _STATE: dict[str, Any] = {
     "scratch": {},
     "hooks": [],
     "num_warps": DEFAULT_NUM_WARPS,
+    "tile_blocks": TILE_BLOCKS_DEFAULT,
     "probe": {},
     "counters": {
         "fused_mlp": 0,
@@ -243,6 +245,7 @@ def _finish_mlp(plan: _Plan, gate: torch.Tensor, up: torch.Tensor):
             scratch["out"],
             scratch["a_fp4"],
             scratch["a_sf"],
+            tile_blocks=_STATE["tile_blocks"],
             num_warps=_STATE["num_warps"],
         )
     except Exception as exc:  # noqa: BLE001 - 融合失败回退，不让 decode 崩
@@ -284,6 +287,7 @@ def _finish_attention(self, attn_output: torch.Tensor, gate: torch.Tensor):
             scratch["out"],
             scratch["a_fp4"],
             scratch["a_sf"],
+            tile_blocks=_STATE["tile_blocks"],
             num_warps=_STATE["num_warps"],
         )
     except Exception as exc:  # noqa: BLE001
@@ -508,7 +512,7 @@ def install(model: torch.nn.Module, *, num_warps: int = DEFAULT_NUM_WARPS) -> di
     if len(mlp_ks) != 1:
         raise RuntimeError(f"MLP 的 down_proj 输入维度不唯一：{sorted(mlp_ks)}")
     mlp_k = mlp_ks.pop()
-    if not supports_k(mlp_k):
+    if not supports_k(mlp_k, TILE_BLOCKS_DEFAULT):
         raise RuntimeError(f"down_proj K={mlp_k} 不被 producer kernel 支持")
 
     # ---- 2) attention：o_proj 的输入 = attn_output * sigmoid(gate)
@@ -522,7 +526,7 @@ def install(model: torch.nn.Module, *, num_warps: int = DEFAULT_NUM_WARPS) -> di
     if attns and len(attn_ks) != 1:
         raise RuntimeError(f"attention 的 o_proj 输入维度不唯一：{sorted(attn_ks)}")
     attn_k = attn_ks.pop() if attn_ks else None
-    if attn_k is not None and not supports_k(attn_k):
+    if attn_k is not None and not supports_k(attn_k, TILE_BLOCKS_DEFAULT):
         raise RuntimeError(f"o_proj K={attn_k} 不被 producer kernel 支持")
 
     # ---- 3) final norm -> lm_head
@@ -642,6 +646,7 @@ def info() -> dict[str, Any]:
             else None,
         },
         "num_warps": _STATE["num_warps"],
+        "tile_blocks": _STATE["tile_blocks"],
         "probe": _STATE["probe"],
         "scratch_bytes": scratch_bytes,
         # info() 返回的是同一个 dict，产物在末尾序列化时能看到最终计数。
