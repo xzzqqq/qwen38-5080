@@ -124,6 +124,16 @@ kind 与脚本不匹配、缺 `--out`、result 不在 output 内、`--only` 场�
 | `bench/e2e/decode.py` | bench | `bench.json` + `provenance.json`：`complete=true`、样本数=repeats、逐步数据长度=steps、配置/环境指纹一致 |
 | `scripts/m3_memory.py` | memory | `memory.json` + `provenance.json`：必需 stage、reset 确定性、无跨生命周期增长 |
 | `scripts/m3_profile.sh` | profile | `timeline_summary.json` + `summary.md` + 每 case 的 nsys trace / gpu_trace.csv / meta.json |
+| `scripts/phase2_attn_check.py` | op | `op.json`：每 case 有 `coverage:` gate + 数值 metric、gate 全通过、candidate name/format 非空、commit 一致且 dirty=false |
+| `scripts/phase2_gdn_check.py` | op | 同上 |
+| `scripts/phase2_quant_attrib.py` | op | 同上 |
+| `bench/micro/nvfp4_gemv.py` | op | 同上 |
+
+`op` 是 Phase 2 新增算子入口（op gate + 局部 microbench），契约见
+`runner/experiment/op_artifact.py` 的模块 docstring，写入用 `OpReport`，判定用
+`artifacts.validate_op`。它不加载整份模型，也不复用 m3 的 fixtures/report 结构，
+所以单独成一种 kind；每个 case 必须同时有 gate 和数值 metric，diagnostic-only
+的产物不算通过。脚本名已在 `schema.OP_SCRIPTS` 里固定，Explorer 只改自己的文件。
 
 提交后另有（错误码 3）：同一 session 已有未完成 job，返回 `existing_job_id`。
 

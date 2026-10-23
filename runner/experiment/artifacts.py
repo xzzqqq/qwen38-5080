@@ -871,11 +871,172 @@ def validate_profile(expect: Expectation) -> dict:
     }
 
 
+# --------------------------------------------------------------------- op
+OP_SCHEMA = "phase2-op/1"
+
+
+def validate_op(expect: Expectation) -> dict:
+    """Phase 2 新增算子入口（op gate + 局部 microbench）的产物校验。
+
+    契约见 ``runner/experiment/op_artifact.py``。判定规则：
+    - provenance 的 commit 必须是请求的 commit，且 dirty=false；
+    - 每个 case 至少一个 gate，且必须有 ``coverage:`` gate（必测项齐全）；
+    - 任何 gate 失败 → ``gate_failed``；diagnostic 只记录，不参与判定；
+    - 每个 case 必须有有限数值 metric（否则候选没有可比较的证据）；
+    - 候选 name/format 必须非空，format 决定 SOL 与可比性。
+    """
+    result_path = expect.result_path
+    data = _load_obj(result_path, "op.json")
+    _require(
+        data.get("schema") == OP_SCHEMA,
+        "op.json schema 不匹配",
+        {"expected": OP_SCHEMA, "got": data.get("schema")},
+    )
+    _git_commit(data.get("provenance"), expect.commit, "op provenance")
+
+    candidate = data.get("candidate") or {}
+    _require(isinstance(candidate, dict) and bool(candidate), "op.json 缺 candidate")
+    name = candidate.get("name")
+    fmt = candidate.get("format")
+    _require(
+        isinstance(name, str) and bool(name.strip()),
+        "op candidate.name 为空（候选选择必须写入产物）",
+    )
+    _require(
+        isinstance(fmt, str) and bool(fmt.strip()),
+        "op candidate.format 为空（格式决定 SOL 与可比性）",
+    )
+    if candidate.get("commit") is not None:
+        _require(
+            candidate.get("commit") == expect.commit,
+            "op candidate.commit 与请求 commit 不一致",
+            {"expected": expect.commit, "got": candidate.get("commit")},
+        )
+
+    if _flag_value(list(expect.argv), "--steps") is not None:
+        _require(
+            _as_int(data.get("steps", -1), "op.json steps") == expect.steps,
+            f"op.json steps={data.get('steps')} != 请求 {expect.steps}",
+        )
+
+    cases = data.get("cases") or []
+    _require(isinstance(cases, list) and bool(cases), "op.json 没有 cases")
+    names = [str(entry.get("case")) for entry in cases]
+    _require(len(names) == len(set(names)), "op.json case 名重复", names)
+    _check_scenarios(names, expect.scenarios, "op")
+
+    summary = data.get("summary") or {}
+    _require(isinstance(summary, dict), "op.json.summary 不是对象")
+    summary_names = [str(entry.get("case")) for entry in (summary.get("cases") or [])]
+    _require(
+        summary_names == names,
+        "op.json 的 summary/cases 场景集合不一致",
+        {"summary": summary_names, "cases": names},
+    )
+
+    gate_total = 0
+    gate_passed = 0
+    gate_failures: list[dict] = []
+    diagnostics_failed: list[dict] = []
+    diagnostic_total = 0
+    cases_metrics: list[dict] = []
+    for entry in cases:
+        case = str(entry.get("case"))
+        config = entry.get("config") or {}
+        _require(
+            isinstance(config, dict) and bool(config),
+            f"op {case}: config 为空（无法确认输入/布局）",
+        )
+        gates = entry.get("gates") or []
+        _require(isinstance(gates, list) and bool(gates), f"op {case}: gates 为空")
+        _require(
+            any(str(item.get("name", "")).startswith("coverage:") for item in gates),
+            f"op {case}: 缺 coverage: gate（无法证明必测项齐全）",
+        )
+        bad = [item for item in gates if not item.get("ok")]
+        for item in bad:
+            gate_failures.append(
+                {"case": case, "name": item.get("name"), "detail": item.get("detail")}
+            )
+        gate_total += len(gates)
+        gate_passed += len(gates) - len(bad)
+
+        diagnostics = entry.get("diagnostics") or []
+        _require(isinstance(diagnostics, list), f"op {case}: diagnostics 不是数组")
+        diagnostic_total += len(diagnostics)
+        for item in diagnostics:
+            if not item.get("ok"):
+                diagnostics_failed.append({"case": case, "name": item.get("name")})
+
+        metrics = entry.get("metrics") or {}
+        _require(
+            isinstance(metrics, dict) and bool(metrics),
+            f"op {case}: metrics 为空（没有可比较的证据）",
+        )
+        numeric = {
+            str(key): value
+            for key, value in metrics.items()
+            if isinstance(value, (int, float)) and not isinstance(value, bool)
+        }
+        _require(
+            bool(numeric) and all(math.isfinite(float(v)) for v in numeric.values()),
+            f"op {case}: metrics 里没有有限数值",
+            {"metrics": metrics},
+        )
+        cases_metrics.append(
+            {
+                "case": case,
+                "config": config,
+                "gates": len(gates),
+                "gates_passed": len(gates) - len(bad),
+                "gate_failures": [item.get("name") for item in bad],
+                "diagnostics": len(diagnostics),
+                "diagnostics_failed": [
+                    item.get("name") for item in diagnostics if not item.get("ok")
+                ],
+                "metrics": numeric,
+            }
+        )
+
+    _require(
+        not gate_failures,
+        "op gate 未全部通过",
+        {"failures": gate_failures[:8], "total": len(gate_failures)},
+        category="gate_failed",
+    )
+    _require(
+        summary.get("ok") is True,
+        "op.json summary.ok != true",
+        {"summary": summary},
+    )
+
+    return {
+        "kind": "op",
+        "correctness": "passed",
+        "metrics": {
+            "candidate": {"name": name, "format": fmt},
+            "cases": cases_metrics,
+            "gates_total": gate_total,
+            "gates_passed": gate_passed,
+            "gate_failures": [],
+            "diagnostics_total": diagnostic_total,
+            "diagnostics_failed": diagnostics_failed,
+        },
+        "checks": [
+            f"{len(names)} 个 case 的 gate 全部通过（{gate_total} 项）",
+            "每个 case 有 coverage: gate 和数值 metric",
+            "candidate name/format 已写入产物",
+            "commit 与请求一致、dirty=false",
+        ],
+    }
+
+
 VALIDATORS = {
     "check": validate_check,
     "bench": validate_bench,
     "memory": validate_memory,
     "profile": validate_profile,
+    "op": validate_op,
 }
 
 

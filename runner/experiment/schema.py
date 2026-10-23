@@ -25,7 +25,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-KINDS = ("check", "bench", "memory", "profile")
+KINDS = ("check", "bench", "memory", "profile", "op")
 PLACEHOLDER = "{output}"
 MAX_TIMEOUT_S = 86400.0
 MAX_STEPS_PER_JOB = 32
@@ -75,6 +75,23 @@ SCRIPTS: dict[str, ScriptSpec] = {
     ),
 }
 
+# Phase 2 的新增算子入口：产物契约见 runner/experiment/op_artifact.py 与
+# artifacts.validate_op。脚本名在派发任务时就固定下来，Explorer 只改自己的文件，
+# 不需要再登记共享的 schema。
+OP_SCRIPTS = (
+    "scripts/phase2_attn_check.py",
+    "scripts/phase2_gdn_check.py",
+    "scripts/phase2_quant_attrib.py",
+    "bench/micro/nvfp4_gemv.py",
+)
+for _op_path in OP_SCRIPTS:
+    SCRIPTS[_op_path] = ScriptSpec(
+        _op_path,
+        ("op",),
+        scenarios_attr="SCENARIOS",
+        forbidden=("--resume",),
+    )
+
 # 参与校验的带值 flag；没列出的 flag 原样传给脚本，不参与校验。
 VALUE_FLAGS = (
     "--out",
@@ -102,6 +119,9 @@ KIND_DEFAULTS: dict[str, dict[str, int]] = {
     "bench": {"steps": 511, "repeats": 5, "chunk_size": 128, "graph_warmup": 3},
     "memory": {"steps": 511, "chunk_size": 128},
     "profile": {"steps": 8},
+    # op 脚本的 --steps 是可选参数（有的 microbench 按形状而不是按 token 步数）；
+    # 请求里给了 --steps 时 validate_op 会核对产物里的 steps。
+    "op": {"steps": 1},
 }
 
 
