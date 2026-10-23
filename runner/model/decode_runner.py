@@ -161,6 +161,12 @@ class DecodeRunner:
             info["cache"] = cache_stats(self.cache, check_finite=False).to_dict()
         if self.graph_info is not None:
             info["graph"] = dict(self.graph_info)
+        # Phase 2 任务 F：decode backend 的运行计数（调用次数 / 首次调用含 JIT 的
+        # wall ms / 回退次数），给 check/bench 产物提供「编译只发生一次」的证据。
+        # 延迟 import：避免在 flashinfer 环境配置之前把 linear 拉进来。
+        from runner.ops.nvfp4.linear import decode_backend_stats
+
+        info["nvfp4_decode"] = decode_backend_stats()
         return info
 
     # --------------------------------------------------------------- requests

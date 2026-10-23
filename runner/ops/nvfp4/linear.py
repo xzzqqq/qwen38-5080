@@ -5,7 +5,11 @@
 - 构造时把 weight_scale 转成 128x4 swizzled 布局，并且只保留 swizzled 这一份，
   避免全模型多占约 1.6 GB 显存；
 - forward：BF16 activation -> FlashInfer ``nvfp4_quantize`` -> ``mm_fp4`` -> BF16；
-- 这是 M2 的正确性实现，不追求性能；Phase 2 再替换成自写 kernel。
+- **M=1 decode 的 per-shape backend 选型**（Phase 2 任务 F）：``mm_fp4`` 在不同
+  shape 上效率差 1.5×，按 (N, K) 查一张模块级静态表，命中则用表里的 backend
+  （当前全填 ``cute-dsl``），未命中 / 不可用回退 ``self.backend``（cutlass）。
+  只在 M==1 生效；prefill（M>1）继续走 cutlass，保持 M2 冻结口径的 bitwise 语义。
+  依据见 ``DECODE_BACKEND_TABLE`` 上方的注释（job-000035）。
 
 数据流：
     x [M, K] BF16
@@ -22,12 +26,81 @@
 
 from __future__ import annotations
 
+import time
+import warnings
+from typing import Any
+
 import torch
 from torch import nn
 
 from flashinfer import SfLayout, mm_fp4, nvfp4_quantize
 
 from .reference import swizzle_scale_128x4
+
+# ---------------------------------------------------------------- decode 选型
+# M=1 decode 的 per-shape backend 静态表：(N, K) -> backend。
+#
+# 依据 2026-10-23 job-000035-461c30c4（bench/micro/nvfp4_tactics.py）：
+# - 11 个 case 覆盖 checkpoint 全部 401 个 NVFP4 Linear（14.399 GB），每个 case 扫
+#   全部真实实例、工作集 >=4x L2、CUDA graph replay 计时；
+# - cute-dsl 11/11 全胜：加权 870 GB/s vs cutlass 760 GB/s（18.94 -> 16.55 ms/step，
+#   -2.39 ms）；分 shape 870/836/843/504/829/832/882/882/884/911 GB/s；
+# - 与 cutlass 输出**逐位一致**（11/11 nrmse=0.0、max_abs=0.0），所以换 backend
+#   不改变数值语义；auto 在 SM120 上等于 b12x（更慢），cudnn 全面更慢。
+#
+# 口径：只在 M==1 查表；prefill（M>1）继续用 self.backend（checkpoint 的 cutlass）。
+# 表按 shape 写全，未命中或 backend 抛错时回退 cutlass（每个进程只禁用一次）。
+DECODE_BACKEND_TABLE: dict[tuple[int, int], str] = {
+    (10240, 5120): "cute-dsl",   # in_proj_qkv x48
+    (6144, 5120): "cute-dsl",    # in_proj_z x48
+    (12288, 5120): "cute-dsl",   # q_proj x16
+    (1024, 5120): "cute-dsl",    # k_proj / v_proj x32
+    (5120, 6144): "cute-dsl",    # o_proj x16 + out_proj x48
+    (17408, 5120): "cute-dsl",   # gate_proj / up_proj x128
+    (5120, 17408): "cute-dsl",   # down_proj x64
+    (248320, 5120): "cute-dsl",  # lm_head x1
+}
+
+# 进程内的运行计数：给 check/bench 产物提供「JIT 编译只发生一次」的证据。
+_DECODE_STATS: dict[str, Any] = {
+    "calls": {},          # backend -> M=1 调用次数
+    "first_call_ms": {},  # "NxK" -> 首次调用 wall ms（含 JIT 编译）
+    "selected": {},       # "NxK" -> 实际使用的 backend
+    "fallbacks": 0,
+}
+_DECODE_BACKEND_DISABLED: set[str] = set()
+
+
+def decode_backend_for(n: int, k: int) -> str:
+    """(N, K) -> decode backend；未命中返回 cutlass。"""
+    return DECODE_BACKEND_TABLE.get((int(n), int(k)), "cutlass")
+
+
+def decode_backend_info() -> dict[str, Any]:
+    """静态表 + 依据，写进载入信息（``load`` diag / harness）。"""
+    return {
+        "table": {f"{n}x{k}": backend for (n, k), backend in DECODE_BACKEND_TABLE.items()},
+        "scope": "只在 M==1（decode）查表；prefill（M>1）继续走 self.backend=cutlass",
+        "fallback": "表未命中或 backend 抛错 -> cutlass（每个进程只禁用一次）",
+        "source": (
+            "2026-10-23 job-000035-461c30c4 / bench/micro/nvfp4_tactics.py："
+            "11 个 shape = 401 个 NVFP4 Linear，L2-free 真实实例聚合 870 GB/s vs "
+            "cutlass 760 GB/s（18.94 -> 16.55 ms/step）；cute-dsl 与 cutlass 输出逐位一致"
+        ),
+        # 故意是同一个 dict 的引用：check/bench 产物在最后序列化时能看到全程计数。
+        "counters": _DECODE_STATS,
+    }
+
+
+def decode_backend_stats() -> dict[str, Any]:
+    """当前进程的 decode backend 计数快照（给 harness / journal 用）。"""
+    return {
+        "calls": dict(_DECODE_STATS["calls"]),
+        "first_call_ms": dict(_DECODE_STATS["first_call_ms"]),
+        "selected": dict(_DECODE_STATS["selected"]),
+        "fallbacks": int(_DECODE_STATS["fallbacks"]),
+        "disabled": sorted(_DECODE_BACKEND_DISABLED),
+    }
 
 
 class NVFP4Linear(nn.Module):
@@ -39,8 +112,11 @@ class NVFP4Linear(nn.Module):
         weight_scale_2: 标量 F32，checkpoint 的 ``weight_scale_2``。
         input_scale: 标量 F32，checkpoint 的 ``input_scale``。
         bias: 可选 BF16 [N]；M2 的 checkpoint 大多没有 bias。
-        backend: FlashInfer backend，M2 固定 ``cutlass``，避免未记录的 ``auto``。
+        backend: prefill / 回退用的 FlashInfer backend；M2 固定 ``cutlass``。
         out_dtype: 输出 dtype，默认 BF16。
+        decode_backend: M=1 decode 的 backend 覆盖。``None`` 表示查静态表
+            ``DECODE_BACKEND_TABLE``（当前全填 cute-dsl）；显式传 ``"cutlass"``
+            可关掉选型、完全回到 M2 路径。
     """
 
     def __init__(
@@ -53,6 +129,7 @@ class NVFP4Linear(nn.Module):
         *,
         backend: str = "cutlass",
         out_dtype: torch.dtype = torch.bfloat16,
+        decode_backend: str | None = None,
     ) -> None:
         super().__init__()
         if weight_packed.ndim != 2 or weight_packed.dtype != torch.uint8:
@@ -73,6 +150,7 @@ class NVFP4Linear(nn.Module):
         self.in_features = k
         self.out_features = n
         self.backend = backend
+        self.decode_backend = decode_backend
         self.out_dtype = out_dtype
 
         self.register_buffer("weight_packed", weight_packed.contiguous())
@@ -107,19 +185,64 @@ class NVFP4Linear(nn.Module):
             backend="cuda",
         )
         alpha = (self.input_scale * self.weight_scale_2).reshape(1).float()
-        out = mm_fp4(
-            a_fp4,
-            self.weight_packed.T,
-            a_sf,
-            self.weight_scale_swizzled.T,
-            alpha,
-            self.out_dtype,
-            None,
-            block_size=16,
-            use_8x4_sf_layout=False,
-            backend=self.backend,
-            use_nvfp4=True,
-        )
+
+        def run(which: str) -> torch.Tensor:
+            return mm_fp4(
+                a_fp4,
+                self.weight_packed.T,
+                a_sf,
+                self.weight_scale_swizzled.T,
+                alpha,
+                self.out_dtype,
+                None,
+                block_size=16,
+                use_8x4_sf_layout=False,
+                backend=which,
+                use_nvfp4=True,
+            )
+
+        # M=1（decode）按 (N, K) 选 backend；M>1（prefill）保持 self.backend。
+        decode = None
+        if x.shape[0] == 1:
+            if self.decode_backend is not None:
+                chosen = self.decode_backend
+            elif self.backend == "cutlass":
+                chosen = decode_backend_for(self.out_features, self.in_features)
+            else:
+                chosen = self.backend
+            if chosen != self.backend and chosen not in _DECODE_BACKEND_DISABLED:
+                decode = chosen
+
+        if decode is None:
+            out = run(self.backend)
+        else:
+            label = f"{self.out_features}x{self.in_features}"
+            # 首次调用包含 JIT 编译；只在非 capture 路径计时（warmup 在 capture 之前）。
+            first = label not in _DECODE_STATS["first_call_ms"]
+            measure = first and not torch.cuda.is_current_stream_capturing()
+            if measure:
+                torch.cuda.synchronize()
+                started = time.perf_counter()
+            try:
+                out = run(decode)
+            except Exception as exc:  # noqa: BLE001 - 不可用则永久回退，不静默失败
+                _DECODE_BACKEND_DISABLED.add(decode)
+                _DECODE_STATS["fallbacks"] += 1
+                warnings.warn(
+                    f"NVFP4Linear: decode backend {decode!r} failed on "
+                    f"{label}, falling back to {self.backend!r}: {exc}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                decode = self.backend
+                out = run(decode)
+            if measure:
+                torch.cuda.synchronize()
+                _DECODE_STATS["first_call_ms"][label] = (
+                    time.perf_counter() - started
+                ) * 1e3
+            _DECODE_STATS["calls"][decode] = _DECODE_STATS["calls"].get(decode, 0) + 1
+            _DECODE_STATS["selected"][label] = decode
         if self.bias is not None:
             out = out + self.bias
         if len(original_shape) != 2:
@@ -129,5 +252,5 @@ class NVFP4Linear(nn.Module):
     def extra_repr(self) -> str:
         return (
             f"in_features={self.in_features}, out_features={self.out_features}, "
-            f"backend={self.backend!r}"
+            f"backend={self.backend!r}, decode_backend={self.decode_backend!r}"
         )
