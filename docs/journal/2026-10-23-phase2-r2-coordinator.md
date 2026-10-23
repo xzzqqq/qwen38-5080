@@ -337,3 +337,44 @@ H 的 `_pending_quantized` 快路径直接调 `self._mm(pending[0], pending[1])`
 - 合计 −2.38 ms。
 - H 的判断：可预计算的只剩 input-independent 常量（如 `-exp(A_log)`，48 个，≤0.1 ms），
   剩下约 4000 个小 kernel 都是 input-dependent，下一轮的杠杆是**继续融合**而非预计算。
+
+## 第 2 轮最终结果（job-000041-d2baf18e，commit `89ff69f`）
+
+511 步 × 5 次，correctness=**passed**，**163/163 gate 全过**（numeric-512 115、
+graph-1024 24、graph-8192 24）：
+
+| 场景 | M3 baseline | 第 1 轮 | **第 2 轮** | 系统 tok/s | %SOL |
+|---|---|---|---|---|---|
+| graph-512-1024 | 31.84 ms | 26.80 ms | **20.829 ms** | 31.38 → **47.95** | 48.5% → **74.0%** |
+| graph-512-8192 | 44.04 ms | 27.84 ms | **21.838 ms** | 22.70 → **45.74** | 35.0% → **72.9%** |
+| graph-8192 | 44.38 ms | 27.83 ms | **21.824 ms** | 22.52 → **45.77** | 35.9% → **72.9%** |
+
+- 可加性：第 2 轮四项 G(−0.73) + I(−0.27) + F(−2.70) + H(−2.29，含组合交互修复)
+  = −5.99 ms，实测 27.83 − 21.82 = **−6.01 ms**，吻合。
+- 相对 M3 baseline：**44.38 → 21.82 ms（−50.8%）**，系统 **22.52 → 45.77 tok/s（+103%）**。
+- 8K 显存（`m3_memory --only graph-8192 --steps 511`）：load peak 14.461 GB、
+  max peak allocated **15.727 GB** / reserved 15.850 GB、min free **0.340 GB**；
+  两个生命周期 allocated/reserved 增量 **0**、KV ptr 稳定、reset 后 logits 逐位一致、
+  10 个 stage 全过。比第 1 轮（15.723 / 15.848 / 0.329）几乎不变。
+
+## 距离 §7（FP8 KV ≥80% 实际 SOL）还差多少
+
+- BF16 KV 的 8K SOL 是 62.75 tok/s（B_mean 15.298 GB）；现在是 45.77 → **72.9%**。
+- FP8 KV 的 B_mean 约 15.021 GB → SOL 63.9 → **80% 需要 51.1 tok/s，即 19.57 ms**。
+- 当前 21.82 ms，**还差 2.25 ms（10.3%）**。剩余时间结构（第 2 轮后估算）：
+  GEMV 16.55 ms（76%）+ attention bmm/softmax/copy ≈1.1 ms + fused norm+quant 0.41 ms +
+  GDN 0.31 ms + ShapeStableLinear 0.16 ms + 其余 elementwise/reshape/copy ~2 ms +
+  graph 间隙 ~1.3 ms。
+
+## 第 3 轮计划（尚未执行）
+
+| 优先级 | 方向 | 依据 | 目标 |
+|---|---|---|---|
+| 1 | **FP8 KV**（plan §4 的触发条件已满足：A 的紧凑 KV 已验证） | §7 的验收配置要求；KV 0.54 → 0.27 GB/step | −0.3 ms，且是阶段验收前提 |
+| 2 | **融合 decode attention kernel**（替掉 QK bmm + softmax + PV bmm + transpose） | QK 16×50.7 µs + PV 16×20 µs ≈ 1.13 ms，另有 softmax/copy | −0.6 ~ −0.8 ms |
+| 3 | **gated RMSNorm + out_proj 的 quant**（H 建议，同一 per-consumer 契约） | 48 层 × 每层 5–6 个 tiny kernel | −0.1 ~ −0.15 ms |
+| 4 | **剩余 elementwise 融合**（约 4000 个 input-dependent 小 kernel） | 需重新 profile 分类 | −0.5 ~ −1.0 ms |
+
+- 若 1–4 都兑现，8K 约 19.5–20.0 ms，正好压在 80% SOL 附近；不兑现也要如实记录差距。
+- 本轮**未做**：FP8 KV、`m3_sol` 字节账重算、完整 `m3-check`（5 场景 227 gate）、
+  P1/P2 真实 workload。%SOL 仍按 M3 的 B_mean 口径计算（BF16 KV）。
