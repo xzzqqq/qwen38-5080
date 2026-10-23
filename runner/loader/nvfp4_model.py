@@ -31,6 +31,7 @@ configure_flashinfer_env()
 from runner.model.gdn_patch import install_from_env as install_gdn_decode  # noqa: E402
 from runner.model.host_embedding import HostEmbedding  # noqa: E402
 from runner.model.norm_quant_patch import install_from_env as install_norm_quant  # noqa: E402
+from runner.model.quant_fuse_patch import install_from_env as install_quant_fuse  # noqa: E402
 from runner.ops.attention import install as install_compact_attention  # noqa: E402
 from runner.ops.bf16.stable_linear import ShapeStableLinear  # noqa: E402
 from runner.ops.nvfp4.linear import NVFP4Linear, decode_backend_info  # noqa: E402
@@ -205,6 +206,10 @@ def load_nvfp4_text_model(
     # decode；prefill 由 patch 内部回退）。scratch 缓冲在这里一次性分配，地址固定，
     # 之后的 graph capture/replay 依赖它（NORM_QUANT_FUSED=0 可关）。
     norm_quant_info = install_norm_quant(model)
+    # Phase 2 任务 M：剩余 129 个消费者的生产者侧融合 —— down_proj 的 silu·mul、
+    # o_proj 的 attn·sigmoid、lm_head 的 final norm（只走 decode；prefill 由 patch
+    # 内部回退）。未融合的 out_proj 由另一个任务负责，这里不碰（QUANT_FUSE=0 可关）。
+    quant_fuse_info = install_quant_fuse(model)
     torch.cuda.synchronize()
     free_b, total_b = torch.cuda.mem_get_info()
     info = {
@@ -225,5 +230,8 @@ def load_nvfp4_text_model(
         "nvfp4_decode": decode_backend_info(),
         # Phase 2 任务 H：norm+quant 融合的接线计数（fused_norms / fallbacks）。
         "norm_quant": norm_quant_info,
+        # Phase 2 任务 M：生产者侧融合的接线计数（fused_mlp / fused_attention /
+        # fused_lm_head / fallbacks）。
+        "quant_fuse": quant_fuse_info,
     }
     return model, text_config, info

@@ -399,21 +399,22 @@ def norm_quant_fused(
     *,
     num_warps: int = DEFAULT_NUM_WARPS,
 ) -> None:
-    """一次融合 launch：算 RMSNorm（BF16 输出）并为 2~3 个消费者各产一份 NVFP4 A。
+    """一次融合 launch：算 RMSNorm（BF16 输出）并为 1~3 个消费者各产一份 NVFP4 A。
 
     Args:
         x: BF16 ``[1, 1, K]``（或 ``[K]``），contiguous，K = 5120。
         w1: FP32 ``[K]`` contiguous，等于 ``1 + norm.weight.float()``（zero-centered）。
         eps: norm 的 eps（Python float，kernel 里按 f32 用）。
-        gs_list: 每个消费者的 global divisor ``fl32(1/input_scale)``，长度 2 或 3。
+        gs_list: 每个消费者的 global divisor ``fl32(1/input_scale)``，长度 1~3
+            （1 个消费者用于 final norm -> lm_head）。
         out_bf16: BF16 ``[1, 1, K]`` 输出缓冲（归一化值，已被 round 到 BF16）。
         a_fp4: 每个消费者一份 U8 ``[K/2]``（或 ``[1, K/2]``）输出。
         a_sf: 每个消费者一份 U8 ``[128, K/16]`` swizzled 输出，padding 必须已清零。
         num_warps: program 的 warp 数（只影响性能，不影响结果）。
     """
     n = len(gs_list)
-    if n not in (2, 3):
-        raise ValueError(f"n consumers must be 2 or 3, got {n}")
+    if n not in (1, 2, 3):
+        raise ValueError(f"n consumers must be 1, 2 or 3, got {n}")
     if len(a_fp4) != n or len(a_sf) != n:
         raise ValueError("a_fp4 / a_sf length must match gs_list")
     if x.dtype != torch.bfloat16 or w1.dtype != torch.float32:
