@@ -105,3 +105,61 @@ elementwise 2.15 ms 的细分（按 functor 聚合）：
 | 任务 | session | worktree / branch | 脚本入口 | 目标 |
 |---|---|---|---|---|
 | M 剩余 129 个消费者的 quant 融合（down_proj 的 silu·mul、o_proj、lm_head） | `phase2-fuse` | `.tmp/worktrees/r3-fuse` / `exp/phase2-fuse` | `scripts/phase2_normquant_check.py`（扩展） | −0.4 ~ −0.5 ms |
+
+## 任务 L 采纳（job-000043-19c1f1a0，commit `783b36a`）
+
+| 指标 | baseline job-000041 | L | 变化 |
+|---|---|---|---|
+| graph-8192 p50 | 21.824 ms | **21.142 ms** | **−0.683 ms** |
+| graph-8192 系统 | 45.77 tok/s | **47.23** | +3.2% |
+| graph-512-1024 p50 | 20.829 ms | **20.131 ms** | −0.698 ms |
+| graph-512-1024 系统 | 47.95 tok/s | **49.56** | +3.4% |
+
+- op **63/63**：`real-layers` 288 样本 / 1,769,472 个 e2m1 code 在 out_bf16 / a_fp4 / a_sf
+  上 0 字节差；`mean-tree` 0 mismatch 而树合并变体 25 mismatch（分辨力）；三个负对照
+  nrmse 2.23 / 1.05 / 显著超差。
+- check **139/139**（`numeric-512` + `graph-1024`，bitwise 保持）。
+- 收益是 Explorer 预估（−0.2~−0.25）的约 3 倍：graph 口径 48 层 −0.683 ms
+  （14.2 µs/层），说明被省掉的是整条链路（pow/mean/rsqrt/add/mul/cast/silu +
+  48 次 quantize + 48 次 `1/input_scale`），不只是它逐 kernel 折算的那几项。
+
+## 任务 K 采纳（job-000044-bf3a545f，commit `76268da`）
+
+| 指标 | baseline job-000041 | K | 变化 |
+|---|---|---|---|
+| graph-8192 p50 | 21.824 ms | **21.195 ms** | −0.629 ms |
+| graph-8192 系统 | 45.77 tok/s | **47.10** | +2.9% |
+| graph-512-1024 p50 | 20.829 ms | **20.648 ms** | −0.181 ms |
+
+- op **224/224**、check **163/163**（`numeric-512` + `graph-1024` + `graph-8192` 的 bitwise 全保）。
+- micro（每层 per-call，8K）：fused **0.0396 ms** vs grouped_bmm 0.1796 vs 原始 repeat_kv 0.8533
+  → **比第 1 轮的紧凑 bmm 又快 4.5×**，有效带宽约 847 GB/s（33.55 MB / 0.0396 ms）。
+- `fused-vs-bmm` 69/69：到 fp64 的距离比 grouped_bmm 更小（ratio 0.53）。
+  `fused-fp8` 17/17：已用模拟 scale 跑通 FP8 分支（两个 scale 布局都覆盖），
+  等 J 的落地后由 Coordinator 接上真实 scale。
+- 设计要点：一个 program = 一个 (kv_head, split)、一次覆盖共享该 head 的 6 个 q head
+  （按 q head 切会把 K/V 读 6 遍）；log2 域 online softmax；每层 2 个 kernel（原 7 个）。
+
+## 任务 M 第一次提交（job-000047-47c60783）：o_proj 一条结构性错误
+
+- `downproj-silu-mul` 与 `lmhead-final-norm`：`out_bf16 / a_fp4 / a_sf` **全 0 字节差**，
+  负对照分辨力成立（code diff 0.886）。
+- `oproj-gate` 失败：out_bf16 11076 字节差、dequant nrmse **1.58**、`producer-wiring`
+  的 `attention: false`（fused −1.3516 vs ref −0.9336）。是 `attn_output * sigmoid(gate)`
+  的结构错（`gate` 必须来自 `q_proj` 输出按最后一维切半 + `reshape(*input_shape,-1)`，
+  `attn_output` 也要先 reshape；且 sigmoid 与乘法是**两次独立 BF16 舍入**）。
+- 已允许一次修复，并要求顺带 rebase/merge 到集成 tip `66bac5c`（含 L 与 K），
+  这样结果可与 L/K 叠加。
+
+## 任务 J 第一次提交（job-000045-fbb25434）：路径选错，方向被数据否定
+
+- `quant-roundtrip` 11/11（nrmse 2.6%、cosine 0.99966，与 CPU 校准一致）；
+  `attn-fp8-vs-ref` 数值全过（nrmse 0.0059、cosine 0.99998）但一条 `coverage:` gate 计数写错；
+  `attn-fp8-vs-bf16`（diagnostic）nrmse 3.7%、cosine 0.99931。
+- **micro：fp8 0.2635 ms/call vs bf16 0.1795（speedup_min 0.506）**，dequant 单独
+  0.0835 ms、写出带宽 71 GB/s —— 物化 bf16 前缀是净回退（×16 层约 +1.3 ms/step）。
+  这与 J 自己的预判一致，也是我派发时标出的耦合点。
+- 处理：要求 rebase 到 `66bac5c`，把 decode 直接喂 **FP8 + scale 给 K 的融合 kernel**
+  （kernel 内折叠 scale，零 scratch），`dequant_kv` 只留给 prefill/reference 与回退；
+  修 coverage 计数；**补 `smoke-graph`**（plan §5 的三条真实 smoke 是 gate，FP8 有 3.7%
+  attention 误差，near-tie 可能翻转）。
