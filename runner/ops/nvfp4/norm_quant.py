@@ -486,6 +486,7 @@ __all__ = [
     "C6",
     "DEFAULT_NUM_WARPS",
     "HIDDEN",
+    "MAX_CONSUMERS",
     "MEAN_FACTOR",
     "N_BLOCKS",
     "SF_ROWS",

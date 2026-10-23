@@ -45,6 +45,19 @@ scratch 缓冲在 install 时一次性分配（BF16 归一化输出 1 份 + a_fp
 padding 清零），地址固定：graph capture 之后 replay 依赖这一点。同一份缓冲被
 128 个 norm 复用，靠 stream 顺序保证「先写、读、下一次覆盖」的依赖关系。
 
+失败与回退计数（``counters.fallbacks`` 的 key，四种执行方式都会累计）：
+
+- ``seq_len!=1``：prefill / chunked prefill，正常回退（数量级最大的一项）；
+- ``dtype`` / ``device`` / ``grad`` / ``mask``：前置条件不满足；
+- ``consumer-count-mismatch``：这一层实际取用的消费者数量不是 2/3，或与 scratch 槽位
+  对不上——**整层回退**，不抛异常（job-000036 之前这里是直接崩的）；
+- ``scratch-slots``：scratch 还没准备好；
+- ``fused-error``：融合 kernel 调用本身抛异常（同样整层回退，并记一条 warning）。
+
+对应的「真的融合了多少」在 ``counters.fused_norms`` / ``counters.fused_consumers`` 与
+``counters.unconsumed``（槽位没被消费就被清掉）里；接线是否命中必须看这几个数，
+不能只看端到端时间（任务 D 的教训）。
+
 预期瓶颈：与 ``runner/ops/nvfp4/norm_quant.py`` 相同（单 kernel 固定开销）；本模块
 只做接线，每层每步多两次 Python 侧的 shape 检查（graph 路径在 capture 后不执行）。
 """
@@ -62,6 +75,7 @@ from runner.ops.nvfp4.linear import NVFP4Linear
 from runner.ops.nvfp4.norm_quant import (
     DEFAULT_NUM_WARPS,
     HIDDEN,
+    MAX_CONSUMERS,
     SF_ROWS,
     allocate_scratch,
     global_divisor,
@@ -80,6 +94,9 @@ _SKIP_DEVICE = "device"
 _SKIP_GRAD = "grad"
 _SKIP_WIRING = "wiring"
 _SKIP_MASK = "mask"
+_SKIP_CONSUMERS = "consumer-count-mismatch"
+_SKIP_SLOTS = "scratch-slots"
+_SKIP_ERROR = "fused-error"
 
 _STATE: dict[str, Any] = {
     "installed": False,
@@ -110,10 +127,14 @@ def _bump(counter: str) -> None:
 def _fallback(reason: str) -> None:
     fallbacks = _STATE["counters"]["fallbacks"]
     fallbacks[reason] = fallbacks.get(reason, 0) + 1
+    _warn_once(reason, f"norm+quant 融合回退（{reason}），该路径继续走原 forward")
+
+
+def _warn_once(reason: str, message: str) -> None:
     warned = _STATE["warned"]
     if reason not in warned:
         warned.add(reason)
-        LOGGER.warning("norm+quant 融合回退（%s），该路径继续走原 forward", reason)
+        LOGGER.warning("%s", message)
 
 
 class _NormQuant:
@@ -130,25 +151,46 @@ class _NormQuant:
         self.eps = float(norm.eps)
         self.name = name
 
-    def __call__(self, x: torch.Tensor, consumers: list[NVFP4Linear]):
+    def try_run(self, x: torch.Tensor, consumers: list[NVFP4Linear]):
+        """融合跑一次，返回 ``(normed_bf16, quants)``；任何前置条件不满足就返回 None。
+
+        返回 None 时调用方**整层回退**到原 forward（语义等价，只是不走融合），并已按
+        原因计入 ``counters.fallbacks``。这里刻意不抛异常：decode 是一条长流水线，
+        接线的边界情况（消费者数量、槽位数、kernel 条件不满足）不应该把整个 job 弄崩。
+        """
         scratch = _STATE["scratch"]
-        gs = [consumer._norm_quant_gs for consumer in consumers]
-        norm_quant_fused(
-            x,
-            self.w1,
-            self.eps,
-            gs,
-            scratch["out"],
-            scratch["a_fp4"],
-            scratch["a_sf"],
-            num_warps=_STATE["num_warps"],
-        )
+        count = len(consumers)
+        if count not in (2, 3):
+            _fallback(_SKIP_CONSUMERS)
+            return None
+        if scratch is None or len(scratch["a_fp4"]) < count:
+            _fallback(_SKIP_SLOTS)
+            return None
+        # 槽位必须与 gs 一一对应（kernel 会在长度不一致时拒绝）：只传前面 count 个
+        a_fp4 = scratch["a_fp4"][:count]
+        a_sf = scratch["a_sf"][:count]
+        try:
+            gs = [consumer._norm_quant_gs for consumer in consumers]
+            if len(a_fp4) != len(gs) or len(a_sf) != len(gs):
+                _fallback(_SKIP_CONSUMERS)
+                return None
+            norm_quant_fused(
+                x,
+                self.w1,
+                self.eps,
+                gs,
+                scratch["out"],
+                a_fp4,
+                a_sf,
+                num_warps=_STATE["num_warps"],
+            )
+        except Exception as exc:  # noqa: BLE001 - 融合失败回退原路径，不让 decode 崩
+            _warn_once(_SKIP_ERROR, f"融合 kernel 调用失败（{self.name}）：{exc!r}")
+            _fallback(_SKIP_ERROR)
+            return None
         _bump("fused_norms")
-        _STATE["counters"]["fused_consumers"] += len(consumers)
-        quants = [
-            (scratch["a_fp4"][index], scratch["a_sf"][index])
-            for index in range(len(consumers))
-        ]
+        _STATE["counters"]["fused_consumers"] += count
+        quants = [(a_fp4[index], a_sf[index]) for index in range(count)]
         return scratch["out"], quants
 
 
@@ -232,8 +274,14 @@ def _patched_forward(
             past_key_values, **kwargs,
         )
 
+    pre = plan.input_nq.try_run(hidden_states, plan.pre_consumers)
+    if pre is None:
+        return original(
+            self, hidden_states, position_embeddings, attention_mask, position_ids,
+            past_key_values, **kwargs,
+        )
+    normed, quants = pre
     residual = hidden_states
-    normed, quants = plan.input_nq(hidden_states, plan.pre_consumers)
     try:
         _arm(plan.pre_consumers, quants)
         if plan.is_linear:
@@ -257,7 +305,11 @@ def _patched_forward(
 
     hidden_states = residual + mixed
     residual = hidden_states
-    normed, quants = plan.post_nq(hidden_states, plan.post_consumers)
+    post = plan.post_nq.try_run(hidden_states, plan.post_consumers)
+    if post is None:
+        # 后 norm 失败时用原 norm + 非融合 MLP 继续：语义完全等价，每层只多几个 kernel。
+        return residual + self.mlp(self.post_attention_layernorm(hidden_states))
+    normed, quants = post
     try:
         _arm(plan.post_consumers, quants)
         mixed = self.mlp(normed)
@@ -335,6 +387,7 @@ def install(
         raise RuntimeError(f"norm 权重不在 CUDA 上: {device}")
     probe = _probe_quantizer(device)
     scratch = allocate_scratch(
+        n_slots=max(MAX_CONSUMERS, 3),
         device=device,
         a_fp4_shape=tuple(probe["a_fp4_shape"]),
         a_sf_shape=tuple(probe["a_sf_shape"]),
@@ -359,6 +412,11 @@ def install(
                 raise RuntimeError(
                     f"消费者不是 NVFP4Linear: {type(module).__name__}"
                 )
+        if len(pre) not in (2, 3) or len(post) not in (2, 3):
+            raise RuntimeError(
+                f"layer {len(plans)} 的消费者数量必须是 2 或 3，得到 pre={len(pre)} "
+                f"post={len(post)}"
+            )
         for consumer in pre:
             consumer._norm_quant_gs = global_divisor(
                 float(consumer.input_scale.reshape(1).float().item())
