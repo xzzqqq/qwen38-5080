@@ -3,8 +3,8 @@
 - 日期：2026-10-23
 - 对应：[experiment-tools spec](../experiment-tools-spec.md)、
   [optimization workflow](../optimization-workflow.md)、[使用说明](../experiments.md)
-- 代码 commit：验收时仓库 HEAD 为 `34303182db95fe21be4993e2cc7805b4ff0246a8`
-  （本工具的实现尚未提交，见 §7）；checkpoint revision
+- 代码 commit：验收时仓库 HEAD 为 `34303182db95fe21be4993e2cc7805b4ff0246a8`；
+  本工具提交为 `cd16e2f`；checkpoint revision
   `5b7a687fc8211a5d631c8ca6a593dd37eb26ce33`
 
 ## 1. 做了什么
@@ -157,9 +157,10 @@
 
 ## 6. 已知限制
 
-- **profile kind 没有真实 GPU 采集**：`scripts/m3_profile.sh --out/--steps` 改动
-  不在验收 commit 里（见 §7），worktree 取到的是旧脚本；fake profile 的产物校验
-  和端到端已测。提交后用一次 profile job 复核即可。
+- **profile kind 没有真实 GPU 采集**：验收时 `scripts/m3_profile.sh --out/--steps`
+  的改动还不在执行器读取的 HEAD 里，worktree 取到的是旧脚本；fake profile 的产物
+  校验和端到端已测。脚本改动已在 `cd16e2f` 入库，用一次真实 profile job 复核即可
+  （尚未跑）。
 - 通知默认 `pending`，依赖 Coordinator 的 `wait`；自动投递只尝试一次，不重试。
 - GPU 守卫是轮询 + 10 s 宽限，不是内核级互斥；检查与步骤启动之间仍有极小窗口。
 - 所有 job 共用 `.tmp/flashinfer` JIT 缓存；首次运行被 kill 后下一次可能变慢
@@ -168,8 +169,8 @@
 
 ## 7. 下一步
 
-1. 提交本工具的改动（AGENTS.md 要求先问 main/push；本次未提交），并在 commit 后
-   用 `submit` 跑一次真实 profile job 复核 `profile` 分支。
+1. 本工具已提交并 push 为 `cd16e2f`；用 `submit` 跑一次真实 profile job 复核
+   `profile` 分支（这是最后一个未在 GPU 上实跑的 kind）。
 2. Coordinator 在 GPU 主机上常驻 `serve`（tmux/systemd），用后台 `wait` 收摘要；
    Explorer 沿用 `docs/optimization-workflow.md` 的流程。
 3. Phase 2 的第一个 NVFP4 GEMV 候选按“check（gate）→ bench（与 baseline 同协议）”

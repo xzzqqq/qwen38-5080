@@ -233,6 +233,7 @@ ps -o pid,pgid,cmd -p <record.pid>
 
 ## 10. 已验证（2026-10-23）
 
+- 实现提交：`cd16e2f`（`feat: add a queued GPU experiment runner`）。
 - CPU：`pytest tests/experiment -q` → **51 passed**，覆盖 spec §7 的九类场景
   （并发 FIFO/不重叠、改动 worktree、check 失败/缺产物、旧配置、超时/取消、
   重启、通知、重复查询、纯 bench/profile）。
@@ -250,9 +251,10 @@ ps -o pid,pgid,cmd -p <record.pid>
 
 ## 11. 已知限制
 
-- `profile` kind 的产物校验和 fake 端到端已测；真实 GPU 的 nsys 采集未在本次
-  验收里跑（`scripts/m3_profile.sh` 的 `--out/--steps` 改动尚未提交，worktree
-  仍会取旧版；提交后可用 `submit` 跑一次 profile job 复核）。
+- `profile` kind 的产物校验和 fake 端到端已测；真实 GPU 的 nsys 采集尚未跑。
+  `scripts/m3_profile.sh --out/--steps` 已在 `cd16e2f` 入库（验收时还没提交，
+  所以当时的 worktree 只能取旧脚本）；现在可以直接用 `submit` 跑一次 profile job
+  复核，耗时约 10–12 分钟。
 - 默认不主动向 session 投递通知（`pending`），需要 Coordinator 转发；配置
   `--notify-cmd` 后是“尽力投递一次”，不做重试。
 - GPU 守卫是“取 job 前检查 + 10 s 释放宽限”，检查与真正启动步骤之间仍有一个
