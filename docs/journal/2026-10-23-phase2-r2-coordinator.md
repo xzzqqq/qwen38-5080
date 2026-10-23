@@ -152,3 +152,22 @@ ShapeStableLinear 的 a/b GEMM。Explorer 用 `graph-7680/kern_sum.csv` 拆开�
   −0.3 ~ −1.0 好；但要等修好 cutlass 基线、拿到同 job 内的加权对照才能确认。
 - 处理：允许一次修复重投，要求 (a) cutlass 基线必须走官方 `mm_fp4(backend="cutlass")`
   入口，(b) 私有 tactic 路径放 try/except，确认不可达就删掉子实验、收敛为 backend 级。
+
+## 任务 G 采纳（job-000033-1bfa42c1，commit `ff0c87b`）
+
+| 指标 | baseline job-000029 | G | 变化 |
+|---|---|---|---|
+| graph-8192 step p50 | 27.781 ms | **27.052 ms** | −0.729 ms（−2.6%） |
+| graph-8192 系统 | 35.99 tok/s | **36.92** | +2.6% |
+| graph-512-1024 step p50 | 26.779 ms | **26.079 ms** | −0.700 ms（−2.6%） |
+| graph-512-1024 系统 | 37.29 tok/s | **38.30** | +2.7% |
+
+- check **139/139** 全过（`numeric-512` + `graph-1024`）：`eager→static-exact` 与
+  `padded-ref→static-cap` 的 bitwise 没被破坏，说明「四个执行方式的 decode 走同一条
+  M=1 路径」这个假设成立。
+- op 37/37：`cand_vs_fp64 / ref_vs_fp64 = 0.62–0.75`（候选更准）、
+  `padded-path-bitwise-unchanged` 9/9、`decode-patch-coverage` 96/0/0、
+  microbench warm 7.87 → 1.617 µs（4.87×）。
+- 两个 depth 收益一致（0.70 / 0.73 ms），符合「与 depth 无关的固定开销」预期；
+  比 microbench 外推的 0.60 ms 还多，因为 pad 的两个 kernel（fill + cat，2.78 µs/次）
+  在真实模型里也被一并省掉了。
