@@ -1,5 +1,9 @@
 # 模型权重：体积大，不入库
 models/
+# 队列 / worktree 里 models 和 .venv 是**符号链接**，`models/`（目录形式）匹配不到，
+# 会被 git 当成 untracked，使 op 产物的 provenance.dirty 变成 true。按名忽略。
+/models
+/.venv
 *.gguf
 
 # 第三方工具 checkout：用 scripts/setup_llama_cpp.sh 按固定 commit 拉取
