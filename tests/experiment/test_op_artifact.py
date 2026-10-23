@@ -201,3 +201,32 @@ def test_op_artifact_shape_is_stable() -> None:
     assert schema.SCRIPTS["scripts/phase2_attn_check.py"].kinds == ("op",)
     assert schema.SCRIPTS["bench/micro/nvfp4_gemv.py"].kinds == ("op",)
     assert "op" in artifacts.VALIDATORS
+
+
+def test_op_harness_symlinks_do_not_count_as_dirty(tmp_path: Path) -> None:
+    """job worktree 的 .venv/models 符号链接会以 untracked 出现，不算源码改动。"""
+    out = tmp_path / "op"
+    out.mkdir()
+    payload = _write(out / "op.json")
+    payload["provenance"]["git"] = {
+        "commit": COMMIT,
+        "dirty": True,
+        "status": ["?? .venv", "?? models"],
+    }
+    (out / "op.json").write_text(json.dumps(payload), encoding="utf-8")
+    result = artifacts.validate_op(_expectation(out))
+    assert result["correctness"] == "passed"
+
+
+def test_op_untracked_source_is_still_rejected(tmp_path: Path) -> None:
+    out = tmp_path / "op"
+    out.mkdir()
+    payload = _write(out / "op.json")
+    payload["provenance"]["git"] = {
+        "commit": COMMIT,
+        "dirty": True,
+        "status": ["?? .venv", "?? runner/ops/gdn/uncommitted.py"],
+    }
+    (out / "op.json").write_text(json.dumps(payload), encoding="utf-8")
+    with pytest.raises(artifacts.ArtifactError, match="untracked 源码"):
+        artifacts.validate_op(_expectation(out))

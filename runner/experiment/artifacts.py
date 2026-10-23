@@ -873,13 +873,57 @@ def validate_profile(expect: Expectation) -> dict:
 
 # --------------------------------------------------------------------- op
 OP_SCHEMA = "phase2-op/1"
+# 执行器在 job worktree 里建的符号链接；.gitignore 的目录 pattern 不匹配它们，
+# 会以 untracked 出现在 porcelain 里。它们不是源码，不改变 provenance 语义。
+OP_HARNESS_UNTRACKED = (".venv", "models")
+
+
+def _op_provenance_git(prov: Any, expected: str) -> None:
+    """op 产物的 git provenance：commit 必须一致，且工作区没有源码改动。
+
+    比 ``_git_commit`` 宽松一点的地方：job worktree 的 ``.venv`` / ``models``
+    符号链接会被裸 porcelain 记成 untracked。只要 untracked 全部是这两个名字、
+    且没有 tracked 改动，就仍然是“从提交的 commit 执行”。
+    """
+    git = (prov or {}).get("git") if isinstance(prov, dict) else None
+    _require(isinstance(git, dict) and bool(git), "op provenance 缺 git 信息")
+    got = git.get("commit")
+    _require(bool(got), "op provenance 缺 git.commit")
+    _require(
+        got == expected,
+        "op provenance 的 commit 与请求不一致",
+        {"expected": expected, "got": got},
+    )
+    if git.get("dirty") is False:
+        return
+    status = git.get("status") or []
+    _require(
+        isinstance(status, list) and bool(status),
+        "op provenance dirty=true 但没有 status 明细，不能确认改了什么",
+        {"status": status},
+    )
+    extras: list[str] = []
+    for line in status:
+        text = str(line)
+        _require(
+            text.startswith("?? "),
+            "op provenance 有未提交的 tracked 改动",
+            {"status": status},
+        )
+        extras.append(text[3:].strip().strip('"').rstrip("/"))
+    extra = sorted(set(extras) - set(OP_HARNESS_UNTRACKED))
+    _require(
+        not extra,
+        "op provenance 有 untracked 源码文件（不是从干净 commit 执行）",
+        {"untracked": extra, "status": status},
+    )
 
 
 def validate_op(expect: Expectation) -> dict:
     """Phase 2 新增算子入口（op gate + 局部 microbench）的产物校验。
 
     契约见 ``runner/experiment/op_artifact.py``。判定规则：
-    - provenance 的 commit 必须是请求的 commit，且 dirty=false；
+    - provenance 的 commit 必须是请求的 commit，且工作区没有源码改动；
     - 每个 case 至少一个 gate，且必须有 ``coverage:`` gate（必测项齐全）；
     - 任何 gate 失败 → ``gate_failed``；diagnostic 只记录，不参与判定；
     - 每个 case 必须有有限数值 metric（否则候选没有可比较的证据）；
@@ -892,7 +936,7 @@ def validate_op(expect: Expectation) -> dict:
         "op.json schema 不匹配",
         {"expected": OP_SCHEMA, "got": data.get("schema")},
     )
-    _git_commit(data.get("provenance"), expect.commit, "op provenance")
+    _op_provenance_git(data.get("provenance"), expect.commit)
 
     candidate = data.get("candidate") or {}
     _require(isinstance(candidate, dict) and bool(candidate), "op.json 缺 candidate")

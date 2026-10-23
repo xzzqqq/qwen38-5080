@@ -54,21 +54,23 @@ def _repo_root(start: Path | None = None) -> Path:
 
 
 def _git_state(root: Path) -> dict[str, Any]:
-    """commit + dirty（只关心 tracked 改动和 untracked 源码，与 report.git_state 同口径）。"""
-    def run(*args: str) -> str:
-        try:
-            return subprocess.check_output(
-                ["git", "-C", str(root), *args], text=True, stderr=subprocess.DEVNULL
-            ).strip()
-        except Exception:  # noqa: BLE001
-            return ""
+    """commit + dirty，口径与 ``runner.report.git_state`` 一致（只算源码改动）。
 
-    commit = run("rev-parse", "HEAD")
-    status = run("status", "--porcelain")
+    为什么不用裸 ``git status --porcelain``：执行器会在 job worktree 里建
+    ``.venv`` / ``models`` 两个符号链接，而 ``.gitignore`` 里的 ``.venv/``、
+    ``models/`` 只匹配目录，符号链接会以 ``?? .venv`` 出现。裸 porcelain 会把
+    每个 op 产物都判成 dirty=true，``validate_op`` 直接拒绝（2026-10-23 实测）。
+    因此 dirty 只看 tracked 改动和 untracked 的源码文件，和 bench/check 的
+    provenance 用同一个判据。
+    """
+    from runner.report import git_state
+
+    state = git_state(Path(root))
     return {
-        "commit": commit,
-        "dirty": bool(status),
-        "status": status.splitlines()[:20] if status else [],
+        "commit": state["commit"],
+        "dirty": state["dirty"],
+        "status": state["status"][:20],
+        "untracked_source": state.get("untracked_source", [])[:20],
     }
 
 

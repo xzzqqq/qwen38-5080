@@ -299,5 +299,16 @@ ps -o pid,pgid,cmd -p <record.pid>
   留下半热缓存，下一次会变慢，但不影响结果。必要时人工清理该目录。
 - `results/experiments/` 不入库；需要长期保留的实验应把 summary 摘要写进
   journal，或另行归档。
+- **改了 `runner/experiment/{schema,artifacts}.py` 必须重启 `serve`**：执行器在启动
+  时导入注册表，执行期还会用进程内的它重放校验请求。2026-10-23 新增 `op` kind 后
+  有三个 job（`job-000013/14/15`）以 `invalid_request: steps[0].kind 必须是
+  ('check','bench','memory','profile') 之一` 0.09 s 失败，就是 serve 启动早于
+  该 commit；重启后同一 commit 重投即可。submit 侧读的是磁盘上的注册表，所以
+  submit 成功不代表执行器认识这个 kind。
+- job worktree 里的 `.venv` / `models` 是执行器建的符号链接。`.gitignore` 的
+  `.venv/`、`models/` 只匹配目录，裸 `git status --porcelain` 会把它们当成
+  untracked。`runner.report.git_state` 只统计源码改动，不受影响；`op` 产物的
+  provenance 也按同一口径判 dirty，并额外容忍这两个名字的 untracked。
+
 - 单 GPU、单 `serve`；不支持多卡或并行 job。
 - `session_id` 只用于互斥和通知，不是认证机制。
