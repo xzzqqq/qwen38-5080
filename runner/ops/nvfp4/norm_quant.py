@@ -68,18 +68,22 @@ code 都会变；这是语义变化，不允许。kernel 里 ``y.to(tl.bfloat16)
   512 = 32 * 4 * 4 是 swizzle 每 4 个 block 一组的跨度）；其余 127 行的 padding 恒 0，
   由调用方一次性清零后不再写。
 
-数据流（单次调用，K=5120，一个 program，M=1）
-============================================
+数据流（单次调用，K=5120，M=1，grid = 5 个 program）
+====================================================
     x[5120] BF16, w1[5120] FP32 (= 1 + norm.weight.float())
-      -> 第一遍：(512,4) + (512,4) + (512,4,尾部 mask) 三次 coalesced load
+      每个 program p（chunk = p）：
+      -> 第一遍（5 个 program 各算一遍，逐位相同）：(512,4) + (512,4) +
+         (512,4,尾部 mask) 三次 coalesced load
          -> 4 累加器 -> 9 级树 -> mul/add -> rsqrt -> rstd
-      -> 第二遍：5 个 64-block chunk（320 = 5 * 64），每个 chunk
-         load x/w1 -> y_f32 -> y_bf16（同时写回 out_bf16）-> y_f32
+      -> 第二遍：只处理自己的 64-block chunk（320 = 5 * 64；block 范围互不重叠）
+         load x/w1 -> y_f32 -> y_bf16（写自己那 1024 个 out_bf16 元素）-> y_f32
          -> block amax（16 个一组）
          -> 每个消费者：sf -> e4m3 -> out scale -> 16 个 e2m1 code -> 打包写 a_fp4/a_sf
 
-K 固定 5120（hidden_size），chunk 数 5 是静态的：核里没有运行期 block 循环边界，
-寄存器压力被 1024-element 的 chunk 限制住。调用方（``runner/model/norm_quant_patch.py``）
+K 固定 5120（hidden_size），chunk 数 5 是静态的；把一个 program 串行跑 5 个 chunk
+改成 grid=5、每个 program 一个 chunk（第一遍 norm 冗余重算，结果逐位相同），
+单 kernel 从 ~4 µs 降到 ~2 µs（128 次/步，见 2026-10-23 r5 journal）。
+寄存器压力仍被 1024-element 的 chunk 限制住。调用方（``runner/model/norm_quant_patch.py``）
 在 hidden != 5120 时回退原路径。
 
 预期瓶颈
@@ -306,7 +310,6 @@ def _norm_quant_kernel(
     a2_ptr,
     sf2_ptr,
     NUM_CONSUMERS: tl.constexpr,
-    N_CHUNKS_C: tl.constexpr,
 ):
     # ---------------- 第一遍：复刻 PyTorch ``x.pow(2).mean(-1)`` 的 reduction
     lane = tl.arange(0, C_LANES)
@@ -354,26 +357,31 @@ def _norm_quant_kernel(
     elems = tl.arange(0, C_BLOCK)
     pair = tl.arange(0, C_PAIR)
 
-    for chunk in tl.static_range(N_CHUNKS_C):
-        blocks = chunk * C_CHUNK_BLOCKS + blk
-        offs = blocks[:, None] * C_BLOCK + elems[None, :]
-        xv = tl.load(x_ptr + offs).to(tl.float32)
-        w1 = tl.load(w1_ptr + offs)
-        # (x * rstd) * w1：两次 mul.rn，与 eager 的 ``output * (1 + weight.float())`` 同序
-        yf = (xv * rstd) * w1
-        yb = yf.to(tl.bfloat16)
-        tl.store(out_ptr + offs, yb)
-        yqf = yb.to(tl.float32)
+    # 第二遍按 chunk 切到 grid=N_CHUNKS 个 program：每个 program 冗余地重算一遍
+    # 第一遍的 norm（结果逐位相同：同一段 FP32 树、同一份输入），只处理自己的
+    # 64 个 block。原来一个 program 串行跑 5 个 chunk，单 CTA 的延迟占了
+    # ~4 µs/kernel；切开后每个 program 只做 1 个 chunk，norm 部分并行冗余。
+    # 每个 block 的 out/a_fp4/a_sf 落点与串行版本完全一致（互不重叠）。
+    chunk = tl.program_id(0)
+    blocks = chunk * C_CHUNK_BLOCKS + blk
+    offs = blocks[:, None] * C_BLOCK + elems[None, :]
+    xv = tl.load(x_ptr + offs).to(tl.float32)
+    w1 = tl.load(w1_ptr + offs)
+    # (x * rstd) * w1：两次 mul.rn，与 eager 的 ``output * (1 + weight.float())`` 同序
+    yf = (xv * rstd) * w1
+    yb = yf.to(tl.bfloat16)
+    tl.store(out_ptr + offs, yb)
+    yqf = yb.to(tl.float32)
 
-        amax = tl.max(tl.abs(yqf), axis=1)
-        a_off = blocks[:, None] * C_PAIR + pair[None, :]
-        sf_off = (blocks // 4) * C_GROUP_STRIDE + (blocks % 4)
+    amax = tl.max(tl.abs(yqf), axis=1)
+    a_off = blocks[:, None] * C_PAIR + pair[None, :]
+    sf_off = (blocks // 4) * C_GROUP_STRIDE + (blocks % 4)
 
-        _emit_consumer(yqf, amax, gs0, c6, a0_ptr, sf0_ptr, a_off, sf_off)
-        if NUM_CONSUMERS >= 2:
-            _emit_consumer(yqf, amax, gs1, c6, a1_ptr, sf1_ptr, a_off, sf_off)
-        if NUM_CONSUMERS >= 3:
-            _emit_consumer(yqf, amax, gs2, c6, a2_ptr, sf2_ptr, a_off, sf_off)
+    _emit_consumer(yqf, amax, gs0, c6, a0_ptr, sf0_ptr, a_off, sf_off)
+    if NUM_CONSUMERS >= 2:
+        _emit_consumer(yqf, amax, gs1, c6, a1_ptr, sf1_ptr, a_off, sf_off)
+    if NUM_CONSUMERS >= 3:
+        _emit_consumer(yqf, amax, gs2, c6, a2_ptr, sf2_ptr, a_off, sf_off)
 
 
 # ------------------------------------------------------------------ 宿主入口
@@ -433,7 +441,7 @@ def norm_quant_fused(
             a_ptrs[index] = a_ptrs[0]
             sf_ptrs[index] = sf_ptrs[0]
 
-    _norm_quant_kernel[(1,)](
+    _norm_quant_kernel[(N_CHUNKS,)](
         x,
         w1,
         out_bf16,
@@ -450,7 +458,6 @@ def norm_quant_fused(
         a_ptrs[2],
         sf_ptrs[2],
         NUM_CONSUMERS=n,
-        N_CHUNKS_C=N_CHUNKS,
         num_warps=int(num_warps),
     )
 

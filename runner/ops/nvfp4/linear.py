@@ -256,7 +256,7 @@ class DecodePair:
                 xx = xx.to(torch.bfloat16)
             a_fp4, a_sf = nvfp4_quantize(
                 xx,
-                (1.0 / self.leader.input_scale).reshape(1),
+                self.leader.global_divisor,
                 sfLayout=SfLayout.layout_128x4,
                 do_shuffle=False,
                 backend="cuda",
@@ -624,6 +624,12 @@ class NVFP4Linear(nn.Module):
         self.register_buffer(
             "alpha", (self.input_scale * self.weight_scale_2).reshape(1).float()
         )
+        # global divisor = 1 / input_scale：同样是模型常量。之前每次 forward 现算，
+        # 每个未融合消费者每步多一个 1-element 的 ``reciprocal`` kernel（r3 profile:
+        # 129 次 / 0.112 ms；融合掉 out_proj 后剩 81 次）。构造时算一次，逐位相同。
+        self.register_buffer(
+            "global_divisor", (1.0 / self.input_scale).reshape(1).float()
+        )
         # 融合路径的单次槽位：``norm_quant_patch`` 在调用 mixer 之前填入
         # (a_fp4, a_sf)，``forward`` 取走并清空；平时恒为 None。
         self._pending_quantized: tuple[torch.Tensor, torch.Tensor] | None = None
@@ -736,11 +742,10 @@ class NVFP4Linear(nn.Module):
         if x.dtype != torch.bfloat16:
             x = x.to(torch.bfloat16)
 
-        # checkpoint 的 input_scale 是反量化乘数；量化用它的倒数作为 global divisor。
-        global_divisor = (1.0 / self.input_scale).reshape(1)
+        # checkpoint 的 input_scale 是反量化乘数；global divisor 在构造时算好（buffer）。
         a_fp4, a_sf = nvfp4_quantize(
             x,
-            global_divisor,
+            self.global_divisor,
             sfLayout=SfLayout.layout_128x4,
             do_shuffle=False,
             backend="cuda",
