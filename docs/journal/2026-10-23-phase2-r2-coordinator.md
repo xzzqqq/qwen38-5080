@@ -60,3 +60,26 @@ commit `9e35873`，32 步 × 1 次，结果
 | graph-8192 | 27.781 | 35.99 | 35.95 | 0.329 |
 
 与 511×5 正式值（26.80 / 27.84 / 27.83 ms）差 <0.2%，四条线都用它做筛选对照。
+
+## 事件：外部 GPU pytest 触发 halt（13:31）
+
+- 13:31 serve 取 job 前检测到外部 CUDA 进程 `pytest tests/ops tests/model`（pid 1389382，
+  304 MiB），等 10 s 未释放后按设计 halt 并退出（`job-000030` 保持 queued，不丢）。
+- 处理：等该进程自然退出（90 s）、确认 `nvidia-smi --query-compute-apps` 为空后
+  `serve --clear-halt` 恢复；给 4 个 Explorer 重申「不允许任何带 CUDA context 的
+  pytest / `make m2-test`」。
+- 说明：GPU 守卫按设计工作（fail closed），代价是队列暂停约 2 分钟。这属于进程级
+  误用，不是工具缺陷；但**多 session 下必须把「CPU 单测」和「GPU 用例」分开**，
+  后续派发消息里要写死这一点。
+
+## 任务 I 第一次提交（job-000030-c4bd4215）失败，已允许一次修复
+
+- 失败项 5 个：`numeric:in-place-path:out`（nrmse 0.691）、`numeric:in-place-path:conv_state`
+  （nrmse 0.700）、以及三个负对照 gate（`flipped-kernel-weight` / `misaligned-conv-state`
+  / `zero-conv-state` 的 nrmse 全为 0.0，说明负对照没有分辨力）。
+- 已成立：`patch-conv-wiring-real-shapes`（fused 96 / reference 0 / fallbacks {}，
+  nrmse 9.2e-8）；显式 out 槽路径数值正确；microbench 48 层 conv
+  **0.318 → 0.047 ms（省 0.271 ms/step）**。
+- 判断：in-place 写回 `x` 的错误很可能来自模型里 `mixed_qkv` 是 `transpose(1,2)` 的
+  非连续 view；建议直接放弃 in-place、默认用 96 个 20 KB 的 out 槽（总计 960 KB）。
+  已请 Explorer 修一版重投（第二次也是最后一次）。
