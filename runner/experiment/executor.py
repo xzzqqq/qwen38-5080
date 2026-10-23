@@ -199,8 +199,11 @@ def gpu_guard(args: Any) -> dict[str, Any]:
         return {"checked": False}
     info = gpu_compute_apps()
     if not info.get("available"):
+        # 无法确认 GPU 是否空闲时必须停队列：宁可等人工确认，也不能和残留进程抢卡。
         info["checked"] = True
-        return info
+        raise Halt(
+            "无法用 nvidia-smi 确认 GPU 是否空闲，停队列", info
+        )
     if not info.get("apps"):
         info["checked"] = True
         return info
@@ -511,6 +514,52 @@ def cleanup_job_group(keeper: subprocess.Popen | None, pgid: int | None) -> bool
     return not pgroup_members(pgid)
 
 
+def verify_argv_isolation(
+    argv: list[str], root: Path, worktree: Path, output_dir: Path
+) -> None:
+    """拒绝 argv 里任何指向本仓库 worktree 的路径，保证步骤只读提交的 commit。
+
+    绝对路径同时按词法和 resolve 后检查；相对路径先按 worktree 词法归一化，
+    逃逸出 worktree 且落回仓库源码时拒绝。worktree 内的 `.venv` 是符号链接，
+    词法在 worktree 内就放行。
+    """
+    wt = Path(worktree).resolve()
+    out = Path(output_dir).resolve()
+    bases = [base for base in schema.repo_worktrees(root) if base != wt]
+
+    def under(path: Path, parents: list[Path]) -> bool:
+        return any(path == parent or parent in path.parents for parent in parents)
+
+    for token in argv:
+        if token.startswith("-"):
+            continue
+        path = Path(token)
+        if path.is_absolute():
+            lexical = Path(os.path.normpath(token))
+            resolved = lexical.resolve(strict=False)
+            if under(lexical, [out]) or under(resolved, [out]):
+                continue
+            if under(lexical, [wt]) or under(resolved, [wt]):
+                continue
+            if under(lexical, bases) or under(resolved, bases):
+                raise JobAbort(
+                    "failed",
+                    f"argv 含仓库内绝对路径 {token!r}，会绕过 job worktree，拒绝执行",
+                    detail={"token": token, "worktree": str(wt)},
+                )
+            continue
+        lexical = Path(os.path.normpath(str(wt / path)))
+        if under(lexical, [wt]):
+            continue
+        resolved = lexical.resolve(strict=False)
+        if under(resolved, bases):
+            raise JobAbort(
+                "failed",
+                f"argv 相对路径 {token!r} 逃逸出 job worktree 并落回仓库源码，拒绝执行",
+                detail={"token": token, "resolved": str(resolved)},
+            )
+
+
 # ------------------------------------------------------------------ 步骤执行
 def run_step(
     store: Store,
@@ -549,6 +598,19 @@ def run_step(
         "validation": None,
     }
     step_records.append(record)
+    verify_argv_isolation(argv, store.root, worktree, output_dir)
+    resolved_script = script_path.resolve()
+    worktree_resolved = worktree.resolve()
+    if not (
+        resolved_script == worktree_resolved
+        or worktree_resolved in resolved_script.parents
+    ):
+        raise JobAbort(
+            "failed",
+            f"步骤 {index}: 脚本 {step.script} 解析到 job worktree 之外",
+            step=record,
+            detail={"script": str(resolved_script), "worktree": str(worktree_resolved)},
+        )
     if not script_path.exists():
         raise JobAbort(
             "failed",
@@ -680,13 +742,28 @@ def _sha256_file(path: Path) -> str | None:
 
 
 # ------------------------------------------------------------------ 结果
-def compute_correctness(step_records: list[dict[str, Any]]) -> str:
+def compute_correctness(
+    step_records: list[dict[str, Any]], request: schema.Request | None
+) -> str:
+    """只有**请求里的全部 check** 都执行且通过才能算 passed。
+
+    只看已执行记录会把“第一个 check 通过、后面的 check 根本没跑”误判成 passed；
+    这里必须用 request 的步骤集合做覆盖判断。
+    """
     checks = [record for record in step_records if record.get("kind") == "check"]
     for record in checks:
         validation = record.get("validation") or {}
         if validation.get("correctness") == "failed":
             return "failed"
-    if checks and all((record.get("validation") or {}).get("ok") for record in checks):
+    if request is None:
+        return "not_checked"
+    requested = {step.index for step in request.steps if step.kind == "check"}
+    passed = {
+        record.get("index")
+        for record in checks
+        if (record.get("validation") or {}).get("ok")
+    }
+    if requested and requested == passed:
         return "passed"
     return "not_checked"
 
@@ -750,7 +827,7 @@ def build_summary(
         "commit": job["commit"],
         "commit_requested": job.get("commit_requested"),
         "commands": commands,
-        "correctness": compute_correctness(step_records),
+        "correctness": compute_correctness(step_records, request),
         "metrics": merge_metrics(step_records),
         "queue_s": round(queue_s, 3) if queue_s is not None else None,
         "elapsed_s": round(elapsed_s, 3) if elapsed_s is not None else None,
@@ -1068,11 +1145,19 @@ def run_job(
     worktree: Path | None = None
     keeper: subprocess.Popen | None = None
     pgid: int | None = None
-    raise_halt_after = False
     try:
         request = schema.parse_request_object(
             read_json(store.request_path(job_id)), store.root
         )
+        # 请求入队后不可修改：sha256 + commit 双重核对（文件权限只是第一道门）。
+        if request.sha256 != job.get("request_sha256"):
+            raise schema.RequestError(
+                "request.json 与队列记录的 sha256 不一致，请求入队后被修改"
+            )
+        if request.commit != job.get("commit"):
+            raise schema.RequestError(
+                "request.json 的 commit 与队列记录不一致，请求入队后被修改"
+            )
         worktree, worktree_info = prepare_worktree(store, job)
         execution["worktree"] = worktree_info
         env = build_step_env(store, job, request, worktree)
@@ -1136,6 +1221,16 @@ def run_job(
     except JobAbort as abort:
         state = abort.state
         error = error_from_abort(abort, step_records)
+    except schema.RequestError as exc:
+        state = "failed"
+        error = {
+            "step": None,
+            "kind": None,
+            "reason": f"请求重放校验失败: {exc}",
+            "category": "invalid_request",
+            "detail": None,
+            "log": None,
+        }
     except Halt as halt:
         state = "interrupted"
         error = {
@@ -1161,17 +1256,23 @@ def run_job(
     # 收尾：先清理 job 级进程组（keeper + 任何残留），再写 summary。
     group_cleaned = cleanup_job_group(keeper, pgid)
     execution["job_group_cleaned"] = group_cleaned
-    if not group_cleaned and state == "succeeded":
-        state = "interrupted"
-        error = {
-            "step": None,
-            "kind": None,
-            "reason": f"job 进程组 {pgid} 在 SIGKILL 后仍未确认退出",
-            "category": "halted",
-            "detail": {"pgid": pgid},
-            "log": None,
-        }
-        raise_halt_after = True
+    halt_reason = None
+    halt_detail = None
+    if not group_cleaned:
+        # 不管 job 本身是成功还是失败，进程组没确认退出都要停队列。
+        halt_reason = f"job 进程组 {pgid} 在 SIGKILL 后仍未确认退出"
+        halt_detail = {"pgid": pgid, "job_id": job_id}
+        execution["group_cleanup_error"] = halt_reason
+        if state == "succeeded":
+            state = "interrupted"
+            error = {
+                "step": None,
+                "kind": None,
+                "reason": halt_reason,
+                "category": "halted",
+                "detail": {"pgid": pgid},
+                "log": None,
+            }
     finished_at = now_iso()
     queue_s = job.get("queue_s")
     elapsed_s = None
@@ -1218,18 +1319,17 @@ def run_job(
         ),
         correctness=summary["correctness"],
         summary_path=str(store.summary_path(job_id)),
-        worktree_removed=bool(execution.get("worktree", {}).get("removed")),
+        worktree_removed=bool((execution.get("worktree") or {}).get("removed")),
     )
     notify_job(store, job_id, args.notify_cmd)
     execution["notification"] = (store.get(job_id) or {}).get("notification")
     write_json_atomic(store.execution_path(job_id), execution)
     # 失败/中断的 worktree 保留下来便于查日志；success 才删除（见上）。
-    if raise_halt_after or (error and error.get("category") == "halted"):
-        raise Halt(
-            (error or {}).get("reason", "job 进程组未确认退出"),
-            (error or {}).get("detail"),
-            job_id,
-        )
+    if halt_reason is None and error and error.get("category") == "halted":
+        halt_reason = str(error.get("reason") or "job 进程组未确认退出")
+        halt_detail = error.get("detail")
+    if halt_reason:
+        raise Halt(halt_reason, halt_detail, job_id)
     return summary
 
 
@@ -1277,16 +1377,29 @@ def reconcile(store: Store, args: Any) -> list[str]:
         if record.get("state") != "running":
             continue
         pid = record.get("pid")
+        pgid = record.get("pgid")
         ticks = record.get("proc_start_ticks")
-        if pid_alive(pid, ticks):
+        members = pgroup_members(pgid)
+        if pid_alive(pid, ticks) or members:
+            detail = {
+                "job_id": job_id,
+                "pid": pid,
+                "pgid": pgid,
+                "members": members[:8],
+            }
             store.update_job(
                 job_id,
                 orphan=True,
-                orphan_reason=f"执行器重启时进程 {pid} 仍存活",
+                orphan_reason=(
+                    f"执行器重启时仍有进程存活（keeper={pid}, pgid={pgid}, "
+                    f"members={members[:5]}）"
+                ),
             )
             raise Halt(
-                f"上一个 job {job_id} 的进程 {pid} 仍存活，无法接管，停队列",
-                {"job_id": job_id, "pid": pid, "pgid": record.get("pgid")},
+                f"上一个 job {job_id} 的进程组仍有成员存活"
+                f"（keeper={pid}, pgid={pgid}, members={members[:5]}），"
+                "无法接管，停队列",
+                detail,
                 job_id,
             )
         summary_path = store.summary_path(job_id)

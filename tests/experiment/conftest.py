@@ -27,6 +27,7 @@ FAKE_CHECK = '''#!/usr/bin/env python3
 """Fake m3_check：产物 schema 与真实脚本一致，行为由 FAKE_* 环境变量控制。"""
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import subprocess
@@ -74,6 +75,13 @@ def main():
         return 1
 
     mode = os.environ.get("FAKE_CHECK_MODE", "ok")
+    fixtures_dir = Path(a.fixtures)
+    if not fixtures_dir.is_absolute():
+        fixtures_dir = Path.cwd() / fixtures_dir
+    manifest = json.loads((fixtures_dir / "manifest.json").read_text())
+    fixtures_sha = hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     only_session = os.environ.get("FAKE_SLEEP_SESSION")
     sleepy = (not only_session) or os.environ.get("EXPERIMENT_SESSION_ID") == only_session
     if sleepy and os.environ.get("FAKE_GRANDCHILD") == "1":
@@ -108,7 +116,7 @@ def main():
                     "argv": ["scripts/m3_check.py", "--worker", name, "--out", str(sub),
                              "--steps", str(a.steps)],
                 },
-                "fixtures": {"dir": a.fixtures, "manifest_sha256": "f" * 64},
+                "fixtures": {"dir": a.fixtures, "manifest_sha256": fixtures_sha},
                 "probe": getattr(probe, "MARKER", None) if probe else None,
             }
             (sub / "report.json").write_text(json.dumps(report))
@@ -147,6 +155,7 @@ if __name__ == "__main__":
 FAKE_BENCH = '''#!/usr/bin/env python3
 """Fake decode bench：按请求的 steps/repeats 写出完整样本；可用 FAKE_* 造旧配置。"""
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -178,6 +187,7 @@ def main():
     p.add_argument("--repeats-non-graph", type=int, default=None)
     p.add_argument("--chunk-size", type=int, default=128)
     p.add_argument("--graph-warmup", type=int, default=3)
+    p.add_argument("--fixtures", default="bench/workloads/m3-p0")
     p.add_argument("--out", type=Path, required=True)
     p.add_argument("--resume", action="store_true")
     p.add_argument("--list", action="store_true")
@@ -188,7 +198,13 @@ def main():
     steps = int(os.environ.get("FAKE_BENCH_STEPS", a.steps))
     forced_repeats = os.environ.get("FAKE_BENCH_REPEATS")
     names = list(SCENARIOS) if a.only.strip() in ("", "all") else [s.strip() for s in a.only.split(",") if s.strip()]
-    fixtures_sha = "b" * 64
+    fixtures_dir = Path(a.fixtures)
+    if not fixtures_dir.is_absolute():
+        fixtures_dir = Path.cwd() / fixtures_dir
+    manifest = json.loads((fixtures_dir / "manifest.json").read_text())
+    fixtures_sha = hashlib.sha256(
+        json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
     results = []
     for name in names:
         spec = SCENARIOS[name]
@@ -265,6 +281,7 @@ def main():
     (out / "provenance.json").write_text(json.dumps({
         "git": {"commit": commit(), "dirty": False},
         "run_config": matrix,
+        "fixtures": a.fixtures,
         "environment_fingerprint": {"torch": "fake"},
         "environment": {"python": "fake"},
     }))

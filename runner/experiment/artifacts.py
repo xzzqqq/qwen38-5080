@@ -13,7 +13,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +76,11 @@ def _git_commit(prov: Any, expected: str, where: str) -> None:
         f"{where} 的 commit 与请求不一致",
         {"expected": expected, "got": got},
     )
+    _require(
+        git.get("dirty") is False,
+        f"{where} 的源码不是 clean worktree（dirty=true），结果不可复现",
+        {"dirty": git.get("dirty")},
+    )
 
 
 def _check_scenarios(got: list[str], expected: tuple[str, ...] | None, where: str) -> None:
@@ -108,13 +115,46 @@ def _as_int(value: Any, what: str) -> int:
         raise ArtifactError(f"{what} 不是整数: {value!r}") from exc
 
 
-def _positive(value: Any, what: str) -> float:
+def _finite(
+    value: Any,
+    what: str,
+    *,
+    minimum: float | None = None,
+    strictly_positive: bool = False,
+) -> float:
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
         raise ArtifactError(f"{what} 不是数字: {value!r}") from exc
-    _require(number > 0, f"{what} 必须为正数", {"got": number})
+    _require(math.isfinite(number), f"{what} 不是有限数", {"got": value})
+    if strictly_positive:
+        _require(number > 0, f"{what} 必须为正数", {"got": number})
+    elif minimum is not None:
+        _require(number >= minimum, f"{what} 不能小于 {minimum}", {"got": number})
     return number
+
+
+def _positive(value: Any, what: str) -> float:
+    return _finite(value, what, strictly_positive=True)
+
+
+def _resolve_fixtures(value: str, expect: Expectation) -> Path | None:
+    path = Path(value)
+    if path.is_absolute():
+        return path.resolve()
+    if expect.worktree is None:
+        return None
+    return (expect.worktree / path).resolve()
+
+
+def _fixtures_manifest_sha(dir_path: Path) -> str | None:
+    """按 bench/m3_check 的口径 hash fixtures manifest 对象。"""
+    try:
+        payload = json.loads((dir_path / "manifest.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return None
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canonical.encode()).hexdigest()
 
 
 def _fixtures_sha(reports: list[dict], where: str) -> str | None:
@@ -233,6 +273,30 @@ def validate_check(expect: Expectation) -> dict:
                 f"check {name}: 实际 steps={handled_steps} != 请求 {expect.steps}",
             )
         _check_fixtures_dir(report, expect, f"check {name}")
+        fixtures_meta = report.get("fixtures") or {}
+        fixtures_value = fixtures_meta.get("dir")
+        _require(bool(fixtures_value), f"check {name}: 缺 fixtures.dir")
+        fixtures_dir = _resolve_fixtures(str(fixtures_value), expect)
+        _require(fixtures_dir is not None, f"check {name}: 无法解析 fixtures 目录")
+        # 执行期 worktree 还在，必须重算 manifest hash；成功 job 的 worktree 会被删，
+        # 事后复查时只能依赖记录值与跨场景一致性。
+        if fixtures_dir.exists():
+            expected_fixtures_sha = _fixtures_manifest_sha(fixtures_dir)
+            _require(
+                expected_fixtures_sha is not None,
+                f"check {name}: 无法读取 fixtures manifest，不能确认输入身份",
+                {"dir": str(fixtures_dir)},
+            )
+            _require(
+                fixtures_meta.get("manifest_sha256") == expected_fixtures_sha,
+                f"check {name}: fixtures hash 与 manifest 内容不一致",
+                {"artifact": fixtures_meta.get("manifest_sha256"), "manifest": expected_fixtures_sha},
+            )
+        else:
+            _require(
+                bool(fixtures_meta.get("manifest_sha256")),
+                f"check {name}: 缺 fixtures manifest hash",
+            )
 
         scenarios_metrics.append(
             {
@@ -332,6 +396,39 @@ def validate_bench(expect: Expectation) -> dict:
         "bench provenance 缺 environment_fingerprint",
     )
 
+    recorded_fixtures = top_prov.get("fixtures")
+    _require(
+        isinstance(recorded_fixtures, str) and bool(recorded_fixtures),
+        "bench provenance 缺 fixtures 路径，不能确认输入身份",
+    )
+    recorded_fixtures_dir = _resolve_fixtures(recorded_fixtures, expect)
+    _require(recorded_fixtures_dir is not None, "无法解析 bench fixtures 目录（缺 worktree）")
+    if expect.fixtures is not None:
+        requested_fixtures_dir = _resolve_fixtures(expect.fixtures, expect)
+        _require(
+            requested_fixtures_dir == recorded_fixtures_dir,
+            "bench 实际使用的 fixtures 与请求不一致",
+            {"requested": str(requested_fixtures_dir), "actual": str(recorded_fixtures_dir)},
+        )
+    if recorded_fixtures_dir.exists():
+        expected_fixtures_sha = _fixtures_manifest_sha(recorded_fixtures_dir)
+        _require(
+            expected_fixtures_sha is not None,
+            "无法读取 bench fixtures manifest，不能确认输入身份",
+            {"dir": str(recorded_fixtures_dir)},
+        )
+        _require(
+            matrix.get("fixtures_sha256") == expected_fixtures_sha,
+            "bench provenance fixtures_sha256 与 manifest 内容不一致",
+            {"recorded": matrix.get("fixtures_sha256"), "manifest": expected_fixtures_sha},
+        )
+    else:
+        expected_fixtures_sha = str(matrix.get("fixtures_sha256") or "")
+        _require(
+            bool(expected_fixtures_sha),
+            "bench provenance 缺 fixtures_sha256，不能确认输入身份",
+        )
+
     results = data.get("results") or []
     _require(isinstance(results, list) and bool(results), "bench.json 没有 results")
     got_names = [str(entry.get("scenario")) for entry in results]
@@ -382,6 +479,11 @@ def validate_bench(expect: Expectation) -> dict:
         _git_commit(entry.get("provenance"), expect.commit, f"bench {name} result")
         fixtures_sha = config.get("fixtures_sha256")
         _require(bool(fixtures_sha), f"bench {name}: 缺 fixtures_sha256")
+        _require(
+            fixtures_sha == expected_fixtures_sha,
+            f"bench {name}: fixtures_sha256 与 manifest 内容不一致",
+            {"recorded": fixtures_sha, "manifest": expected_fixtures_sha},
+        )
         fixtures_hashes.add(str(fixtures_sha))
 
         samples = entry.get("samples") or []
@@ -399,6 +501,12 @@ def validate_bench(expect: Expectation) -> dict:
                 len(per_step) == steps,
                 f"bench {name} sample {index}: per_step_ms {len(per_step)} != steps {steps}",
             )
+            for step_index, value in enumerate(per_step):
+                _finite(
+                    value,
+                    f"bench {name} sample {index} per_step_ms[{step_index}]",
+                    strictly_positive=True,
+                )
             _require(
                 _as_int(tokens.get("timed_steps", -1), f"bench {name} timed_steps") == steps,
                 f"bench {name} sample {index}: timed_steps != steps",
@@ -421,6 +529,25 @@ def validate_bench(expect: Expectation) -> dict:
                 model.get("peak_allocated_gb"),
                 f"bench {name} sample {index} peak_allocated_gb",
             )
+            _positive(
+                model.get("peak_reserved_gb"),
+                f"bench {name} sample {index} peak_reserved_gb",
+            )
+            _finite(
+                model.get("free_gb"),
+                f"bench {name} sample {index} free_gb",
+                minimum=0.0,
+            )
+            _finite(
+                (sample.get("prefill") or {}).get("prefill_s"),
+                f"bench {name} sample {index} prefill_s",
+                minimum=0.0,
+            )
+            if "ttft_s" in (sample.get("request") or {}):
+                _positive(
+                    (sample.get("request") or {}).get("ttft_s"),
+                    f"bench {name} sample {index} ttft_s",
+                )
 
         summary = entry.get("summary") or {}
         _require(isinstance(summary, dict) and bool(summary), f"bench {name}: summary 为空")
@@ -443,12 +570,38 @@ def validate_bench(expect: Expectation) -> dict:
                 == expected_repeats,
                 f"bench {name}: summary.{key}.n != repeats",
             )
-            _positive(stats.get("median"), f"bench {name} summary.{key}.median")
+            for field in ("median", "min", "max"):
+                _positive(
+                    stats.get(field), f"bench {name} summary.{key}.{field}"
+                )
+            if "std" in stats:
+                _finite(stats["std"], f"bench {name} summary.{key}.std", minimum=0.0)
         step_ms = summary["step_ms"] or {}
         _require(
             _as_int(step_ms.get("n", -1), f"bench {name} summary.step_ms.n")
             == steps * expected_repeats,
             f"bench {name}: summary.step_ms.n != steps*repeats",
+        )
+        for field in ("p50_ms", "p95_ms"):
+            _positive(step_ms.get(field), f"bench {name} summary.step_ms.{field}")
+        for field in ("mean_ms", "min_ms", "max_ms"):
+            if field in step_ms:
+                _positive(step_ms[field], f"bench {name} summary.step_ms.{field}")
+        if "std_ms" in step_ms:
+            _finite(step_ms["std_ms"], f"bench {name} summary.step_ms.std_ms", minimum=0.0)
+        prefill_stats = summary["prefill_s"] or {}
+        _positive(prefill_stats.get("median"), f"bench {name} summary.prefill_s.median")
+        if summary.get("ttft_s"):
+            _positive(
+                (summary["ttft_s"] or {}).get("median"),
+                f"bench {name} summary.ttft_s.median",
+            )
+        _positive(summary["peak_allocated_gb"], f"bench {name} summary.peak_allocated_gb")
+        _positive(summary["peak_reserved_gb"], f"bench {name} summary.peak_reserved_gb")
+        _finite(summary["free_gb_min"], f"bench {name} summary.free_gb_min", minimum=0.0)
+        _require(
+            isinstance(summary["trace_match_all"], bool),
+            f"bench {name}: summary.trace_match_all 必须是 bool",
         )
 
         scenarios_metrics.append(
@@ -557,11 +710,26 @@ def validate_memory(expect: Expectation) -> dict:
         growth = entry.get("growth") or {}
         for key in (
             "allocated_delta_gb",
+            "reserved_delta_gb",
             "cycle2_allocated_delta_gb",
             "cycle2_reserved_delta_gb",
-            "kv_data_ptr_stable",
         ):
             _require(key in growth, f"memory {name}: growth 缺 {key}")
+            _finite(growth[key], f"memory {name}: growth.{key}")
+        _require(
+            isinstance(growth.get("kv_data_ptr_stable"), bool),
+            f"memory {name}: growth.kv_data_ptr_stable 必须是 bool",
+        )
+        for row in stages:
+            for key in (
+                "peak_allocated_gb",
+                "peak_reserved_gb",
+                "end_allocated_gb",
+                "end_reserved_gb",
+                "free_gb",
+            ):
+                if key in row:
+                    _finite(row[key], f"memory {name}: stage {row.get('stage')}.{key}", minimum=0.0)
         peaks = entry.get("peaks") or {}
         for key in (
             "load_peak_allocated_gb",
@@ -570,12 +738,9 @@ def validate_memory(expect: Expectation) -> dict:
             "min_free_gb",
         ):
             _require(key in peaks, f"memory {name}: peaks 缺 {key}")
-        _positive(peaks["max_peak_allocated_gb"], f"memory {name} max_peak_allocated_gb")
-        _require(
-            float(peaks["min_free_gb"]) > 0,
-            f"memory {name}: min_free_gb <= 0",
-            {"min_free_gb": peaks["min_free_gb"]},
-        )
+        for key in ("load_peak_allocated_gb", "max_peak_allocated_gb", "max_peak_reserved_gb"):
+            _positive(peaks[key], f"memory {name} {key}")
+        _positive(peaks["min_free_gb"], f"memory {name} min_free_gb")
         spec = entry.get("spec") or {}
         if str(spec.get("execution")) == "graph":
             _require(
@@ -670,10 +835,12 @@ def validate_profile(expect: Expectation) -> dict:
         for key in ("kernels", "per_step_kernels", "per_step_kernel_us", "per_step_wall_us"):
             _positive(stats.get(key), f"profile {name} {key}")
         if "tiny_kernel_count_pct" in stats:
-            _require(
-                0.0 <= float(stats["tiny_kernel_count_pct"]) <= 100.0,
-                f"profile {name}: tiny_kernel_count_pct 越界",
+            pct = _finite(
+                stats["tiny_kernel_count_pct"],
+                f"profile {name}: tiny_kernel_count_pct",
+                minimum=0.0,
             )
+            _require(pct <= 100.0, f"profile {name}: tiny_kernel_count_pct 越界", {"got": pct})
         top = stats.get("top") or []
         scenarios_metrics.append(
             {

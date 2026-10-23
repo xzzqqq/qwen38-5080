@@ -109,7 +109,7 @@ results/experiments/                 # 默认在**主仓库**下，不进 git
 | `timeout_s` | 正数，≤ 86400；从 job 开始执行（含 worktree/准备）计时，不含排队 |
 | `steps` | 非空、有序；最多 32 个 |
 | `kind` | `check / bench / memory / profile`，必须与脚本匹配 |
-| `argv` | 数组，直接 `subprocess` 执行，不经 shell；`--out` 必须指向 `{output}` 下的目录 |
+| `argv` | 数组，直接 `subprocess` 执行，不经 shell；`--out` 必须指向 `{output}` 下的目录。**argv 里指向本仓库任何 worktree 的绝对路径会被拒绝**，必须用仓库相对路径（否则会绕过 job worktree、读到主工作区的未提交修改） |
 | `result` | 该步骤必须产出的结构化产物；必须以 `{output}/` 开头、`.json` 结尾，且在 `--out` 目录内 |
 
 提交期就会拒绝（错误码 2）：未知字段、commit 不存在/不是完整 SHA、未注册脚本、
@@ -133,6 +133,10 @@ kind 与脚本不匹配、缺 `--out`、result 不在 output 内、`--only` 场�
   使用 GPU。job 期间持有 `gpu.lock`。
 - **worktree**：`git worktree add --detach <commit>`；`<worktree>/.venv` 和
   `<worktree>/models` 只是指向主仓库的符号链接，不复制权重；worktree 必须 clean。
+- **commit 隔离**：argv 只允许仓库相对路径；提交时拒绝指向任一 worktree 的绝对
+  路径，执行器还会二次检查绝对路径和 `..` 逃逸（相对路径按 worktree 归一化）。
+  `request.json` 入队后按 sha256 + commit 再核对一次；产物 provenance 必须
+  `dirty=false`，否则视为不是在提交的 clean worktree 里跑的。
 - **环境**：复制 serve 的环境，再补 `CUDA_HOME / VENV / CPATH / LIBRARY_PATH /
   PATH / PYTHONPATH=<worktree>` 和 `FLASHINFER_WORKSPACE_BASE=<root>/.tmp/flashinfer`，
   并注入 `EXPERIMENT_JOB_ID / EXPERIMENT_SESSION_ID / EXPERIMENT_COMMIT /
@@ -145,12 +149,14 @@ kind 与脚本不匹配、缺 `--out`、result 不在 output 内、`--only` 场�
 - **取消**：queued 立即变 `cancelled`（不执行、写 summary）；running 只置
   `cancel_requested=true`，实际退出前仍显示 `running`，执行器在 1 s 内终止进程组。
   执行器不在时，`cancel` 会按记录的 pid/pgid 直接杀孤儿进程组并确认退出。
-- **GPU 守卫**：每次取 job 前用 `nvidia-smi` 查计算进程；发现外部进程先等
+- **GPU 守卫**：每次取 job 前用 `nvidia-smi` 查计算进程；**查询失败/不可用也直接
+  停队列**（fail closed：无法确认 GPU 可用就不跑）。发现外部进程先等
   `GPU_DRAIN_S=10 s`（刚被杀掉的 CUDA context 释放 12 GB 有秒级延迟），持续占用
   才停队列。`--no-gpu-guard` 只用于 CPU fake 命令验证。
-- **停队列（halt）**：外部 GPU 进程、`gpu.lock` 被占、进程组无法确认退出、执行器
-  重启时发现孤儿进程仍存活，都会写 `halted={reason, detail, at}` 并停止消费。
-  确认设备空闲、进程已退出后，用 `serve --clear-halt` 恢复。
+- **停队列（halt）**：外部 GPU 进程、`nvidia-smi` 不可用、`gpu.lock` 被占、进程组
+  无法确认退出（**即使 job 本身已经 failed**）、执行器重启时发现 keeper 或进程组
+  任一成员仍存活，都会写 `halted={reason, detail, at}` 并停止消费。确认设备空闲、
+  进程已退出后，用 `serve --clear-halt` 恢复。
 - **执行器重启**：核对记录的 pid + `/proc/<pid>/stat` starttime。进程仍存活 →
   停队列（不接管）；已退出且 summary 完整 → 采纳原状态并标 `recovered`；已退出但
   无完整结果 → `interrupted`。failed/timed_out/interrupted 都**不自动重跑**。
@@ -178,9 +184,16 @@ kind 与脚本不匹配、缺 `--out`、result 不在 output 内、`--only` 场�
 
 | 情况 | correctness |
 |---|---|
-| 至少一个 check 步骤，且所有 check 的 gate + coverage 全部通过 | `passed` |
+| 请求里的**全部** check 步骤都执行完，且 gate + coverage 全部通过 | `passed` |
 | 有 gate 失败（即使进程退出码非 0） | `failed` |
-| 没有 check、check 未执行完、缺产物/配置不符/超时/取消 | `not_checked` |
+| 没有 check、有 check 未执行/未执行完、缺产物/配置不符/超时/取消 | `not_checked` |
+
+覆盖判断用的是**请求的步骤集合**：只跑了第一个 check、后面的 check 根本没跑，
+即使已跑的 check 全通过，也不能算 `passed`。
+
+产物校验还会重算 fixtures manifest hash 并与记录的 `fixtures_sha256`/请求路径
+比对；执行期 worktree 还在，重算失败直接判 failed。成功 job 的 worktree 删除后，
+事后复查只能依赖记录值与跨场景一致性。
 
 `diagnostic` 只记录、不参与判定，不因为它失败改判已通过的 gate。
 
@@ -226,7 +239,7 @@ ps -o pid,pgid,cmd -p <record.pid>
 | 档位 | 命令 | 耗时 | 证明什么 |
 |---|---|---|---|
 | 静态 | `python -m py_compile runner/experiment/*.py scripts/experiment.py` | 秒级 | 语法/import |
-| CPU 队列测试 | `make experiment-test` | ~35 s | 请求校验、worktree 隔离、FIFO/不重叠、失败短路、超时/取消杀进程组、重启核对、通知去重、产物校验正反例 |
+| CPU 队列测试 | `make experiment-test` | ~43 s | 请求校验、worktree/绝对路径隔离、FIFO/不重叠、失败短路、超时/取消杀进程组、重启核对、通知去重、产物校验正反例 |
 | 单 job 冒烟（GPU） | `submit` + `serve --once` 一个 `graph-1024 --steps 16` check | 1–2 min（含 load） | 真实 worktree/env/产物/GPU 守卫 |
 | check→bench（GPU） | 本文 §4 的请求 | ~2.5 min | spec §7 的 5080 验收路径 |
 | 全量实验 | Explorer 自己按 `make verify` 选档 | 15–95 min | 具体候选性能 |
@@ -234,7 +247,7 @@ ps -o pid,pgid,cmd -p <record.pid>
 ## 10. 已验证（2026-10-23）
 
 - 实现提交：`cd16e2f`（`feat: add a queued GPU experiment runner`）。
-- CPU：`pytest tests/experiment -q` → **51 passed**，覆盖 spec §7 的九类场景
+- CPU：`pytest tests/experiment -q` → **68 passed**，覆盖 spec §7 的九类场景
   （并发 FIFO/不重叠、改动 worktree、check 失败/缺产物、旧配置、超时/取消、
   重启、通知、重复查询、纯 bench/profile）。
 - GPU（check/bench 在 commit `3430318`；profile/memory 在 `4891030`；checkpoint `5b7a687`）：
@@ -255,12 +268,18 @@ ps -o pid,pgid,cmd -p <record.pid>
     的 10 个 stage 通过校验；load peak 14.458 GB、max allocated **14.879 GB** /
     reserved 15.005 GB、min free **1.170 GB**；allocated 与 cycle2 增长 0、KV ptr
     稳定、reset 后 logits 一致；correctness=not_checked。
-- 复现命令与结果路径见 [journal](journal/2026-10-23-experiment-tools.md)。
+  - 审查修复后复跑 `job-000011`（commit `ed52250`）：同样 24/24 gate、bench
+    **31.401 tok/s**；真实外部 CUDA 进程（558 MiB）下 `serve` 等 10.08 s 后 halt，
+    job 保持 queued（`job-000010` 随后取消）。
+- 复现命令与结果路径见 [journal](journal/2026-10-23-experiment-tools.md) 和
+  [审查修复记录](journal/2026-10-23-experiment-tools-review-fixes.md)。
 
 ## 11. 已知限制
 
 - profile 产物约 295 MB（nsys trace 为主），只在 `results/experiments/` 下保留、
   不入库；复核时需要读本地路径，或把关键 `timeline_summary` 数字抄进 journal。
+- 成功 job 的 worktree 会被删除，事后用校验器复查时无法重算 fixtures manifest
+  hash；执行期（worktree 尚在）仍会重算并拦截错配。
 - 默认不主动向 session 投递通知（`pending`），需要 Coordinator 转发；配置
   `--notify-cmd` 后是“尽力投递一次”，不做重试。
 - GPU 守卫是“取 job 前检查 + 10 s 释放宽限”，检查与真正启动步骤之间仍有一个

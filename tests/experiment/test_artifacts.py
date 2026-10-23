@@ -54,14 +54,11 @@ def _expectation(repo, kind, out, **overrides):
     return schema.Expectation(**base)
 
 
-def _make_check(repo, out, *, only="graph-1024", steps=16, env=None):
-    return _run(
-        repo,
-        [PYTHON, "scripts/m3_check.py", "--only", only, "--steps", str(steps)],
-        out,
-        env=env,
-        expect_rc=None,
-    )
+def _make_check(repo, out, *, only="graph-1024", steps=16, env=None, fixtures=None):
+    argv = [PYTHON, "scripts/m3_check.py", "--only", only, "--steps", str(steps)]
+    if fixtures is not None:
+        argv += ["--fixtures", fixtures]
+    return _run(repo, argv, out, env=env, expect_rc=None)
 
 
 def _make_bench(
@@ -73,6 +70,7 @@ def _make_bench(
     repeats=1,
     repeats_non_graph=None,
     env=None,
+    fixtures=None,
 ):
     argv = [
         PYTHON,
@@ -86,6 +84,8 @@ def _make_bench(
     ]
     if repeats_non_graph is not None:
         argv += ["--repeats-non-graph", str(repeats_non_graph)]
+    if fixtures is not None:
+        argv += ["--fixtures", fixtures]
     return _run(repo, argv, out, env=env)
 
 
@@ -355,3 +355,172 @@ def test_profile_steps_mismatch(repo, tmp_path):
     _make_profile(repo, out, steps=2)
     with pytest.raises(artifacts.ArtifactError, match="steps"):
         artifacts.validate("profile", _expectation(repo, "profile", out, steps=8))
+
+
+# ------------------------------------------------------------------ review fixes
+def test_bench_fixtures_must_match_request(repo, tmp_path):
+    other = repo / "bench/other"
+    other.mkdir(parents=True)
+    (other / "manifest.json").write_text('{"files": {"x": {"sha256": "abc"}}}')
+    out = tmp_path / "bench"
+    _make_bench(repo, out, fixtures="bench/other")
+    with pytest.raises(artifacts.ArtifactError, match="fixtures"):
+        artifacts.validate(
+            "bench",
+            _expectation(
+                repo,
+                "bench",
+                out,
+                scenarios=("graph-512-1024",),
+                steps=4,
+                repeats=1,
+                fixtures="bench/workloads/m3-p0",
+            ),
+        )
+    # 请求不固定 fixtures 时，产物自洽（记录目录 + manifest hash）可以通过
+    artifacts.validate(
+        "bench",
+        _expectation(repo, "bench", out, scenarios=("graph-512-1024",), steps=4, repeats=1),
+    )
+
+
+def test_bench_fixtures_content_must_match_hash(repo, tmp_path):
+    out = tmp_path / "bench"
+    _make_bench(repo, out)
+    prov_path = out / "provenance.json"
+    prov = json.loads(prov_path.read_text())
+    prov["run_config"]["fixtures_sha256"] = "0" * 64
+    prov_path.write_text(json.dumps(prov))
+    with pytest.raises(artifacts.ArtifactError, match="fixtures"):
+        artifacts.validate(
+            "bench",
+            _expectation(repo, "bench", out, scenarios=("graph-512-1024",), steps=4, repeats=1),
+        )
+
+    # 产物生成后改 manifest 内容，重算 hash 与记录不一致
+    out2 = tmp_path / "bench2"
+    _make_bench(repo, out2)
+    manifest = repo / "bench/workloads/m3-p0/manifest.json"
+    original = manifest.read_text()
+    try:
+        manifest.write_text('{"changed": true}')
+        with pytest.raises(artifacts.ArtifactError, match="fixtures"):
+            artifacts.validate(
+                "bench",
+                _expectation(
+                    repo, "bench", out2, scenarios=("graph-512-1024",), steps=4, repeats=1
+                ),
+            )
+    finally:
+        manifest.write_text(original)
+
+
+def test_bench_nan_inf_and_negative_rejected(repo, tmp_path):
+    out = tmp_path / "bench"
+    _make_bench(repo, out)
+    fresh = (out / "bench.json").read_text()
+    expect = _expectation(
+        repo, "bench", out, scenarios=("graph-512-1024",), steps=4, repeats=1
+    )
+    mutations = [
+        (
+            "per_step_nan",
+            lambda d: d["results"][0]["samples"][0]["model"]["per_step_ms"].__setitem__(
+                0, float("nan")
+            ),
+        ),
+        (
+            "summary_median_inf",
+            lambda d: d["results"][0]["summary"]["model_tok_s"].__setitem__(
+                "median", float("inf")
+            ),
+        ),
+        (
+            "sample_tok_s_inf",
+            lambda d: d["results"][0]["samples"][0]["model"].__setitem__(
+                "model_tok_s", float("inf")
+            ),
+        ),
+        (
+            "p95_nan",
+            lambda d: d["results"][0]["summary"]["step_ms"].__setitem__(
+                "p95_ms", float("nan")
+            ),
+        ),
+        (
+            "free_negative",
+            lambda d: d["results"][0]["summary"].__setitem__("free_gb_min", -1.0),
+        ),
+        (
+            "reserved_inf",
+            lambda d: d["results"][0]["samples"][0]["model"].__setitem__(
+                "peak_reserved_gb", float("inf")
+            ),
+        ),
+    ]
+    for name, mutate in mutations:
+        data = json.loads(fresh)
+        mutate(data)
+        (out / "bench.json").write_text(json.dumps(data))
+        with pytest.raises(artifacts.ArtifactError) as exc:
+            artifacts.validate("bench", expect)
+        reason = str(exc.value)
+        assert any(
+            token in reason for token in ("有限数", "不能小于", "正数")
+        ), (name, reason)
+
+
+def test_bench_dirty_provenance_rejected(repo, tmp_path):
+    out = tmp_path / "bench"
+    _make_bench(repo, out)
+    prov_path = out / "provenance.json"
+    prov = json.loads(prov_path.read_text())
+    prov["git"]["dirty"] = True
+    prov_path.write_text(json.dumps(prov))
+    with pytest.raises(artifacts.ArtifactError, match="clean"):
+        artifacts.validate(
+            "bench",
+            _expectation(repo, "bench", out, scenarios=("graph-512-1024",), steps=4, repeats=1),
+        )
+
+
+def test_check_fixtures_and_dirty_checked(repo, tmp_path):
+    other = repo / "bench/other"
+    other.mkdir(parents=True)
+    (other / "manifest.json").write_text('{"files": {"x": {"sha256": "abc"}}}')
+    out = tmp_path / "check"
+    _make_check(repo, out, fixtures="bench/other")
+    with pytest.raises(artifacts.ArtifactError, match="fixtures 目录"):
+        artifacts.validate(
+            "check",
+            _expectation(
+                repo,
+                "check",
+                out,
+                scenarios=("graph-1024",),
+                steps=16,
+                fixtures="bench/workloads/m3-p0",
+            ),
+        )
+
+    out2 = tmp_path / "check2"
+    _make_check(repo, out2)
+    report_path = out2 / "graph-1024" / "report.json"
+    report = json.loads(report_path.read_text())
+    report["fixtures"]["manifest_sha256"] = "0" * 64
+    report_path.write_text(json.dumps(report))
+    with pytest.raises(artifacts.ArtifactError, match="fixtures hash"):
+        artifacts.validate(
+            "check", _expectation(repo, "check", out2, scenarios=("graph-1024",), steps=16)
+        )
+
+    out3 = tmp_path / "check3"
+    _make_check(repo, out3)
+    report_path = out3 / "graph-1024" / "report.json"
+    report = json.loads(report_path.read_text())
+    report["provenance"]["git"]["dirty"] = True
+    report_path.write_text(json.dumps(report))
+    with pytest.raises(artifacts.ArtifactError, match="clean"):
+        artifacts.validate(
+            "check", _expectation(repo, "check", out3, scenarios=("graph-1024",), steps=16)
+        )

@@ -18,6 +18,7 @@ import ast
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -179,30 +180,72 @@ def _expand_template(template: str, output_dir: Path) -> str:
     return template.replace(PLACEHOLDER, str(output_dir))
 
 
-def _script_relative(token: str, root: Path) -> str | None:
+def _script_relative(token: str) -> str | None:
+    """只接受仓库相对路径。绝对路径会绕过 job worktree，跑主工作区的代码。"""
     if token.startswith("-") or PLACEHOLDER in token:
         return None
-    path = Path(token)
-    if path.is_absolute():
-        try:
-            return path.resolve().relative_to(root.resolve()).as_posix()
-        except ValueError:
-            return None
+    if Path(token).is_absolute():
+        return None
     rel = PurePosixPath(token)
     if rel.parts and rel.parts[0] == "..":
         return None
     return str(rel)
 
 
-def find_script(argv: tuple[str, ...] | list[str], root: Path) -> str | None:
+def find_script(argv: tuple[str, ...] | list[str]) -> str | None:
     hits: list[str] = []
     for token in argv:
-        rel = _script_relative(token, root)
+        rel = _script_relative(token)
         if rel is not None and rel in SCRIPTS:
             hits.append(rel)
     if len(hits) > 1:
         raise RequestError(f"一个步骤里出现多个已注册脚本: {sorted(set(hits))}")
     return hits[0] if hits else None
+
+
+def repo_worktrees(root: Path) -> list[Path]:
+    """本仓库所有 worktree 的绝对路径（主工作区、Explorer、job worktree）。"""
+    paths: list[Path] = []
+    proc = _git(root, "worktree", "list", "--porcelain")
+    if proc.returncode == 0:
+        for line in proc.stdout.splitlines():
+            if line.startswith("worktree "):
+                try:
+                    paths.append(Path(line[len("worktree ") :]).resolve())
+                except OSError:
+                    continue
+    root_resolved = Path(root).resolve()
+    if root_resolved not in paths:
+        paths.append(root_resolved)
+    return paths
+
+
+def _under(path: Path, bases: list[Path]) -> bool:
+    return any(path == base or base in path.parents for base in bases)
+
+
+def reject_repo_absolute_paths(argv: tuple[str, ...] | list[str], root: Path, where: str) -> None:
+    """拒绝 argv 里指向本仓库任何 worktree 的绝对路径。
+
+    这类路径（尤其是绝对脚本路径）会让子进程读主工作区的源码：提交后再改文件
+    也能被带进实验，绕过“从提交 commit 执行”。必须用仓库相对路径。
+    """
+    bases = repo_worktrees(root)
+    for token in argv:
+        if not Path(token).is_absolute():
+            continue
+        lexical = Path(os.path.normpath(token))
+        try:
+            resolved = Path(token).resolve()
+        except OSError:
+            resolved = lexical
+        # 词法或解析后落在任一 worktree 里都拒绝；符号链接（如 .venv）也不例外，
+        # 因为请求应统一使用仓库相对路径。
+        if _under(lexical, bases) or _under(resolved, bases):
+            raise RequestError(
+                f"{where}: argv 不能使用仓库内绝对路径 {token!r}"
+                "（会绕过 job worktree、执行主工作区代码）；请改用仓库相对路径"
+            )
 
 
 def scenario_names_from_source(source: str, attr: str | None) -> list[str] | None:
@@ -436,6 +479,7 @@ def parse_request_object(obj: Any, root: Path) -> Request:
             )
             _require("\x00" not in token, f"{where}.argv[{pos}] 不能含 NUL")
         argv = tuple(argv)  # type: ignore[assignment]
+        reject_repo_absolute_paths(argv, root, where)
 
         result = item["result"]
         _require(isinstance(result, str), f"{where}.result 必须是字符串")
@@ -445,7 +489,7 @@ def parse_request_object(obj: Any, root: Path) -> Request:
         _require(result not in result_templates, f"{where}.result 与其他步骤重复")
         result_templates.add(result)
 
-        script = find_script(argv, root)
+        script = find_script(argv)
         _require(
             script is not None,
             f"{where} 没有已注册的实验脚本；已注册: {sorted(SCRIPTS)}"
