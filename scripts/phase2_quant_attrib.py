@@ -223,7 +223,11 @@ def _quantiles(values: torch.Tensor) -> dict[str, float]:
 
 
 def _hex_bf16(values: torch.Tensor) -> list[str]:
-    return [f"{int(v) & 0xFFFF:04x}" for v in values.contiguous().view(torch.int16).tolist()]
+    """bf16 位型（4 hex）；显式转 bf16，避免把 float32 位型拆成两个 16-bit 半字。"""
+    return [
+        f"{int(v) & 0xFFFF:04x}"
+        for v in values.contiguous().to(torch.bfloat16).view(torch.int16).tolist()
+    ]
 
 
 def _case_k(case: str) -> int:
