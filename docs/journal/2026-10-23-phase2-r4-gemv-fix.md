@@ -6,7 +6,8 @@
 - worktree：`.tmp/worktrees/r4-gemv`，branch `exp/phase2-gemvtail`
 - 失败 job：`job-000055-2aa2e4e3`（commit `7152a677`，op **222/222** 全绿，
   `m3_check --only numeric-512` 只报 `coverage: 必测项齐全` 缺 34 项）
-- 候选 commit / job：见本文件末尾的「提交记录」
+- 候选 commit：`01e3ff85a895293ea961c0b9a09eed7f470d4d2f`
+- 验证 job：`job-000056-4e8de313`（session `phase2-tactics`，3 步：op / check / bench）
 
 ## 1. 现象
 
@@ -131,14 +132,16 @@ PyTorch caching allocator 里两半各是一块 44.5 MiB 的 segment（大池独
 | CPU 单测 | `CUDA_VISIBLE_DEVICES="" .venv/bin/python -m pytest tests -q` | 121 passed / 12 skipped |
 | 守门测试 | `CUDA_VISIBLE_DEVICES="" .venv/bin/python -m pytest tests/model/test_patch_wiring_cpu.py -q` | 29 passed |
 | 产物契约 | `CUDA_VISIBLE_DEVICES="" .venv/bin/python scripts/check_results.py --all` | 6/6 |
-| op + check + bench | 见下方 3 步请求（GPU 队列） | 待 `results/experiments/<job>` |
+| op + check + bench | 见下方 3 步请求（GPU 队列） | `job-000056-4e8de313`（提交时排队第 1；结果提交者后续读取） |
 
 ## 6. 提交记录
 
-候选 commit：`<填于提交后>`；3 步 GPU job（session `phase2-tactics`，timeout 2400）：
+候选 commit：`01e3ff85a895293ea961c0b9a09eed7f470d4d2f`；
+验证 job：`job-000056-4e8de313`（提交时队列位置 1，结果目录
+`results/experiments/job-000056-4e8de313/`）；3 步 GPU job（session `phase2-tactics`，timeout 2400）：
 
 ```json
-{"session_id": "phase2-tactics", "commit": "<candidate>", "timeout_s": 2400,
+{"session_id": "phase2-tactics", "commit": "01e3ff85a895293ea961c0b9a09eed7f470d4d2f", "timeout_s": 2400,
  "steps": [
    {"kind": "op", "argv": [".venv/bin/python", "bench/micro/nvfp4_tactics.py", "--out", "{output}/op"], "result": "{output}/op/op.json"},
    {"kind": "check", "argv": [".venv/bin/python", "scripts/m3_check.py", "--only", "numeric-512,graph-1024", "--steps", "16", "--out", "{output}/check"], "result": "{output}/check/check.json"},
