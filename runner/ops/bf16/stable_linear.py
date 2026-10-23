@@ -21,7 +21,7 @@ F.linear -> 截断 -> [..., N]
 数据流（M == 1）：x [..., K] -> reshape [1, K] -> matvec kernel -> [..., N]
 
 预期瓶颈（M == 1）：权重只有 N*K*2 字节（a/b 各 480 KB），kernel 是
-latency-bound；一个输出行一个 CTA → grid=48，5 次 2 KB 向量加载。
+latency-bound；一个输出行一个 CTA → grid=48，K 方向若干次 1–2 KB 向量加载。
 """
 
 from __future__ import annotations
@@ -37,8 +37,10 @@ from torch import nn
 ENV_FLAG = "SHAPE_STABLE_DECODE"
 _DISABLED = {"0", "false", "off", "no"}
 
-# M=1 matvec 的粗粒度参数（op 脚本会扫一遍再确认默认值）。
-DECODE_BLOCK_K = 1024
+# M=1 matvec 的粗粒度参数。op 脚本扫过 3 组（block_k=512/1024/2048，warps=4）：
+# 真实权重 + graph replay 下 512/4 = 1.62 µs、1024/4 = 1.86 µs、2048/4 = 1.84 µs
+# 每调用（job-000031 的 op.json），所以默认取 512/4。
+DECODE_BLOCK_K = 512
 DECODE_NUM_WARPS = 4
 # 这个分支是给 a/b 这种窄输出用的；N 很大时走原 GEMM 更合理。
 DECODE_MAX_N = 1024
