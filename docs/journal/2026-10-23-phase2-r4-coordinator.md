@@ -72,3 +72,33 @@ N 与 P 直接决定能否在 BF16 口径达到 19.92 ms；O 决定 FP8 验收�
 1. 把 `exp/phase2-gemvtail`（`01e3ff8`）合入集成分支，跑 **511×5 正式测量 + 8K 显存**；
 2. FP8 收尾（判据简化到 op+bench，只用相对判据 + 逐位 roundtrip）；
 3. 剩余 0.40 ms：GEMV 尾部（gate/up 34816 档的 tile）、graph 间隙、残差 add。
+
+## 第 4 轮正式口径（job-000057-7ac27197，commit `918d5d0`，511 步 × 5 次）
+
+correctness=**passed**，**163/163 gate 全过**（numeric-512 115、graph-1024 24、
+graph-8192 24），diagnostic 失败 6 条与第 3 轮逐条相同（attention 长度效应 + argmax 分叉）。
+
+| 场景 | M3 baseline | 第 3 轮 | **第 4 轮** | 系统 tok/s | %SOL |
+|---|---|---|---|---|---|
+| graph-512-1024 | 31.84 ms / 31.38 | 19.967 / 50.02 | **19.787 ms** | **50.47** | 48.5% → **77.9%** |
+| graph-512-8192 | 44.04 / 22.70 | 20.503 / 48.71 | **20.323 ms** | **49.14** | 35.0% → **75.8%** |
+| graph-8192 | 44.38 / 22.52 | 20.509 / 48.70 | **20.324 ms** | **49.14** | 35.9% → **78.3%** |
+
+- 相对第 3 轮：−0.180 / −0.180 / −0.185 ms（+0.90% tok/s），三项一致；
+  方差极小（tok/s std 0.001–0.002，p95−p50 ≈ 0.007 ms）。
+- 相对 M3 baseline：延迟 −37.9% / −53.9% / −54.2%，吞吐 +60.8% / +116.5% / +118.2%。
+- 8K 显存（`m3_memory --only graph-8192 --steps 511`）：max peak allocated **15.667 GB**
+  （load 14.461）/ reserved 15.754 / **min free 0.438 GB**；两个生命周期增量全 0、
+  KV ptr 稳定、reset 后 logits 逐位一致；比第 3 轮略好（0.423 → 0.438）。
+- **本轮采纳：P（DecodePair 合并 k+v / gate+up / qkv+z，−0.18 ms）**，连同它带来的
+  load-OOM 根因修复与 29 个纯 CPU 守门测试。M 仍不采纳（GPU 中性、p50 被瞬态放大），
+  FP8（J/O）仍未完成。
+
+## 第 4 轮收口
+
+- 集成 commit **`918d5d0d828d4c30f0ea72566ad2c5010f4daa75`**（branch `exp/phase2-integration`）。
+- 距 80%：graph-8192 差 **0.40 ms**（20.324 → 19.92）；graph-512-8192 按其 SOL 口径
+  （64.8）差 1.00 ms；FP8 验收口径（19.57）差 0.75 ms 且 FP8 无 e2e 证据。
+- 下一轮入口（按预期收益）：① FP8 收尾（判据简化、op+bench 先行）；② GEMV 尾部
+  gate/up 合并后的 tile 与 graph 间隙；③ graph-512-8192 的 capacity 扫描额外字节；
+  ④ 残差 add 融合（profile 0.197 ms）。
