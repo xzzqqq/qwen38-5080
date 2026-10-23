@@ -32,7 +32,7 @@ from runner.model.gdn_patch import install_from_env as install_gdn_decode  # noq
 from runner.model.host_embedding import HostEmbedding  # noqa: E402
 from runner.ops.attention import install as install_compact_attention  # noqa: E402
 from runner.ops.bf16.stable_linear import ShapeStableLinear  # noqa: E402
-from runner.ops.nvfp4.linear import NVFP4Linear  # noqa: E402
+from runner.ops.nvfp4.linear import NVFP4Linear, decode_backend_info  # noqa: E402
 
 from .checkpoint import CheckpointReader
 
@@ -215,5 +215,8 @@ def load_nvfp4_text_model(
         "gpu_total_gb": total_b / 1e9,
         "decode_attention": attention_info,
         "gdn_decode": gdn_decode_info,
+        # Phase 2 任务 F：M=1 decode 的 (N,K)->backend 静态表与依据。counters 是
+        # 同一个 dict 的引用，产物最后序列化时能看到整个运行期间的调用计数。
+        "nvfp4_decode": decode_backend_info(),
     }
     return model, text_config, info
