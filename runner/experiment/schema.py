@@ -83,6 +83,11 @@ OP_SCRIPTS = (
     "scripts/phase2_gdn_check.py",
     "scripts/phase2_quant_attrib.py",
     "bench/micro/nvfp4_gemv.py",
+    # 第 2 轮：profile 驱动的四个方向（见 docs/journal/2026-10-23-phase2-r1-coordinator.md）
+    "bench/micro/nvfp4_tactics.py",
+    "bench/micro/stable_linear_decode.py",
+    "scripts/phase2_normquant_check.py",
+    "scripts/phase2_gdn_conv_check.py",
 )
 for _op_path in OP_SCRIPTS:
     SCRIPTS[_op_path] = ScriptSpec(
