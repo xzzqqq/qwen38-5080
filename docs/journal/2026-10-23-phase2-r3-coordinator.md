@@ -163,3 +163,27 @@ elementwise 2.15 ms 的细分（按 functor 聚合）：
   （kernel 内折叠 scale，零 scratch），`dequant_kv` 只留给 prefill/reference 与回退；
   修 coverage 计数；**补 `smoke-graph`**（plan §5 的三条真实 smoke 是 gate，FP8 有 3.7%
   attention 误差，near-tie 可能翻转）。
+
+## 任务 M 判定：**不接入（组合里是 +0.26 ms 回退）**
+
+- M 自己的证据全部成立：op **277/277**（`downproj-silu-mul` / `oproj-gate` / `lmhead-final-norm`
+  三条的 `out_bf16 / a_fp4 / a_sf` 全 **0 字节差**，负对照分辨力成立）、check 139/139、
+  `producer-wiring` 6/6（`mlp/attention/lm_head/norm_bf16/logits` 全 true）。
+- 但同协议 32×1 的组合测量（M 的分支已 merge `66bac5c`）：
+
+| commit | graph-8192 p50 | graph-512-1024 p50 |
+|---|---|---|
+| `job-000041`（无 L/K/M） | 21.824 ms | 20.829 ms |
+| **`job-000050`（L+K，`43b0b73`）** | **20.493 ms** | **19.951 ms** |
+| `job-000048`（L+K+**M**，`132e95b`） | **20.756 ms** | 20.221 ms |
+
+L+K 恰好等于可加预测（21.824 − 0.683 − 0.629 = 20.512 → 实测 20.493），
+而加上 M 反而 **+0.263 ms**。所以 **M 不接入集成分支**；分支与 journal 保留作证据。
+
+- 结论：**「隔离 microbench 省、组合后回退」是真实可能**（M 的 `fuse-micro` 在 eager 下
+  down_proj 0.0249→0.0129、o_proj 0.0232→0.0129 ms，但 graph 口径整步变慢）。
+  可能原因（未定位，留给下一轮）：复制的 `Qwen3_5MLP/Attention.forward` 让 HF 的
+  `output_capturing`/`logits_to_keep` 包装多一层、或 producer kernel 对
+  `[1,1,17408]`/`[1,1,6144]` 的量化比 FlashInfer 的 320-block 形态慢、
+  或 `_pending_quantized` 槽位与 L/H 的槽位在 graph 内多一次分支。
+  **这正是我坚持在每个候选之后做同协议组合测量的原因。**
