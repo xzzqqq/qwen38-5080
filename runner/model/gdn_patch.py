@@ -88,6 +88,8 @@ _CONV: dict[str, Any] = {
     "num_warps": CONV_DEFAULT_NUM_WARPS,
     "bias": False,
     "activation": None,
+    "out": {},
+    "out_bytes": 0,
     # 活计数：与 _STATE["counters"] 一样，info 里带的是同一个 dict 对象。
     "counters": {"fused": 0, "reference": 0, "fallbacks": {}},
     "orig": None,
@@ -182,6 +184,8 @@ def install_conv(
     _CONV["num_warps"] = int(num_warps)
     _CONV["bias"] = any(layer.conv1d.bias is not None for layer in layers)
     _CONV["activation"] = str(getattr(layers[0], "activation", "silu"))
+    _CONV["out"] = {}
+    _CONV["out_bytes"] = 0
     _CONV["counters"] = {"fused": 0, "reference": 0, "fallbacks": {}}
 
     modeling.causal_conv1d_update = _fused_conv
@@ -235,6 +239,8 @@ def _uninstall_conv() -> None:
     if _CONV["orig"] is not None:
         modeling.causal_conv1d_update = _CONV["orig"]
     _CONV["installed"] = False
+    _CONV["out"] = {}
+    _CONV["out_bytes"] = 0
 
 
 def info() -> dict[str, Any]:
@@ -269,12 +275,15 @@ def conv_info() -> dict[str, Any]:
         "conv_dim": _CONV["conv_dim"],
         "kernel_size": _CONV["kernel_size"],
         "state_len": _CONV["kernel_size"],
+        "out_slots": len(_CONV["out"]),
+        "out_bytes": _CONV["out_bytes"],
         "block": _CONV["block"],
         "num_warps": _CONV["num_warps"],
         "bias": _CONV["bias"],
         "activation": _CONV["activation"],
         "kernels_per_layer": 1,
         "state_layout": "in-place bf16 [1,10240,4], data_ptr stable",
+        "out_layout": "per-state bf16 [1,10240,1] slot, address stable",
         "counters": _CONV["counters"],
     }
 
@@ -345,6 +354,7 @@ def _fused_conv(hidden_states, conv_state, weight, bias=None, activation=None):
                 conv_state,
                 weight,
                 activation=activation,
+                out=_conv_out_slot(conv_state),
                 block=_CONV["block"],
                 num_warps=_CONV["num_warps"],
             )
@@ -539,6 +549,25 @@ def _out_slot(state: torch.Tensor) -> torch.Tensor:
     slot = torch.empty(shape, dtype=torch.bfloat16, device=state.device)
     _STATE["out"][key] = slot
     _STATE["out_bytes"] += slot.numel() * slot.element_size()
+    return slot
+
+
+def _conv_out_slot(conv_state: torch.Tensor) -> torch.Tensor:
+    """按 conv_state 缓冲的地址缓存 bf16 输出槽（graph replay 需要固定地址）。
+
+    48 层 × ``[1, 10240, 1]`` bf16 = 983040 B ≈ 0.94 MB；首次 decode 发生在 warmup
+    （capture 之前），之后地址固定。x 保持只读。
+    """
+    key = int(conv_state.data_ptr())
+    shape = (1, int(conv_state.shape[1]), 1)
+    slot = _CONV["out"].get(key)
+    if slot is not None and tuple(slot.shape) == shape:
+        return slot
+    if slot is not None:
+        _CONV["out_bytes"] -= slot.numel() * slot.element_size()
+    slot = torch.empty(shape, dtype=torch.bfloat16, device=conv_state.device)
+    _CONV["out"][key] = slot
+    _CONV["out_bytes"] += slot.numel() * slot.element_size()
     return slot
 
 

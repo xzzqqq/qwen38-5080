@@ -15,11 +15,11 @@ kernel：
 
 数据流（单层、C = conv_dim = 10240，state_len = conv_kernel = 4）：
 
-    conv_state [1, C, 4] (bf16, 原地滚动)   x = mixed_qkv [1, C, 1] (bf16)
+    conv_state [1, C, 4] (bf16, 原地滚动)   x = mixed_qkv [1, C, 1] (bf16, 只读)
       cat 窗口 = [s1, s2, s3, x]（state 滚动之后，next state 恰好就是同一窗口）
       conv = sum_j weight[:, j] * win[:, j]        # fp32 累加后**先舍入到 bf16**
       out  = conv / (1 + exp(-conv))               # PyTorch silu 的 bf16 opmath 形式
-      写回：state[:, :] = win（原地），out 写进调用方的 out 槽（默认就地覆盖 x）
+      写回：state[:, :] = win（原地），out 写进显式 out 槽（`out=None` 时新分配）
 
 关键语义（与 reference 的逐位对齐点，见 ``scripts/phase2_gdn_conv_check.py``）：
 1. **state_len 是 conv_kernel_size（4），不是 kernel_size-1（3）**。prefill 的
@@ -35,6 +35,12 @@ kernel：
    （会落到 ``ex2.approx``）。
 4. conv_state 必须**原地**更新：dtype/字节/data_ptr 不变，static cache 与 graph
    replay 依赖这一点；跨 program 没有写竞争（每 channel 只归一个 program）。
+5. **x 只读、out 走独立槽**。第一版曾把 ``out=None`` 定义成就地覆盖 ``x``；虽然
+   模型随后就把返回值重新绑定到 ``mixed_qkv``，但这让「输入被改写」成为可观察
+   行为，也给 gate 引入了一个和 reference 不同 buffer 的对照盲区。现在 ``out=None``
+   一律新分配 ``[1, C, 1]`` contiguous 输出；接线层（``gdn_patch``）按
+   ``conv_state.data_ptr()`` 缓存 48 个固定地址的槽（48 × 20 KB ≈ 0.94 MB），
+   graph replay 依赖地址稳定，x 始终只读。
 
 预期瓶颈：纯延迟与 launch 数。每层流量只有 state 读 80 KB + weight 80 KB +
 x 20 KB、写 80 KB + out 20 KB = 280 KB（weight 48 层共 3.9 MB，跨 step 常驻 L2），
@@ -143,10 +149,9 @@ def gdn_conv_decode_step(
         weight: BF16 ``[conv_dim, kernel]``（``conv1d.weight.squeeze(1)``），
             contiguous。
         activation: ``"silu"`` 或 ``None``。
-        out: 可选 BF16 ``[1, conv_dim, 1]`` 输出槽。默认 **就地写回**
-            ``hidden_states``（``in_proj_qkv`` 的输出只被 conv 消费，模型随后把
-            返回值赋给同一个变量，所以就地覆盖不改变任何可观察语义，也避免 graph
-            里多一个固定地址的槽）。要给独立缓冲区时显式传 ``out``。
+        out: 可选 BF16 ``[1, conv_dim, 1]`` 输出槽（channel 维 stride=1）。
+            不给时新分配一个 contiguous 缓冲；接线层传按 ``conv_state.data_ptr()``
+            缓存好的固定地址槽，保证 graph replay 不依赖 capture 期分配。
         block / num_warps: 见 ``BLOCK_CONFIGS``。
 
     Returns:
@@ -189,13 +194,16 @@ def gdn_conv_decode_step(
         raise ValueError(f"conv_dim {conv_dim} < block {block}")
 
     if out is None:
-        out = hidden_states
+        out = torch.empty(
+            (1, conv_dim, 1), dtype=torch.bfloat16, device=hidden_states.device
+        )
     elif (
         out.dtype is not torch.bfloat16
         or out.shape != hidden_states.shape
-        or not out.is_contiguous()
+        or not out.is_cuda
+        or out.stride(-2) != 1
     ):
-        raise ValueError("out 必须是 contiguous bf16 [1, C, 1]")
+        raise ValueError("out 必须是 CUDA bf16 [1, C, 1] 且 channel 维 stride=1")
 
     grid = (triton.cdiv(conv_dim, block),)
     _gdn_conv_decode_kernel[grid](

@@ -250,10 +250,8 @@ def _run_correctness(report: OpReport, device: torch.device) -> None:
             layers_checked += 1
         steps_done += 1
 
-    # 就地路径（生产默认，out=None）必须与 out 槽结果逐位一致，且写回 x 本身。
-    # 同一个 kernel、同一条输入跑两次（out 槽 vs 就地），必须逐位一致；再与
-    # reference 做数值对照（容差同 M2，不要求逐位 —— conv 的 fp32 累加顺序可能
-    # 与 cudnn 不同，只影响 1 ulp）。
+    # ``out=None``（未接线时的默认 API）必须新分配输出、不碰 x，且与显式 out 槽
+    # 路径逐位一致。两条路径都用**同一个初值**，所以结果可以直接逐位比。
     slot_x = layers[0]["x"].clone()
     slot_state = layers[0]["state"].clone()
     slot_out = torch.empty((1, CONV_DIM, 1), dtype=torch.bfloat16, device=device)
@@ -262,26 +260,28 @@ def _run_correctness(report: OpReport, device: torch.device) -> None:
     )
     scratch_x = layers[0]["x"].clone()
     scratch_state = layers[0]["state"].clone()
-    in_place_out = gdn_conv_decode_step(
+    # reference 必须从**调用前**的 state 快照出发（job-000030 的第一类失败：
+    # 拿候选写完之后的 state 当 reference 的初值，两边差一步 → nrmse 0.7）。
+    ref_state = scratch_state.clone()
+    ref_out = _reference(scratch_x.clone(), ref_state, layers[0]["weight"])
+    fresh_out = gdn_conv_decode_step(
         scratch_x, scratch_state, layers[0]["weight"], activation="silu"
     )
-    ref_state = slot_state.clone()
-    ref_out = _reference(slot_x.clone(), ref_state, layers[0]["weight"])
+    _track(worst, _numeric(case, "numeric:out-none-path:out", fresh_out, ref_out))
     _track(
         worst,
-        _numeric(case, "numeric:in-place-path:out", scratch_x, ref_out),
+        _numeric(case, "numeric:out-none-path:conv_state", scratch_state, ref_state),
     )
-    _track(
-        worst,
-        _numeric(case, "numeric:in-place-path:conv_state", scratch_state, ref_state),
-    )
-    in_place_ok = (
-        in_place_out is scratch_x
-        and torch.equal(scratch_x, slot_out)
+    out_none_ok = (
+        fresh_out is not scratch_x
+        and fresh_out.dtype is torch.bfloat16
+        and tuple(fresh_out.shape) == (1, CONV_DIM, 1)
+        and torch.equal(fresh_out, slot_out)
         and torch.equal(scratch_state, slot_state)
+        and torch.equal(scratch_x, layers[0]["x"])
     )
 
-    # x 在 out= 路径下必须逐位不变（in_proj_qkv 的输出只被 conv 消费，但语义仍是只读）。
+    # x 在整条路径上都必须逐位不变（in_proj_qkv 的输出只读）。
     input_preserved = all(
         torch.equal(layer["x"], saved) for layer, saved in zip(layers, x_snapshot)
     )
@@ -370,19 +370,24 @@ def _run_correctness(report: OpReport, device: torch.device) -> None:
         },
     )
     case.gate(
-        "coverage:in-place-output-path",
-        in_place_ok,
+        "coverage:out-none-allocates-and-keeps-input",
+        out_none_ok,
         {
-            "out_is_input": in_place_out is scratch_x,
-            "bitwise_equals_out_slot_path": torch.equal(scratch_x, slot_out),
+            "returns_fresh_buffer": fresh_out is not scratch_x,
+            "bitwise_equals_out_slot_path": torch.equal(fresh_out, slot_out),
             "state_bitwise_equals_out_slot_path": torch.equal(scratch_state, slot_state),
-            "note": "生产默认 out=None 就地覆盖 in_proj_qkv 的输出，模型随后重新绑定该变量",
+            "x_bitwise_unchanged": torch.equal(scratch_x, layers[0]["x"]),
+            "out_shape": list(fresh_out.shape),
+            "note": "out=None 新分配 [1,C,1]；x 只读（第一版的就地覆盖已删除）",
         },
     )
     case.gate(
-        "coverage:input-preserved-with-out-slot",
+        "coverage:input-read-only",
         input_preserved,
-        {"note": "给独立 out 槽时 x 只读；48 层逐位不变"},
+        {
+            "layers": NUM_LAYERS,
+            "note": "48 层的 x 在 2 步调用后逐位不变（in_proj_qkv 的输出只读）",
+        },
     )
     case.gate(
         "coverage:silu-applied",
@@ -416,8 +421,10 @@ def _run_negative_controls(report: OpReport, device: torch.device) -> None:
     2. conv_state 错位一格（``[s1,s2,s3,s0]``）：滚动/窗口取错；
     3. weight 反向（``w[:, ::-1]``）：conv 核方向接反。
 
-    三者都是真实 bug 类型，且都不需要改 kernel 就能复现，所以这个 case 直接证明
-    正确路径的通过不是「gate 太松」。
+    三者都是真实 bug 类型，且都不需要改 kernel 就能复现（喂错输入即可）。判据是
+    **与正确输入的 reference 对比**：错输入算出的 out 必须显著超出容差，否则说明
+    这个 case 没有分辨力。第一版把「reference 喂同样的错输入」当参照，两边一致地
+    错、nrmse 恒为 0 —— 这正是负对照要防的失败模式（见 2026-10-23 job-000030）。
     """
     case = report.case(
         NEGATIVE_CASE,
@@ -436,7 +443,6 @@ def _run_negative_controls(report: OpReport, device: torch.device) -> None:
     gen = torch.Generator(device=device).manual_seed(SEED + 1)
     layers = _conv_inputs(device, gen)
     ptr_before = [layer["state"].data_ptr() for layer in layers]
-    state_before = [layer["state"].clone() for layer in layers]
     outs = [
         torch.empty((1, CONV_DIM, 1), dtype=torch.bfloat16, device=device)
         for _ in range(NUM_LAYERS)
@@ -453,8 +459,10 @@ def _run_negative_controls(report: OpReport, device: torch.device) -> None:
 
     for step in range(1, STEPS + 1):
         for idx, layer in enumerate(layers):
-            # 正确路径（同一个 kernel，正确输入）作为本 case 的正对照。
-            ref_state = layer["state"].clone()
+            # 本步的输入 state：正对照和三个负对照都从**同一个** snapshot 出发，
+            # 这样负对照的差异只来自被破坏的那一项（state 或 weight）。
+            state_before = layer["state"].clone()
+            ref_state = state_before.clone()
             ref_out = _reference(layer["x"], ref_state, layer["weight"])
             gdn_conv_decode_step(
                 layer["x"],
@@ -468,23 +476,19 @@ def _run_negative_controls(report: OpReport, device: torch.device) -> None:
 
             variants = {
                 "zero-conv-state": (
-                    torch.zeros_like(layer["state"]),
+                    torch.zeros_like(state_before),
                     layer["weight"],
                 ),
                 "misaligned-conv-state": (
-                    torch.roll(layer["state"].clone(), shifts=-1, dims=-1),
+                    torch.roll(state_before.clone(), shifts=-1, dims=-1),
                     layer["weight"],
                 ),
                 "flipped-kernel-weight": (
-                    layer["state"].clone(),
+                    state_before.clone(),
                     torch.flip(layer["weight"], dims=[-1]).contiguous(),
                 ),
             }
             for name, (wrong_state, wrong_weight) in variants.items():
-                ref_wrong_state = wrong_state.clone()
-                ref_wrong_out = _reference(
-                    layer["x"], ref_wrong_state, wrong_weight
-                )
                 got = gdn_conv_decode_step(
                     layer["x"],
                     wrong_state,
@@ -492,7 +496,10 @@ def _run_negative_controls(report: OpReport, device: torch.device) -> None:
                     out=outs[idx],
                     num_warps=CONV_DEFAULT_NUM_WARPS,
                 )
-                metrics = error_metrics(got, ref_wrong_out)
+                # 关键：负对照必须与**正确输入**的 reference 比。第一版拿
+                # 「reference 喂同样的错输入」当参照，两边一致地错，nrmse 恒为 0，
+                # 这个 case 就完全没有分辨力了。
+                metrics = error_metrics(got, ref_out)
                 current = negatives[name]
                 current["nrmse"] = max(current["nrmse"], metrics["nrmse"])
                 current["max_rel"] = max(current["max_rel"], metrics["max_rel"])
@@ -542,12 +549,12 @@ def _run_negative_controls(report: OpReport, device: torch.device) -> None:
             },
         )
     case.gate(
-        "coverage:real-state-untouched-by-controls",
+        "coverage:state-buffer-stable-across-controls",
         [layer["state"].data_ptr() for layer in layers] == ptr_before
         and all(torch.isfinite(layer["state"]).all() for layer in layers),
         {
-            "note": "负对照在 state 的副本上跑，真实 state 不被污染",
-            "states_present": len(state_before),
+            "note": "负对照在 state 的副本上跑；真实 state 只被正对照原地更新，data_ptr 不变",
+            "layers": len(layers),
         },
     )
 
@@ -581,12 +588,21 @@ def _run_patch_wiring(report: OpReport, device: torch.device) -> None:
         conv_kernel=CONV_KERNEL,
         state_len=STATE_LEN,
         call_x_shape=[1, CONV_DIM, 1],
+        call_x_layout="in_proj_qkv(...).transpose(1,2) -> strides (C,1,C), channel stride 1",
         call_weight_shape=[CONV_DIM, CONV_KERNEL],
         steps=STEPS,
         tolerance=GDN_TOL,
     )
     gen = torch.Generator(device=device).manual_seed(SEED + 2)
     layers = _conv_inputs(device, gen)
+    # 真实调用点布局：``mixed_qkv = in_proj_qkv(hidden).transpose(1, 2)``，即
+    # [1, 1, C] contiguous 的 transpose —— shape [1, C, 1]、strides (C, 1, C)。
+    # torch 仍把它判成 contiguous（size-1 维不参与判定），kernel 只依赖 channel
+    # 维 stride=1，所以能直接收。
+    for layer in layers:
+        layer["x"] = layer["x"].reshape(1, 1, CONV_DIM).transpose(1, 2)
+    x_snapshot = [layer["x"].clone() for layer in layers]
+    x_strides = [tuple(layer["x"].stride()) for layer in layers]
     history_absmax = [float(layer["state"].abs().max()) for layer in layers]
     ptr_before = [layer["state"].data_ptr() for layer in layers]
     bytes_before = [layer["state"].numel() * layer["state"].element_size() for layer in layers]
@@ -634,6 +650,7 @@ def _run_patch_wiring(report: OpReport, device: torch.device) -> None:
     fallback_reason_seen = None
     restored_after_uninstall = False
     final_info: dict = {}
+    slot_ptrs: list[int] = []
     try:
         for step in range(1, STEPS + 1):
             for idx, layer in enumerate(layers):
@@ -644,8 +661,8 @@ def _run_patch_wiring(report: OpReport, device: torch.device) -> None:
                 cand = gdn_modeling.causal_conv1d_update(
                     layer["x"], layer["state"], layer["weight"], None, "silu"
                 )
-                if cand is not layer["x"]:
-                    raise RuntimeError("conv patch 没有返回就地写回的 x")
+                if cand.data_ptr() == layer["x"].data_ptr():
+                    raise RuntimeError("conv patch 不应该改写 x（应写进独立 out 槽）")
                 state_exact = state_exact and torch.equal(layer["state"], ref_state)
                 finite = finite and bool(torch.isfinite(cand).all())
                 finite = finite and bool(torch.isfinite(layer["state"]).all())
@@ -665,8 +682,16 @@ def _run_patch_wiring(report: OpReport, device: torch.device) -> None:
                     ),
                 )
                 layers_checked += 1
+            if step == 1:
+                slot_ptrs = [
+                    gdn_patch._conv_out_slot(layer["state"]).data_ptr()
+                    for layer in layers
+                ]
             steps_done += 1
 
+        slot_ptrs_after = [
+            gdn_patch._conv_out_slot(layer["state"]).data_ptr() for layer in layers
+        ]
         counters = dict(gdn_patch.counters())
         conv_counters = dict(gdn_patch.conv_counters())
         conv_counters["fallbacks"] = dict(conv_counters.get("fallbacks", {}))
@@ -799,6 +824,44 @@ def _run_patch_wiring(report: OpReport, device: torch.device) -> None:
         and [layer["state"].dtype for layer in layers] == dtype_before,
         {"bytes_per_layer": STATE_BYTES, "layers": NUM_LAYERS},
     )
+    case.gate(
+        "coverage:out-slot-cache",
+        int(final_info.get("out_slots", 0)) == NUM_LAYERS
+        and int(final_info.get("out_bytes", 0)) == NUM_LAYERS * CONV_DIM * 2
+        and slot_ptrs == slot_ptrs_after
+        and len(set(slot_ptrs)) == NUM_LAYERS,
+        {
+            "out_slots": final_info.get("out_slots"),
+            "out_bytes": final_info.get("out_bytes"),
+            "expected_bytes": NUM_LAYERS * CONV_DIM * 2,
+            "data_ptr_stable_across_steps": slot_ptrs == slot_ptrs_after,
+            "distinct_slots": len(set(slot_ptrs)),
+            "note": "按 conv_state.data_ptr() 缓存 48 个固定地址槽；capture 之后 replay 依赖",
+        },
+    )
+    case.gate(
+        "coverage:input-read-only",
+        all(torch.equal(layer["x"], saved) for layer, saved in zip(layers, x_snapshot)),
+        {
+            "x_strides": x_strides[0] if x_strides else None,
+            "note": "x 是 in_proj_qkv(transpose) 的 view，patch 只读，结果写独立 out 槽",
+        },
+    )
+    case.gate(
+        "coverage:non-contiguous-input-falls-back",
+        gdn_patch._conv_fallback_reason(
+            torch.empty(1, 2 * CONV_DIM, 1, dtype=torch.bfloat16, device=device)[:, ::2, :],
+            layers[0]["state"],
+            layers[0]["weight"],
+            None,
+            "silu",
+        )
+        == "x-stride",
+        {
+            "reason": "x-stride",
+            "note": "channel 维不是 stride=1 的布局必须回退 reference，不能猜",
+        },
+    )
     case.gate("coverage:finite", finite and worst["finite"], {"finite": finite})
 
     case.metric("worst_nrmse", worst["nrmse"])
@@ -810,6 +873,7 @@ def _run_patch_wiring(report: OpReport, device: torch.device) -> None:
     case.metric("layers_checked", float(layers_checked))
     case.metric("steps_checked", float(steps_done))
     case.metric("conv_state_bytes_per_layer", float(STATE_BYTES))
+    case.metric("out_bytes", float(final_info.get("out_bytes", 0)))
 
 
 # ------------------------------------------------------------------------- case 4
@@ -1092,6 +1156,7 @@ def main(argv: list[str] | None = None) -> int:
             "block_configs": [f"block{b}-w{w}" for b, w in CONV_BLOCK_CONFIGS],
             "default_config": f"block{CONV_DEFAULT_BLOCK}-w{CONV_DEFAULT_NUM_WARPS}",
             "state_layout": "in-place bf16 [1,10240,4], data_ptr stable",
+            "out_layout": "per-state bf16 [1,10240,1] slot (48 x 20 KB), address stable",
             "patch": "runner/model/gdn_patch.py::install_conv",
         },
         environment={
