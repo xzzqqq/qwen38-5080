@@ -72,10 +72,26 @@ _DECODE_STATS: dict[str, Any] = {
     "first_call_ms": {},  # "NxK" -> 首次调用 wall ms（含 JIT 编译）
     "selected": {},       # "NxK" -> 实际使用的 backend
     "merged_calls": {},   # "N1+N2xK" -> 合并调用次数
-    "merge_fallbacks": 0,
+    # 合并路径的接线证据：``merged_calls`` 与这里必须能区分「真合并」和「静默漏调」。
+    "merge_fallbacks": 0,          # decode 时本该合并、实际回退到共享路径的次数
+    "merge_fallback_reasons": {},  # reason -> 次数（order / ptr / error / disabled ...）
+    "merge_skips": {},             # 非 decode（seq_len>1 的 prefill）正常跳过的次数
     "fallbacks": 0,
 }
 _DECODE_BACKEND_DISABLED: set[str] = set()
+
+
+def _merge_fallback(reason: str) -> None:
+    """decode 时配对没有成立：计数并保留原因，调用方静默走共享路径。"""
+    _DECODE_STATS["merge_fallbacks"] += 1
+    reasons = _DECODE_STATS["merge_fallback_reasons"]
+    reasons[reason] = reasons.get(reason, 0) + 1
+
+
+def _merge_skip(reason: str) -> None:
+    """非 decode 输入（如 prefill）：配对本来就不该生效，和 fallback 分开计数。"""
+    skips = _DECODE_STATS["merge_skips"]
+    skips[reason] = skips.get(reason, 0) + 1
 
 
 def decode_backend_for(n: int, k: int) -> str:
@@ -107,6 +123,8 @@ def decode_backend_stats() -> dict[str, Any]:
         "selected": dict(_DECODE_STATS["selected"]),
         "merged_calls": dict(_DECODE_STATS["merged_calls"]),
         "merge_fallbacks": int(_DECODE_STATS["merge_fallbacks"]),
+        "merge_fallback_reasons": dict(_DECODE_STATS["merge_fallback_reasons"]),
+        "merge_skips": dict(_DECODE_STATS["merge_skips"]),
         "fallbacks": int(_DECODE_STATS["fallbacks"]),
         "disabled": sorted(_DECODE_BACKEND_DISABLED),
     }
@@ -132,7 +150,14 @@ class DecodePair:
     ``_pending_quantized``，直接用那一份。follower 的 pending 槽位会被消费掉，
     保证 ``norm_quant_patch`` 的 ``unconsumed`` 计数保持 0。
 
-    失败（合并 kernel 抛错）时整对永久禁用并回退到各自路径，不静默算错。
+    四种执行方式（eager DynamicCache / static-exact / static-cap / CUDA graph）走的是
+    **同一段 Python**：只有调用顺序、x 缓冲是否复用、以及是否处于 capture 中不同。
+    所以配对的前提条件只依赖「这次调用的 x 是不是同一份单 token 张量」，不依赖 cache
+    类型；``torch.cuda.is_current_stream_capturing()`` 在配对路径里完全不参与判断。
+
+    失败（前置条件不满足 / 合并 kernel 抛错）时整对回退到各自路径并计数，不抛异常：
+    - ``merge_fallbacks``：decode 时本该合并却没有（``order`` / ``ptr`` / ``error``）；
+    - ``merge_skips``：非 decode（``seq_len``，prefill）正常跳过，不算回退。
     """
 
     __slots__ = (
@@ -181,25 +206,44 @@ class DecodePair:
         self.disabled = False
 
     # ------------------------------------------------------------------ 调用
+    def _is_decode(self, x: torch.Tensor) -> bool:
+        """单 token decode 的输入判定：``x.numel() == in_features``。
+
+        对 ``[1, 1, K]`` / ``[1, K]`` 都成立；prefill（seq_len>1）与其它 shape 不成立。
+        这里**不**看 cache 类型，也不看是否在 CUDA graph capture 中。
+        """
+        return (
+            x.ndim >= 2
+            and x.shape[-1] == self.leader.in_features
+            and x.numel() == x.shape[-1]
+        )
+
     def forward(self, module, x, pending):
         """返回本模块的 [1, N] 输出；``None`` 表示走普通路径。"""
         if self.disabled:
+            _merge_fallback("disabled")
             return None
         if module is self.follower:
-            if x.numel() != x.shape[-1]:
+            if not self._is_decode(x):
+                # prefill：leader 已经按 seq_len 记过 skip，这里静默走共享路径。
+                self.armed = False
                 return None
+            was_armed = self.armed
+            self.armed = False
             if (
-                self.armed
+                was_armed
                 and self.x_ptr == x.data_ptr()
                 and self.x_numel == x.numel()
             ):
-                self.armed = False
                 return self.out[:, self.n_leader :]
-            _DECODE_STATS["merge_fallbacks"] += 1
+            # 没有配对的 leader 调用（顺序错 / 中间换了输入）：整对回退。
+            _merge_fallback("order" if not was_armed else "ptr")
             return None
 
         # leader：只处理单 token decode（M==1）。
-        if x.numel() != x.shape[-1] or x.shape[-1] != self.leader.in_features:
+        if not self._is_decode(x):
+            self.armed = False
+            _merge_skip("seq_len")
             return None
         self.armed = False
         if pending is not None:
@@ -233,7 +277,7 @@ class DecodePair:
             )
         except Exception as exc:  # noqa: BLE001 - 整对永久回退，不静默算错
             self.disabled = True
-            _DECODE_STATS["merge_fallbacks"] += 1
+            _merge_fallback("error")
             warnings.warn(
                 f"DecodePair {self.n_leader}+{self.n_follower} "
                 f"(K={self.leader.in_features}) 合并失败，回退分开调用：{exc}",
@@ -251,42 +295,196 @@ class DecodePair:
         return out[:, : self.n_leader]
 
 
-def attach_decode_pair(leader: "NVFP4Linear", follower: "NVFP4Linear") -> bool:
-    """把 leader/follower 合成一个 ``DecodePair``（M=1 生效；prefill 不变）。
+#: checkpoint 里共享同一 hidden_states、可以合并成一次 mm_fp4 的模块对
+#: （leader, follower）。三条都在同一层同一个 holder 下。
+PAIR_SUFFIXES: tuple[tuple[str, str], ...] = (
+    ("k_proj", "v_proj"),
+    ("gate_proj", "up_proj"),
+    ("in_proj_qkv", "in_proj_z"),
+)
 
-    条件不满足返回 False（不报错）：同 in_features / 无 bias / 两个 scalar 逐位相同 /
-    N 都是 128 的倍数（保证 scale 拼接 == 拼接后 swizzle）。成功时两半的
-    ``weight_packed`` / ``weight_scale_swizzled`` 变成同一块 buffer 的视图，
-    稳态显存不增加（拼接的瞬时峰值是每对一份）。
+#: ``build_decode_pair_from_checkpoint`` 需要的两半 checkpoint 字段。
+_QUANT_PARTS = ("weight", "weight_scale", "weight_scale_2", "input_scale")
+
+
+def decode_pair_specs(quant_prefixes: Any) -> dict[str, str]:
+    """从量化模块的 checkpoint prefix 里找出可配对的两半。
+
+    只按命名结构配对（同一 parent 下的 k/v、gate/up、qkv/z），不依赖层序或用例；
+    返回 ``leader_prefix -> follower_prefix``。前置条件（dtype/shape/scalar）由
+    ``build_decode_pair_from_checkpoint`` 再检查。
     """
+    by_parent: dict[str, dict[str, str]] = {}
+    for prefix in quant_prefixes:
+        parent, _, name = str(prefix).rpartition(".")
+        by_parent.setdefault(parent, {})[name] = str(prefix)
+    specs: dict[str, str] = {}
+    for names in by_parent.values():
+        for leader_name, follower_name in PAIR_SUFFIXES:
+            if leader_name in names and follower_name in names:
+                specs[names[leader_name]] = names[follower_name]
+    return specs
+
+
+def _module_pair_reason(leader: Any, follower: Any) -> str | None:
+    """模块级的配对前置条件；返回 ``None`` 表示可以合并，否则是原因字符串。"""
     if not isinstance(leader, NVFP4Linear) or not isinstance(follower, NVFP4Linear):
-        return False
-    if leader is follower or leader.in_features != follower.in_features:
-        return False
+        return "type"
+    if leader is follower:
+        return "same-module"
+    if leader.in_features != follower.in_features:
+        return "k-mismatch"
     if leader.bias is not None or follower.bias is not None:
-        return False
+        return "bias"
     if leader.out_dtype != follower.out_dtype:
-        return False
+        return "out-dtype"
     if not torch.equal(leader.input_scale, follower.input_scale):
-        return False
+        return "input-scale"
     if not torch.equal(leader.weight_scale_2, follower.weight_scale_2):
-        return False
+        return "weight-scale-2"
     n1, n2 = leader.out_features, follower.out_features
     if n1 % 128 or n2 % 128:
-        return False
+        return "n-not-multiple-128"
     if leader.weight_scale_swizzled.shape[0] != n1:
-        return False
+        return "leader-scale-shape"
     if follower.weight_scale_swizzled.shape[0] != n2:
-        return False
-    weight = torch.cat([leader.weight_packed, follower.weight_packed], dim=0)
-    scale = torch.cat(
-        [leader.weight_scale_swizzled, follower.weight_scale_swizzled], dim=0
+        return "follower-scale-shape"
+    return None
+
+
+def _checkpoint_pair_reason(
+    leader_parts: dict[str, torch.Tensor], follower_parts: dict[str, torch.Tensor]
+) -> str | None:
+    """checkpoint 张量级的配对前置条件（在构造任何模块之前检查）。"""
+    for tag, parts in (("leader", leader_parts), ("follower", follower_parts)):
+        if any(name not in parts for name in _QUANT_PARTS):
+            return f"{tag}-parts"
+        weight = parts["weight"]
+        scale = parts["weight_scale"]
+        if weight.dtype is not torch.uint8 or weight.ndim != 2:
+            return f"{tag}-weight-dtype"
+        if scale.dtype is not torch.float8_e4m3fn or scale.ndim != 2:
+            return f"{tag}-scale-dtype"
+        n, k_half = int(weight.shape[0]), int(weight.shape[1])
+        if n % 128:
+            return f"{tag}-n-not-multiple-128"
+        if tuple(scale.shape) != (n, k_half // 8):
+            return f"{tag}-scale-shape"
+    lw, fw = leader_parts["weight"], follower_parts["weight"]
+    if lw.shape[1] != fw.shape[1]:
+        return "k-mismatch"
+    for name in ("weight_scale_2", "input_scale"):
+        left = leader_parts[name].reshape(1).float()
+        right = follower_parts[name].reshape(1).float()
+        if not torch.equal(left, right):
+            return name.replace("_", "-")
+    return None
+
+
+def build_decode_pair_from_checkpoint(
+    leader_parts: dict[str, torch.Tensor],
+    follower_parts: dict[str, torch.Tensor],
+    *,
+    device: torch.device | str = "cuda",
+    backend: str = "cutlass",
+) -> tuple["NVFP4Linear", "NVFP4Linear"] | None:
+    """直接用 checkpoint 的两半构造共享合并 buffer 的 ``NVFP4Linear`` 对。
+
+    为什么需要专用构造路径（job-000055 的 OOM 根因）：如果先把两半分别装到 GPU、
+    再 ``torch.cat`` 合并，峰值会同时持有「两半 + 合并」= 2 倍；在 15.47 GiB 卡上
+    装载完 14.4 GB 权重后只剩 ~1.7 GiB，且 ``torch.cat`` 每次要新的连续 segment
+    （两半的 44.5 MiB 释放块无法拼成 89 MiB），128 对逐个把物理显存吃干 → eager
+    快照在 load 阶段就 OOM。这里在**任何一半都不单独存在**时于 CPU 拼好、一次 H2D，
+    再把合并 buffer 的切片交给两个模块，稳态与峰值都等于原来两半之和。
+
+    返回 ``None`` 表示前置条件不满足：调用方应照常分别装载两半（走共享路径）。
+    返回模块对时，``leader._decode_pair`` 可能仍为 ``None``（attach 失败），调用方
+    按模块自己的 ``_decode_pair`` 判断是否真的接上了。
+    """
+    reason = _checkpoint_pair_reason(leader_parts, follower_parts)
+    if reason is not None:
+        return None
+    lw, fw = leader_parts["weight"], follower_parts["weight"]
+    ls, fs = leader_parts["weight_scale"], follower_parts["weight_scale"]
+    n1, k_half = int(lw.shape[0]), int(lw.shape[1])
+    n2 = int(fw.shape[0])
+    # CPU 端拼接（不占显存），然后只做一次 H2D；两半的 H2D 字节数与原来相同。
+    weight = torch.cat([lw, fw], dim=0).to(device)
+    scale_linear = torch.cat([ls, fs], dim=0).to(device)
+    scale = swizzle_scale_128x4(scale_linear)
+    del scale_linear
+    scale2 = leader_parts["weight_scale_2"].reshape(1).float().to(device)
+    follower_scale2 = follower_parts["weight_scale_2"].reshape(1).float().to(device)
+    input_scale = leader_parts["input_scale"].reshape(1).float().to(device)
+    follower_input_scale = (
+        follower_parts["input_scale"].reshape(1).float().to(device)
     )
-    pair = DecodePair(leader, follower, weight, scale)
-    leader.weight_packed = weight[:n1]
-    leader.weight_scale_swizzled = scale[:n1]
-    follower.weight_packed = weight[n1:]
-    follower.weight_scale_swizzled = scale[n1:]
+    leader = NVFP4Linear(
+        weight[:n1],
+        None,
+        scale2,
+        input_scale,
+        weight_scale_swizzled=scale[:n1],
+        backend=backend,
+    )
+    follower = NVFP4Linear(
+        weight[n1:],
+        None,
+        follower_scale2,
+        follower_input_scale,
+        weight_scale_swizzled=scale[n1:],
+        backend=backend,
+    )
+    attach_decode_pair(
+        leader, follower, merged_weight=weight, merged_scale_swizzled=scale
+    )
+    return leader, follower
+
+
+def attach_decode_pair(
+    leader: "NVFP4Linear",
+    follower: "NVFP4Linear",
+    *,
+    merged_weight: torch.Tensor | None = None,
+    merged_scale_swizzled: torch.Tensor | None = None,
+) -> bool:
+    """把 leader/follower 合成一个 ``DecodePair``（M=1 生效；prefill 不变）。
+
+    条件不满足返回 False（不报错）。``merged_*`` 已给定时直接复用（loader 的零峰值
+    路径）；未给定时才 ``torch.cat`` 两半 —— 这条兜底路径会多占一整个合并 buffer，
+    只适合 CPU / 测试 / 显存宽松的场景，loader 不走它（见 job-000055 的 OOM）。
+    成功时两半的 ``weight_packed`` / ``weight_scale_swizzled`` 变成同一块 buffer 的
+    视图，稳态显存不增加。
+    """
+    reason = _module_pair_reason(leader, follower)
+    if reason is not None:
+        return False
+    n1, n2 = leader.out_features, follower.out_features
+    if merged_weight is None or merged_scale_swizzled is None:
+        try:
+            merged_weight = torch.cat(
+                [leader.weight_packed, follower.weight_packed], dim=0
+            )
+            merged_scale_swizzled = torch.cat(
+                [leader.weight_scale_swizzled, follower.weight_scale_swizzled], dim=0
+            )
+        except RuntimeError as exc:  # 含 CUDA OOM：跳过这对，不把 load 弄崩
+            warnings.warn(
+                f"DecodePair {n1}+{n2} 合并 buffer 分配失败，跳过配对：{exc}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return False
+    k_half = leader.in_features // 2
+    if tuple(merged_weight.shape) != (n1 + n2, k_half):
+        return False
+    if int(merged_scale_swizzled.shape[0]) != n1 + n2:
+        return False
+    pair = DecodePair(leader, follower, merged_weight, merged_scale_swizzled)
+    leader.weight_packed = merged_weight[:n1]
+    leader.weight_scale_swizzled = merged_scale_swizzled[:n1]
+    follower.weight_packed = merged_weight[n1:]
+    follower.weight_scale_swizzled = merged_scale_swizzled[n1:]
     leader._decode_pair = pair
     follower._decode_pair = pair
     return True
@@ -295,31 +493,50 @@ def attach_decode_pair(leader: "NVFP4Linear", follower: "NVFP4Linear") -> bool:
 def install_decode_pairs(model: nn.Module) -> dict[str, Any]:
     """遍历 decoder layers，把三对共享 hidden_states 的 Linear 配成 DecodePair。
 
-    返回计数（写进 load info / harness）；配不上的对跳过（``skipped``），
-    不影响原有 per-module 路径。
+    **生产 loader 不走这条路径**：它用 ``build_decode_pair_from_checkpoint`` 在装载
+    时零峰值地合并（见 job-000055 的 OOM）。这里保留给「模型已经建好」的调用方和
+    CPU 自测；``torch.cat`` 兜底路径在显存紧张时会分配失败并跳过该对。
+
+    返回计数（写进 load info / harness）；配不上的对跳过并记录原因，不影响原有
+    per-module 路径。
     """
-    stats: dict[str, Any] = {"pairs": 0, "skipped": 0, "kinds": {}}
+    stats: dict[str, Any] = {"pairs": 0, "skipped": 0, "kinds": {}, "reasons": {}}
     layers = getattr(getattr(model, "model", model), "layers", None)
     if layers is None:
         return stats
-    specs = (
-        ("self_attn", "k_proj", "v_proj"),
-        ("mlp", "gate_proj", "up_proj"),
-        ("linear_attn", "in_proj_qkv", "in_proj_z"),
-    )
+
+    def _skip(reason: str) -> None:
+        stats["skipped"] += 1
+        reasons = stats["reasons"]
+        reasons[reason] = reasons.get(reason, 0) + 1
+
     for layer in layers:
-        for holder_name, leader_name, follower_name in specs:
+        for holder_name, leader_name, follower_name in (
+            ("self_attn", "k_proj", "v_proj"),
+            ("mlp", "gate_proj", "up_proj"),
+            ("linear_attn", "in_proj_qkv", "in_proj_z"),
+        ):
             holder = getattr(layer, holder_name, None)
             if holder is None:
                 continue
             leader = getattr(holder, leader_name, None)
             follower = getattr(holder, follower_name, None)
+            reason = _module_pair_reason(leader, follower)
+            if reason is not None:
+                _skip(reason)
+                continue
+            if leader._decode_pair is not None and follower._decode_pair is not None:
+                # 已经接好了（loader 的预配对）：幂等跳过，不重复分配。
+                stats["pairs"] += 1
+                key = f"{leader_name}+{follower_name}"
+                stats["kinds"][key] = stats["kinds"].get(key, 0) + 1
+                continue
             if attach_decode_pair(leader, follower):
                 stats["pairs"] += 1
                 key = f"{leader_name}+{follower_name}"
                 stats["kinds"][key] = stats["kinds"].get(key, 0) + 1
             else:
-                stats["skipped"] += 1
+                _skip("attach")
     return stats
 
 
@@ -327,11 +544,15 @@ class NVFP4Linear(nn.Module):
     """替换 checkpoint 里的量化 Linear。
 
     Args:
-        weight_packed: U8 [N, K/2]，checkpoint 的 ``weight``。
-        weight_scale: F8_E4M3 [N, K/16]，checkpoint 的 ``weight_scale``。
+        weight_packed: U8 [N, K/2]，checkpoint 的 ``weight``。可以是共享合并 buffer
+            的切片（DecodePair 路径），``contiguous()`` 对行切片不产生拷贝。
+        weight_scale: F8_E4M3 [N, K/16]，checkpoint 的 ``weight_scale``;
+            与 ``weight_scale_swizzled`` 二选一。
         weight_scale_2: 标量 F32，checkpoint 的 ``weight_scale_2``。
         input_scale: 标量 F32，checkpoint 的 ``input_scale``。
         bias: 可选 BF16 [N]；M2 的 checkpoint 大多没有 bias。
+        weight_scale_swizzled: 已经 swizzle 好的 F8 [N, K/16]；合并对的切片用它
+            直接共享一整块 buffer，省掉每半各一次 swizzle 与双份 scale。
         backend: prefill / 回退用的 FlashInfer backend；M2 固定 ``cutlass``。
         out_dtype: 输出 dtype，默认 BF16。
         decode_backend: M=1 decode 的 backend 覆盖。``None`` 表示查静态表
@@ -342,11 +563,12 @@ class NVFP4Linear(nn.Module):
     def __init__(
         self,
         weight_packed: torch.Tensor,
-        weight_scale: torch.Tensor,
+        weight_scale: torch.Tensor | None,
         weight_scale_2: torch.Tensor,
         input_scale: torch.Tensor,
         bias: torch.Tensor | None = None,
         *,
+        weight_scale_swizzled: torch.Tensor | None = None,
         backend: str = "cutlass",
         out_dtype: torch.dtype = torch.bfloat16,
         decode_backend: str | None = None,
@@ -356,16 +578,34 @@ class NVFP4Linear(nn.Module):
             raise TypeError(
                 f"weight_packed must be uint8 [N, K/2], got {weight_packed.dtype} {tuple(weight_packed.shape)}"
             )
-        if weight_scale.ndim != 2 or weight_scale.dtype != torch.float8_e4m3fn:
-            raise TypeError(
-                f"weight_scale must be float8_e4m3fn [N, K/16], got {weight_scale.dtype} {tuple(weight_scale.shape)}"
-            )
         n, k_half = weight_packed.shape
         k = k_half * 2
-        if weight_scale.shape != (n, k // 16):
-            raise ValueError(
-                f"weight_scale shape {tuple(weight_scale.shape)} != {(n, k // 16)}"
+        if (weight_scale is None) == (weight_scale_swizzled is None):
+            raise TypeError(
+                "weight_scale 与 weight_scale_swizzled 必须恰好提供一个"
             )
+        if weight_scale_swizzled is None:
+            assert weight_scale is not None  # for type checkers
+            if weight_scale.ndim != 2 or weight_scale.dtype != torch.float8_e4m3fn:
+                raise TypeError(
+                    f"weight_scale must be float8_e4m3fn [N, K/16], got {weight_scale.dtype} {tuple(weight_scale.shape)}"
+                )
+            if weight_scale.shape != (n, k // 16):
+                raise ValueError(
+                    f"weight_scale shape {tuple(weight_scale.shape)} != {(n, k // 16)}"
+                )
+            swizzled = swizzle_scale_128x4(weight_scale.contiguous())
+        else:
+            if weight_scale_swizzled.dtype != torch.float8_e4m3fn:
+                raise TypeError(
+                    f"weight_scale_swizzled must be float8_e4m3fn, got {weight_scale_swizzled.dtype}"
+                )
+            if tuple(weight_scale_swizzled.shape) != (n, k // 16):
+                raise ValueError(
+                    f"weight_scale_swizzled shape {tuple(weight_scale_swizzled.shape)} "
+                    f"!= {(n, k // 16)}"
+                )
+            swizzled = weight_scale_swizzled
 
         self.in_features = k
         self.out_features = n
@@ -377,10 +617,7 @@ class NVFP4Linear(nn.Module):
         self.register_buffer("weight_scale_2", weight_scale_2.reshape(1).float())
         self.register_buffer("input_scale", input_scale.reshape(1).float())
         # 只保留 swizzled scale；原始 linear scale 在构造后释放，避免双份显存。
-        self.register_buffer(
-            "weight_scale_swizzled",
-            swizzle_scale_128x4(weight_scale.contiguous()),
-        )
+        self.register_buffer("weight_scale_swizzled", swizzled)
         self.register_buffer("bias", None if bias is None else bias.contiguous())
         # alpha = input_scale * weight_scale_2 是模型常量：构造时算一次，省掉每次
         # forward 的一个小 kernel（f32 乘法，与逐次计算结果逐位相同）。
