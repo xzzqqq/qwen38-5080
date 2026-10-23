@@ -43,15 +43,19 @@ import importlib.util
 import statistics
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 import torch  # noqa: E402
+import transformers.models.qwen3_5.modeling_qwen3_5 as gdn_modeling  # noqa: E402
+from transformers.cache_utils import LinearAttentionLayer  # noqa: E402
 from transformers.models.qwen3_5.modeling_qwen3_5 import (  # noqa: E402
     torch_recurrent_gated_delta_rule,
 )
 
+import runner.model.gdn_patch as gdn_patch  # noqa: E402
 from runner.experiment.op_artifact import OpReport  # noqa: E402
 from runner.ops.gdn import (  # noqa: E402
     BLOCK_V_CONFIGS,
@@ -64,10 +68,13 @@ from runner.ops.nvfp4.reference import error_metrics  # noqa: E402
 SCENARIOS = (
     "decode-two-steps-48-layers",
     "decode-strided-view-integration",
+    "patch-wiring-real-shapes",
     "microbench-baseline-vs-candidate",
 )
 VIEW_CASE = SCENARIOS[1]
-PERF_CASE = SCENARIOS[2]
+PATCH_CASE = SCENARIOS[2]
+PERF_CASE = SCENARIOS[3]
+HIDDEN_SIZE = 5120
 
 # 冻结的模型 shape（64 层里 48 层是 GDN；config: linear_num_value_heads=48,
 # linear_num_key_heads=16, linear_{key,value}_head_dim=128, conv_kernel_dim=4）。
@@ -550,6 +557,227 @@ def _run_strided_view(report: OpReport, device: torch.device) -> None:
 # ------------------------------------------------------------------------- case 3
 
 
+def _run_patch_wiring(report: OpReport, device: torch.device) -> None:
+    """走一遍 ``runner/model/gdn_patch.py`` 的真实接线（不加载 27B 模型）。
+
+    为什么需要这个 case：接入层的 bug（head 数判定按 repeat 之前写、out 槽没命中、
+    自拷贝没短路）不会被 m3_check 的 bitwise gate 抓到 —— 那些 gate 都是同一实现
+    的自比。这里用**真实 config 的 meta GDN 模块**（只取属性，不占显存）+
+    **真实调用点形状**（``repeat_interleave`` 之后的 48 个 head）走 patch 的
+    模块级入口，因此「融合到底有没有被执行」直接变成可判定项：
+    ``counters.fused == 48 * 2``、``counters.reference == 0``、``fallbacks == {}``。
+    """
+    case = report.case(
+        PATCH_CASE,
+        patch_module="runner/model/gdn_patch.py",
+        entry="transformers...modeling_qwen3_5.torch_recurrent_gated_delta_rule",
+        layers=NUM_LAYERS,
+        num_v_heads=NUM_V_HEADS,
+        num_k_heads=NUM_K_HEADS,
+        head_k_dim=HEAD_K_DIM,
+        head_v_dim=HEAD_V_DIM,
+        call_qk_shape=[1, 1, NUM_V_HEADS, HEAD_K_DIM],
+        kernel_qk_view=[1, 1, NUM_K_HEADS, HEAD_K_DIM],
+        head_stride_elems=RATIO * HEAD_K_DIM,
+        steps=STEPS,
+        tolerance=GDN_TOL,
+    )
+    gen = torch.Generator(device=device).manual_seed(SEED + 3)
+    layers = _layers(device, gen)
+    states = _states(device, gen)
+
+    history_absmax = [float(item.abs().max()) for item in states]
+    ptr_before = [item.data_ptr() for item in states]
+    bytes_before = [item.numel() * item.element_size() for item in states]
+
+    config = SimpleNamespace(
+        hidden_size=HIDDEN_SIZE,
+        linear_num_value_heads=NUM_V_HEADS,
+        linear_num_key_heads=NUM_K_HEADS,
+        linear_key_head_dim=HEAD_K_DIM,
+        linear_value_head_dim=HEAD_V_DIM,
+        linear_conv_kernel_dim=CONV_KERNEL,
+        hidden_act="silu",
+        rms_norm_eps=1e-6,
+        layer_types=["linear_attention"],
+    )
+    with torch.device("meta"):
+        gdn_module = gdn_modeling.Qwen3_5GatedDeltaNet(config, 0)
+
+    installed = gdn_patch.install(gdn_module)
+    counters: dict = {}
+    final_info: dict = {}
+    worst = {"nrmse": 0.0, "max_rel": 0.0, "cosine": 1.0, "finite": True}
+    finite = True
+    last_state_same_buffer = True
+    steps_done = 0
+    layers_checked = 0
+    noop_ok = False
+    try:
+        for step in range(1, STEPS + 1):
+            for idx, problem in enumerate(layers):
+                state = states[idx]
+                # 模型 forward 里做的事：先 repeat，再交给 rule。
+                q_rep = problem["q"].repeat_interleave(RATIO, dim=2)
+                k_rep = problem["k"].repeat_interleave(RATIO, dim=2)
+                init = state.clone()
+                ref_out, ref_state = _reference_qk(q_rep, k_rep, problem, init)
+                got_out, got_state = gdn_modeling.torch_recurrent_gated_delta_rule(
+                    q_rep,
+                    k_rep,
+                    problem["v"],
+                    g=problem["g"],
+                    beta=problem["beta"],
+                    initial_state=state,
+                    output_final_state=True,
+                    use_qk_l2norm_in_kernel=True,
+                )
+                last_state_same_buffer = last_state_same_buffer and got_state is state
+                finite = finite and bool(torch.isfinite(got_out).all())
+                finite = finite and bool(torch.isfinite(state).all())
+                _track(
+                    worst,
+                    _numeric(
+                        case, f"numeric:step{step}:layer{idx:02d}:out", got_out, ref_out
+                    ),
+                )
+                _track(
+                    worst,
+                    _numeric(
+                        case,
+                        f"numeric:step{step}:layer{idx:02d}:state",
+                        state,
+                        ref_state,
+                    ),
+                )
+                layers_checked += 1
+            steps_done += 1
+
+        # 模型在 rule 之后会调 update_recurrent_state(last_state)：
+        # 源和目标是同一个 buffer，patch 必须短路掉（否则每层又拷贝 3.1 MB）。
+        cache = LinearAttentionLayer()
+        cache.update_recurrent_state(states[0].clone())
+        buffer = cache.recurrent_states[0]
+        snapshot = buffer.clone()
+        returned = cache.update_recurrent_state(buffer)
+        noop_ok = (
+            returned is buffer
+            and cache.recurrent_states[0] is buffer
+            and torch.equal(buffer, snapshot)
+        )
+        counters = dict(gdn_patch.counters())
+        counters["fallbacks"] = dict(counters.get("fallbacks", {}))
+        final_info = gdn_patch.info()
+    finally:
+        gdn_patch.uninstall()
+
+    fused = int(counters.get("fused", 0))
+    reference = int(counters.get("reference", 0))
+    fallbacks = counters.get("fallbacks", {})
+    expected = NUM_LAYERS * STEPS
+    case.gate(
+        "patch:installed",
+        bool(installed.get("enabled"))
+        and installed.get("ratio") == RATIO
+        and installed.get("layers") == 1
+        and installed.get("num_v_heads") == NUM_V_HEADS
+        and installed.get("num_k_heads") == NUM_K_HEADS,
+        {
+            key: installed.get(key)
+            for key in ("enabled", "ratio", "layers", "num_v_heads", "num_k_heads")
+        },
+    )
+    # 关键回归门：融合必须真的被执行，且没有任何 fallback。
+    case.gate(
+        "patch:fused-path-executed",
+        fused == expected and reference == 0 and not fallbacks,
+        {
+            "fused_calls": fused,
+            "expected": expected,
+            "reference_calls": reference,
+            "fallbacks": fallbacks,
+            "note": "counters 是活 dict，check.json / bench.json 的 load.gdn_decode 里也能看到",
+        },
+    )
+    case.gate(
+        "patch:update-recurrent-state-short-circuit",
+        noop_ok,
+        {
+            "identity_returned": noop_ok,
+            "bytes_per_layer": STATE_BYTES,
+            "note": "kernel 已原地写完，copy_(自己) 必须短路成 no-op",
+        },
+    )
+    case.gate(
+        "patch:out-slot-cache",
+        int(final_info.get("out_slots", 0)) == NUM_LAYERS
+        and int(final_info.get("out_bytes", 0))
+        == NUM_LAYERS * NUM_V_HEADS * HEAD_V_DIM * 2,
+        {
+            "out_slots": final_info.get("out_slots"),
+            "out_bytes": final_info.get("out_bytes"),
+            "expected_bytes": NUM_LAYERS * NUM_V_HEADS * HEAD_V_DIM * 2,
+            "note": "按 state.data_ptr() 缓存，capture 后地址固定",
+        },
+    )
+    case.gate(
+        "coverage:shape-plan-real-call",
+        gdn_patch._shape_plan(
+            torch.empty(1, 1, NUM_V_HEADS, HEAD_K_DIM),
+            torch.empty(1, 1, NUM_V_HEADS, HEAD_K_DIM),
+            torch.empty(1, 1, NUM_V_HEADS, HEAD_V_DIM),
+            torch.empty(1, NUM_V_HEADS, HEAD_K_DIM, HEAD_V_DIM),
+            RATIO,
+        )
+        is None,
+        {
+            "call_qk_shape": [1, 1, NUM_V_HEADS, HEAD_K_DIM],
+            "kernel_view_shape": [1, 1, NUM_K_HEADS, HEAD_K_DIM],
+            "head_stride_elems": RATIO * HEAD_K_DIM,
+            "note": "调用点传的是 repeat 之后的 48 head；判定不能按 16 head 写",
+        },
+    )
+    case.gate(
+        "coverage:nonzero-history-state",
+        min(history_absmax) > 1e-3,
+        {"min_absmax": min(history_absmax), "max_absmax": max(history_absmax)},
+    )
+    case.gate(
+        "coverage:two-consecutive-steps",
+        steps_done == STEPS == 2 and last_state_same_buffer,
+        {
+            "steps": steps_done,
+            "state_buffer_identity": last_state_same_buffer,
+            "recursion": "step2 从候选 step1 后的 state 出发",
+        },
+    )
+    case.gate(
+        "coverage:layers-48",
+        len(layers) == NUM_LAYERS and layers_checked == NUM_LAYERS * STEPS,
+        {"layers": len(layers), "comparisons": layers_checked},
+    )
+    case.gate(
+        "coverage:state-pointer-and-bytes-stable",
+        [item.data_ptr() for item in states] == ptr_before
+        and [item.numel() * item.element_size() for item in states] == bytes_before,
+        {"bytes_per_layer": STATE_BYTES},
+    )
+    case.gate("coverage:finite", finite and worst["finite"], {"finite": finite})
+
+    case.metric("worst_nrmse", worst["nrmse"])
+    case.metric("worst_max_rel", worst["max_rel"])
+    case.metric("worst_cosine", worst["cosine"])
+    case.metric("fused_calls", float(fused))
+    case.metric("reference_calls", float(reference))
+    case.metric("fallback_kinds", float(len(fallbacks)))
+    case.metric("out_bytes", float(final_info.get("out_bytes", 0)))
+    case.metric("layers_checked", float(layers_checked))
+    case.metric("steps_checked", float(steps_done))
+
+
+# ------------------------------------------------------------------------- case 4
+
+
 def _time_loop(fn, reset, *, warmup: int, reps: int) -> float:
     """一次 48 层 step 的墙钟中位数（ms），event 边界只包住 fn。"""
     reset()
@@ -867,6 +1095,9 @@ def main(argv: list[str] | None = None) -> int:
             _run_strided_view(report, device)
         if PERF_CASE in selected:
             _run_microbench(report, device)
+        # 会临时改动全局 patch，放在最后。
+        if PATCH_CASE in selected:
+            _run_patch_wiring(report, device)
     payload = report.finish()
     summary = payload["summary"]
     for entry in summary["cases"]:
